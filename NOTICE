@@ -1,0 +1,14 @@
+﻿This class package is an extraction from a wider personal project called Thrak,
+a sort of PHP framework for Web development and command-line scripting 
+(https://github.com/christian-vigh/php-thrak).
+
+I have made my best to extract this class and cut off all of its dependencies 
+from other Thrak classes without removing functionalities, so that it becomes a 
+standalone package that you can freely integrate into your projects. There is 
+no namespace, so that you are free to add your own one if you wish, and my own 
+error handling mechanism has been replaced with standard exceptions. 
+All other dependencies have been replaced with core PHP functions or, when 
+needed, by methods I developed elsewhere and imported into this package.
+
+Should you have any question or find a bug, please feel free to contact me at : 
+christian.vigh@orange.fr
