@@ -1,4 +1,4 @@
-<?php  
+<?php
 /**************************************************************************************************************
 
     NAME
@@ -25,14 +25,14 @@
     CREDITS
 	I was recently asked at work to implement a pdf text extractor. They provided me with an existing PHP
 	source code which consisted in a set of functions (not a class). Alas, the name of the author was not
-	present in the source code but I have noticed that two or three classes at http://www.phpclasses.org 
+	present in the source code but I have noticed that two or three classes at http://www.phpclasses.org
 	were reusing the set of functions he/she had implemented, because they kept the same names for the
 	methods : getTextUsingTransformations, getCharTransformations, getDecodedStream and so on.
 	Although the original code was not working for more complex cases, it did a rather good job. Anyway,
 	apart from the invaluable understanding of the pdf file format this sample code gave to me, I only
 	borrowed two functions, decodeAsciiHex and decodeAscii85, which decode pdf streams using methods I was
 	not aware of. However, I could not test them since I have had no sample pdf files using these encoding
-	methods. 
+	methods.
 	This work has also been inspired from that of Adeel Ahmad Khan (https://github.com/adeel/php-pdf-parser)
 	which gave me further understanding of the pdf file format.
 	And, of course, the PDF file format reference :
@@ -67,7 +67,7 @@
 		5 0 obj
 		<</Length 6 0 R/Filter /FlateDecode>>
 		stream
-			... binary data ... 
+			... binary data ...
 		endobj
 		...
 		7 0 obj
@@ -75,19 +75,19 @@
 		/FirstChar 1/LastChar 59/Subtype/TrueType>>
 		endobj
 
-	The first line indicates the PDF version that was used to generate the file. Then you will see a list 
+	The first line indicates the PDF version that was used to generate the file. Then you will see a list
 	of declarations looking like :
 
 		x 0 obj
 			...
 		endobj
 
-	These are the objects that constitute your pdf document. An object can contain textual data, such as 
-	object #7 in the above example, or a binary stream delimited by the stream/endstream keywords, and 
+	These are the objects that constitute your pdf document. An object can contain textual data, such as
+	object #7 in the above example, or a binary stream delimited by the stream/endstream keywords, and
 	preceded by options specified in ascii text. The format of the encoded binary stream is given by the
 	/Flate, /Ascii85 or /AsciiHex options.
 
-	Apart from the options understood by the PDF renderer, you won't be able to find any plain text in 
+	Apart from the options understood by the PDF renderer, you won't be able to find any plain text in
 	your pdf document. This one has been put in "obj" declarations and encoded within a stream, and you will
 	need to decode it first.
 
@@ -95,7 +95,7 @@
 	- Objects containing the document text : there are encoded within a stream, and contain PDF drawing
 	  instructions.
 	- Font declarations : they specify the name of the fonts we use in the document.
-	- Character maps : fonts can use characters maps (which can be seen as substitution tables) by 
+	- Character maps : fonts can use characters maps (which can be seen as substitution tables) by
 	  providing a "/ToUnicode x" option, where "x" is the character map object id
 
 	FONT DECLARATIONS
@@ -106,7 +106,7 @@
 			/FirstChar 1/LastChar 59/Subtype/TrueType>>
 			endobj
 
-		or : 
+		or :
 
 			9 0 obj
 			<</R7 20 0 R/R9 22 0 R>>
@@ -117,14 +117,14 @@
 			endobj
 
 		Note that these declerations are delimited with doubled angle-brackets "<<" and ">>".
-			
+
 		The first example specifies a font whose id will be that of its enclosing object, ie #7. Text
-		drawing instructions will set it as the current font by using the "/R7" operator (see 
+		drawing instructions will set it as the current font by using the "/R7" operator (see
 		"TEXT BLOCKS" later in this paragraph). It also uses a character map, #11, which is the id
 		of the object holding this character map.
 
 		The second example specifies two fonts, using character maps #11 and #14, respectively. Since
-		their id cannot be the object number, #9, because they cannot share the same id, a additional 
+		their id cannot be the object number, #9, because they cannot share the same id, a additional
 		declaration has been put :
 
 			<</R7 20 0 R/R9 22 0 R>>
@@ -215,7 +215,7 @@
 			Defines the "text matrix" for the current drawing. "text matrix" is not a quickly
 			understandable notion if you rapidly browsed the pdf specification as I did, but
 			just keep in mind that the next text drawing instruction will be located at position
-			(x,y). 
+			(x,y).
 			Why trying to interpret this since the PdfToText class do not handle positioning ?
 			The reason is simple ; I have had a sample pdf file which contained the following :
 
@@ -241,9 +241,9 @@
 			(see below for an explanation on text output operators).
 			This meant that, for some unknown reason, the text was output in three parts :
 			"mail ", ": " and "someone@somewhere.com". However, the "Tm" operator was used before
-			each text output, repositioning the y-coordinate to 570.11. 
+			each text output, repositioning the y-coordinate to 570.11.
 			The PdfToText class handles the catenation of texts having the same y-coordinate in the
-			case where Tm instructions are used ; note however that it will not correctly handle 
+			case where Tm instructions are used ; note however that it will not correctly handle
 			text output if the x-coordinates are not sorted in ascending order
 
 		- (sometext)' 		or :
@@ -251,7 +251,7 @@
 			Outputs the specified text and positions to the next line. The text to be output is
 			always enclosed with parentheses.
 			The first form uses raw text output with default spacing between characters.
-			The second form (array form) can specify positive or negative spacing adjustments 
+			The second form (array form) can specify positive or negative spacing adjustments
 			between characters (delta1 to deltan).
 			The specification of the text to be output can take two forms, depending on whether
 			the current font has an associated character map or not.
@@ -277,7 +277,7 @@
 
 					[(SOH]delta1(STX)delta2(SOH)] TJ
 
-				Where "SOH" and "STX" are the official Ascii names for character 1 and 2, 
+				Where "SOH" and "STX" are the official Ascii names for character 1 and 2,
 				respectively.
 
 				Beware ! C-like escape sequences are not handled (except for escaping special
@@ -299,6 +299,8 @@
  ==============================================================================================================*/
 class  PdfToText 	// extends Object
    {
+	public static 		$DEBUG 		=  true ;
+
 	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
 	const 	PDF_UNKNOWN_ENCODING 		=  0 ;
 	const 	PDF_ASCIIHEX_ENCODING 		=  1 ;
@@ -315,17 +317,17 @@ class  PdfToText 	// extends Object
 
 
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	    CONSTRUCTOR
 	        $pdf	=  new PdfToText ( $filename = null ) ;
 
 	    DESCRIPTION
 	        Builds a PdfToText object and optionally loads the specified file's contents.
-	
+
 	    PARAMETERS
 	        $filename (string) -
 	                Optional PDF filename whose text contents are to be extracted.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  	__construct ( $filename = null )
 	   {
@@ -341,21 +343,21 @@ class  PdfToText 	// extends Object
 
 
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	    NAME
 	        Load - Loads text contents from a PDF file.
-	
+
 	    PROTOTYPE
 	        $pdf -> Load ( $filename ) ;
-	
+
 	    DESCRIPTION
 	        Extracts text contents from the specified PDF file. Once processed, text contents will be available
 		through the "Text" property.
-	
+
 	    PARAMETERS
 	        $filename (string) -
 	                Optional PDF filename whose text contents are to be extracted.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
 	function  Load ( $filename )
 	   {
@@ -394,21 +396,27 @@ class  PdfToText 	// extends Object
 
 			// Some font definitions are in clear text in an object, some are encoded in a stream within the object
 			// We process here the unencoded ones
-			if  ( PdfTexterFontTable::IsFont ( $object_data ) ) 
+			if  ( PdfTexterFontTable::IsFont ( $object_data ) )
 			   {
 				$this -> FontTable -> Add ( $object_number, $object_data ) ;
+				continue ;
+			    }
+			// Check if there is an association between font number and object number
+			else if  ( PdfTexterFontTable::IsFontMap ( $object_data ) )
+		   	   {
+				$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
 				continue ;
 			    }
 			// Ignore other objects that do not contain an encoded stream
 		   	else if  ( ! preg_match ( '/stream \r? \n (?P<stream> .*?) endstream/imsx', $object_data, $stream_match ) )
 		   		continue ;
 
-			// Isolate stream data and try to find its encoding type 
+			// Isolate stream data and try to find its encoding type
 			$stream_data 		=  $stream_match [ 'stream' ] ;
 			$type 			=  $this -> GetEncodingType ( $object_data ) ;
 
 			// Ignore this stream if the object does not contain an encoding type (/FLATE, /ASCIIHEX or /ASCII85)
-			if  ( $type  ==  PDF_UNKNOWN_ENCODING )
+			if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
 				continue ;
 
 			// Decode the encoded stream
@@ -424,8 +432,8 @@ class  PdfToText 	// extends Object
 			   {
 				$this -> FontTable -> Add ( $object_number, $decoded_stream_data ) ;
 			    }
-			// Plain text (well, in fact PDF drawing instructions) 
-			else if  ( $this -> IsText ( $object_data ) )
+			// Plain text (well, in fact PDF drawing instructions)
+			else if  ( $this -> IsText ( $object_data, $decoded_stream_data ) )
 			   {
 				$text [ $object_number ]	=  $decoded_stream_data ;
 			    }
@@ -435,12 +443,14 @@ class  PdfToText 	// extends Object
 		foreach  ( $cmaps  as  $cmap )
 			$this -> FontTable -> AddCharacterMap ( $cmap ) ;
 
-		// Extract text from the collected TEXT elements
+		// Current font defaults to -1, which means : take the first available font as the current one.
+		// Sometimes it may happen that text drawing instructions do not set a font at all (PdfPro for example)
 		$current_font	=  -1 ;
 
+		// Extract text from the collected TEXT elements
 		foreach  ( $text  as  $id => $str )
 		   {
-			$text	=  $this -> ExtractText ( $str, $current_font ) ; 
+			$text	=  $this -> ExtractText ( $id, $str, $current_font ) ;
 
 			// Put a form feed between each text block - not sure it is appropriate
 			if  ( $this -> Text )
@@ -454,61 +464,70 @@ class  PdfToText 	// extends Object
 
 
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	    NAME
 	        IsText - Check if the specified object contents denote a text stream.
-	
+
 	    PROTOTYPE
-	        $status		=  $this -> IsText ( $object_data ) ;
-	
+	        $status		=  $this -> IsText ( $object_data, $decoded_stream_data ) ;
+
 	    DESCRIPTION
 	        Checks if the specified object contents denote a text stream.
-	
+
 	    PARAMETERS
 	        $object_data (string) -
 	                Object data, ie the contents located between the "obj" and "endobj" keywords.
-	
+
+	        $decoded_stream_data (string) -
+	        	The flags specified in the object data are not sufficient to be sure that we have a block of
+	        	drawing instructions. We must also check for certain common instructions to be present.
+
 	    RETURN VALUE
 	        True if the specified contents MAY be text contents, false otherwise.
 
 	    NOTES
 		I do not consider this method as bullet-proof. There may arise some cases where non-text blocks can be
 		mistakenly considered as text blocks, so it is subject to evolve in the future.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  IsText ( $object_data )
+	protected function  IsText ( $object_data, $decoded_stream_data )
 	   {
 		if  ( stripos ( $object_data, '/Filter'  )  !==  false  &&
 		      stripos ( $object_data, '/Length'  )  !==  false  &&
 		      stripos ( $object_data, '/Length1' )  ===  false  &&
 		      stripos ( $object_data, '/Type'    )  ===  false  &&
 		      stripos ( $object_data, '/Subtype' )  ===  false )
-			return ( true ) ;
-		else
-			return ( false ) ;
+		   {
+		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm)\\b/', $decoded_stream_data ) )
+				return ( true ) ;
+		   	else
+		   		return ( false ) ;
+		    }
+
+		return ( false ) ;
 	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	    NAME
 	        GetEncodingType - Gets an object encoding type.
-	
+
 	    PROTOTYPE
 	        $type	=  $this -> GetEncodingType ( $object_data ) ;
-	
+
 	    DESCRIPTION
 	        When an object is a stream, returns its encoding type.
-	
+
 	    PARAMETERS
 	        $object_data (string) -
 	                Object contents.
-	
+
 	    RETURN VALUE
 	        Returns one of the following values :
 
 		- PdfToText::PDF_ASCIIHEX_ENCODING :
-			Hexdecimal encoding of the binary values. 
+			Hexdecimal encoding of the binary values.
 			Decoding algorithm was taken from the unknown contributor and not tested so far, since I
 			couldn't find a PDF file with such an encoding type.
 
@@ -523,46 +542,46 @@ class  PdfToText 	// extends Object
 		- PdfToText::PDF_UNKNOWN_ENCODING :
 			The object data does not specify any encoding at all. It can happen on objects that do not have
 			a "stream" part.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  GetEncodingType ( $object_data )
 	   {
 		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) ) #imsx', $object_data, $match ) ;
 
 		if  ( ! $status )
-			return ( PDF_UNKNOWN_ENCODING ) ;
+			return ( self::PDF_UNKNOWN_ENCODING ) ;
 
 		switch ( strtolower ( $match [ 'encoding' ] ) )
 		    {
-		    	case 	'asciihexdecode' 	:  return ( PDF_ASCIIHEX_ENCODING ) ;
-		    	case 	'ascii85decode' 	:  return ( PDF_ASCII85_ENCODING ) ;
-		    	default 			:  return ( PDF_FLATE_ENCODING ) ;
+		    	case 	'asciihexdecode' 	:  return ( self::PDF_ASCIIHEX_ENCODING ) ;
+		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING ) ;
+		    	default 			:  return ( self::PDF_FLATE_ENCODING ) ;
 		     }
 	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	    NAME
 	        DecodeData - Decodes stream data.
-	
+
 	    PROTOTYPE
 	        $data	=  $this -> DecodeData ( $stream_data, $type ) ;
-	
+
 	    DESCRIPTION
 	        Decodes stream data (binary data located between the "stream" and "enstream" directives) according to the
 		specified encoding type, given in the surrounding object parameters.
-	
+
 	    PARAMETERS
 	        $stream_data (string) -
 	                Contents of the binary stream.
 
 		$type (integer) -
 			One of the PDF_*_ENCODING constants, as returned by the GetEncodingType() method.
-	
+
 	    RETURN VALUE
 	        Returns the decoded stream data.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  DecodeData ( $stream_data, $type )
 	   {
@@ -570,16 +589,16 @@ class  PdfToText 	// extends Object
 
 		switch  ( $type )
 		   {
-		   	case 	PDF_FLATE_ENCODING :
+		   	case 	self::PDF_FLATE_ENCODING :
 		   		$decoded_stream_data 	=  gzuncompress ( $stream_data ) ;
 		   		break ;
 
-		   	case 	PDF_ASCIIHEX_ENCODING :
+		   	case 	self::PDF_ASCIIHEX_ENCODING :
 		   		$decoded_stream_data 	=  $this -> __decode_ascii_hex ( $stream_data ) ;
 		   		break ;
 
 		   	case 	PDF_ASCII85_ENCODING :
-
+				$decoded_stream_data 	=  $this -> __decode_ascii_85 ( $stream_data ) ;
 		    }
 
 		return ( $decoded_stream_data ) ;
@@ -652,7 +671,7 @@ class  PdfToText 	// extends Object
 	    {
 	    	$output 	=  "" ;
 	    	$is_comment 	=  false ;
-	    	$ords 		=  array ( ) ;
+	    	$ords 		=  [] ;
 
 	    	for  ( $i = 0, $state = 0  ; $i  <  strlen ( $input )  &&  $input [ $i ]  !=  '~'  ; $i ++ )
 	    	   {
@@ -720,12 +739,15 @@ class  PdfToText 	// extends Object
 		ExtractText - extracts text from a pdf stream.
 
 	    PROTOTYPE
-		$text 	=  $this -> __extract_text ( $data, &$current_font ) ;
+		$text 	=  $this -> __extract_text ( $object_id, $data, &$current_font ) ;
 
 	    DESCRIPTION
 	        Extracts text from decoded stream contents.
 
 	    PARAMETERS
+	    	$object_id (integer) -
+	    		Object id of this text block.
+
 	    	$data (string) -
 	    		Stream contents.
 
@@ -748,13 +770,17 @@ class  PdfToText 	// extends Object
 		or even "<< >>" constructs that we can ignore during our process of extracting textual data.
 		Actually, we only want to handle a very small subset of the Adobe drawing language ; These are :
 		- "Tm" instructions, that specify, among others, the x and y coordinates of the next text to be output
-		- "/R" instructions, that specify which font is to be used for the next text output. This is useful 
+		- "/R" instructions, that specify which font is to be used for the next text output. This is useful
 		  only if the font has an associated character map.
-		- Text, specified either using a single notation ( "(sometext)" ) or the array notation 
+		- "/F", same as "/R", but use a font map id instead of a direct object id.
+		- Text, specified either using a single notation ( "(sometext)" ) or the array notation
 		  ( "[(...)d1(...)d2...(...)]" ), which allows for specifying inter-character spacing.
+		 - "Tf" instructions, that specifies the font size. This is to be able to compute approximately the
+		   number of empty lines between two successive Y coordinates in "Tm" instructions
+		 - "TL" instructions, that define the text leading to be used by "T*"
 
 		This is why I choosed to decompose the process of text extraction into three steps :
-		- The first one, the lowest-level step, is a tokenizer that extracts individual elements, such as "Tm",  
+		- The first one, the lowest-level step, is a tokenizer that extracts individual elements, such as "Tm",
 		  "TJ", "/Rx" or "510.77". This is handled by the __next_token() method.
 		- The second one, __next_instruction(), collects tokens. It pushes every floating-point value onto the
 		  stack, until an instruction is met.
@@ -762,8 +788,14 @@ class  PdfToText 	// extends Object
 		  the (restricted) parsing of text drawing instructions.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	private function  ExtractText ( $data, &$current_font )
+	private function  ExtractText ( $object_id, $data, &$current_font )
 	   {
+		if  ( PdfToText::$DEBUG )
+		   {
+			echo "----------------------------------- TEXT #$object_id\n" ;
+			echo $data ;
+		    }
+
 		// Index into the specified block of text-drawing instructions
 		$data_index 		=  0 ;
 
@@ -777,7 +809,16 @@ class  PdfToText 	// extends Object
 		$use_same_line 		=  false ;
 
 		// Instruction preceding the current one
-		$last_instruction 	=  false ;
+		$last_instruction 	=  true ;
+
+		// Current font size
+		$current_font_size 		=  0 ;
+
+		// Extra newlines to add before the current text
+		$extra_newlines 		=  0 ;
+
+		// Text leading used by T*
+		$text_leading 			=  0 ;
 
 		// Loop through instructions
 		while  ( ( $instruction =  $this -> __next_instruction ( $data, $data_length, $data_index ) )  !==  false )
@@ -791,24 +832,50 @@ class  PdfToText 	// extends Object
 				// "Tm" : Output text on the same line, if the "y" coordinates are equal
 			   	case 	'goto' :
 			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y )
-			   			$use_same_line 	=  true ;
+			   		   {
+			   			$use_same_line 		=  true ;
+			   			$extra_newlines 	=  0 ;
+			   		    }
 					else
 					   {
-						$last_goto_y 	=  $instruction [ 'y' ] ;
-						$use_same_line 	=  false ;
+					   	// Compute the number of newlines we have to insert between the current and the next lines
+					   	if  ( $current_font_size )
+					   		$extra_newlines =  ( integer ) ( ( $last_goto_y - $instruction [ 'y' ] - $current_font_size ) / $current_font_size ) ;
+
+						$use_same_line 		=  ( $last_goto_y  ==  -1 ) ;
+					   	$last_goto_y 		=  $instruction [ 'y' ] ;
 					    }
 
 			   		break ;
 
 				// "/Rx" : sets the current font
 			   	case 	'resource' :
-			   		$current_font 	=  $instruction [ 'resource' ] ;
+			   		$current_font 		=  $instruction [ 'resource' ] ;
 			   		break ;
 
-				// An "nl" instruction means TJ, Tj or "'"
+			   	case 	'fontsize' :
+			   		$current_font_size 	=  $instruction [ 'size' ] ;
+			   		break ;
+
+			   	// 'TL' : text leading to be used for the next "T*" in the flow
+			   	case 'leading' :
+			   		$text_leading 		=  $instruction [ 'size' ] ;
+			   		break ;
+
+				// An "nl" instruction means TJ, Tj, T* or "'"
 			   	case 	'nl' :
 			   		if  ( ! $instruction [ 'conditional' ] )
-			   			$result 	.=  PHP_EOL ;
+			   		   {
+			   		   	if  ( $instruction [ 'leading' ]  &&  $text_leading  &&  $current_font_size )
+			   		   	   {
+			   		   		$count 	=  ( integer ) ( ( $text_leading - $current_font_size ) / $current_font_size ) ;
+			   		   		$extra	=  str_repeat ( PHP_EOL, $count ) ;
+			   		   	    }
+			   		   	else
+			   		   		$extra 	=  PHP_EOL ;
+
+			   			$result 	.=  $extra ;
+			   		    }
 
 			   		break ;
 
@@ -816,38 +883,58 @@ class  PdfToText 	// extends Object
 				// is returned as a single instruction
 			   	case 	'text' :
 					// Check if we have to insert a newline
-			   		if (  $last_instruction [ 'instruction' ]  !=  'text'  &&  ! $use_same_line )
+			   		if ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  !=  'text'  &&  ! $use_same_line )
 			   			$result 	.=  PHP_EOL ;
 
+			   		// Roughly simulate spacing between lines by inserting newline characters
+			   		if  ( $extra_newlines  > 0 )
+			   		   {
+			   			$result 	.=  str_repeat ( PHP_EOL, $extra_newlines ) ;
+			   			$extra_newlines  =  0 ;
+			   		    }
+
 					// Fonts having character maps will require some special processing
-					if  ( $this -> FontTable -> IsMapped ( $current_font ) ) 
+					if  ( $this -> FontTable -> IsMapped ( $current_font ) )
 					   {
 						// Lop through each text value
 			   			foreach  ( $instruction [ 'values' ]  as  $text )
 			   			   {
-			   		   		$length 	=  strlen ( $text ) ;
+			   		   		$is_hex 	=  ( $text [0]  ==  '<' ) ;
+			   			   	$length 	=  strlen ( $text ) - 2 ;
+			   			   	$text 		=  substr ( $text, 1, $length ) ;
 
+			   			   	// Characters are encoded within angle brackets ( "<>" ). There is a single value in it
+			   			   	if  ( $is_hex )
+			   			   	   {
+			   			   		$ch 	=  ( hex2bin ( $text ) ) ;
+
+			   			   		$result .= $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+			   			   	    }
+							// Character strings within parentheses.
 							// For every text value, use the character map table for substitutions
-			   		   		for  ( $i = 0 ; $i  <  $length ; $i ++ )
-			   		   		   {
-			   		   			$ch 	=  $text [$i] ;
+							else
+							   {
+				   		   		for  ( $i = 0 ; $i  <  $length ; $i ++ )
+				   		   		   {
+				   		   			$ch 	=  $text [$i] ;
 
-								// ... but don't forget to handle escape sequences "\n" and "\r" for characters
-								// 10 and 13
-			   		   			if  ( $ch  ==  '\\' )
-			   		   			   {
-			   		   				$ch 	=  $text [++$i] ;
+									// ... but don't forget to handle escape sequences "\n" and "\r" for characters
+									// 10 and 13
+				   		   			if  ( $ch  ==  '\\' )
+				   		   			   {
+				   		   				$ch 	=  $text [++$i] ;
 
-			   		   				switch  ( $ch )
-			   		   				   {
-			   		   					case 	'n' 	:  $ch =  "\n" ; break ;
-			   		   					case 	'r' 	:  $ch =  "\r" ; break ;
-			   		   				    }
-			   		   			    }
+				   		   				switch  ( $ch )
+				   		   				   {
+				   		   					case 	'n' 	:  $ch =  "\n" ; break ;
+				   		   					case 	'r' 	:  $ch =  "\r" ; break ;
+				   		   				    }
+				   		   			    }
 
-								// Add substituted character to the output result
-								$result		.=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
-			   		   		    }
+									// Add substituted character to the output result
+									$result		.=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+				   		   		    }
+							    }
 			   		   	    }
 			   		    }
 					// For fonts having no associated character map, we simply encode the string in UTF8
@@ -855,7 +942,7 @@ class  PdfToText 	// extends Object
 			   		else
 			   		   {
 			   			foreach  ( $instruction [ 'values' ]  as  $text )
-			   				$result 	.=  utf8_encode ( $this -> Unescape ( $text ) ) ;
+			   				$result 	.=  utf8_encode ( $this -> Unescape ( substr ( $text, 1, strlen ( $text ) - 2 ) ) ) ;
 			   		    }
 			    }
 
@@ -863,6 +950,8 @@ class  PdfToText 	// extends Object
 			// on the current or following line
 			$last_instruction 	=  $instruction ;
 		    }
+
+		$result 	.=  PHP_EOL . "\f" ;
 
 		// I noticed, with the RTF specification file sample, that the hyphen in hyphenated words can be placed on a
 		// separate line ; try to correct this, although it does not seem pertinent
@@ -876,21 +965,19 @@ class  PdfToText 	// extends Object
 	//	Retrieves the next instruction frm the drawing text block.
 	function  __next_instruction ( $data, $data_length, $index )
 	   {
-		// Regular expression for isolating array text output
-		$array_re 	=  '/
-					\(
-						(?P<value>
-						 	(
-								( \\\\ \) )
-								|
-								( [^)] )
-							 )*?
-						 )
-					\)
-				    /imsx' ;
+		static 	$last_instruction 	=  false ;
+
+		// Constructs such as
+		if  ( $last_instruction )
+		   {
+			$result 		=  $last_instruction ;
+			$last_instruction	=  false ;
+
+			return ( $result ) ;
+		    }
 
 		// Holds the floating-point values encountered so far
-		$number_stack 	=  array ( ) ;
+		$number_stack 	=  [] ;
 
 		// Loop through the stream of tokens
 		while  ( ( $part = $this -> __next_token ( $data, $data_length, $index ) )  !==  false )
@@ -907,38 +994,77 @@ class  PdfToText 	// extends Object
 				$x 	=  $number_stack [4] ;
 				$y 	=  $number_stack [5] ;
 
-				return ( array ( 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y ) ) ;
+				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y ] ) ;
 			    }
 			// Output text "'" instruction, with conditional newline
 			else if  ( $token [0]  ==  "'" )
-				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true ) ) ;
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false ] ) ;
 			// Same as above
 			else if  ( $token  ==  'TJ'  ||  $token  ==  'Tj' )
-				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true ) ) ;
-			// Position to next line
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false ] ) ;
+			// Set font size
+			else if  ( $token  ==  'Tf' )
+				return ( [ 'instruction' => 'fontsize', 'next' => $next_index, 'size' => $number_stack [0] ] ) ;
+			// Text leading (spacing used by T*)
+			else if  ( $token  ==  'TL' )
+				return ( [ 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0] ] ) ;
+				// Position to next line
 			else if  ( $token  ==  'T*' )
-				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false ) ) ;
-			// Raw text output 
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+			// Raw text output
 			else if  ( $token [0]  ==  '(' )
-				return ( array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( substr ( $token, 1, strlen ( $token ) - 2 ) ) ) ) ;
-			// Text specified as an array of individual raw text elements, and individual interspaces between characters
+			   {
+			   	$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
+			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ] ] ;
+
+			   	if  ( $next_part [0]  ==  "'" )
+			   	   {
+			   	   	$last_instruction  	=  $instruction ;
+			   	   	return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+			   	   }
+			   	else
+					return ( $instruction ) ;
+			    }
+		   	else if  ( $token [0]  ==  '<' )
+			   {
+			   	$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
+			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ] ] ;
+
+			   	if  ( $next_part [0]  ==  "'" )
+			   	   {
+			   	   	$last_instruction  	=  $instruction ;
+			   	   	return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+			   	   }
+			   	else
+					return ( $instruction ) ;
+			    }
+			    // Text specified as an array of individual raw text elements, and individual interspaces between characters
 			else if  ( $token [0]  ==  '[' )
 			   {
-			   	preg_match_all ( $array_re, $token, $matches ) ;
+				$values 	=  $this -> __extract_chars_from_array ( $token ) ;
+				$instruction 	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => $values ] ;
 
-			   	return ( array ( 'instruction' => 'text', 'next' => $next_index, 'values' => $matches [ 'value' ] ) ) ;
+				return ( $instruction ) ;
 			    }
 			// "/R" : Specifies the font to be used for the next text output(s)
 			else if  ( ! strncasecmp ( $token, '/R', 2 ) )
 			   {
 				$resource 	=  ( integer ) substr ( $token, 2 ) ;
 
-				return ( array ( 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource ) ) ;
+				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource ] ) ;
 			    }
-			// Other instructions : we're not that much interested in them, so clear the number stack and consider
+		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
+			else if  ( ! strncasecmp ( $token, '/F', 2 ) )
+			   {
+				$resource 	=  ( integer ) substr ( $token, 2 ) ;
+				$id 		=  $this -> FontTable -> GetFontByMapId ( $resource ) ;
+
+				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id ] ) ;
+			    }
+			    // Other instructions : we're not that much interested in them, so clear the number stack and consider
 			// that the current parameters, floating-point values, have been processed
 			else
-				$number_stack 	=  array ( ) ;
+				$number_stack 	=  [] ;
 
 			$index 		=  $next_index ;
 		    }
@@ -1005,10 +1131,10 @@ class  PdfToText 	// extends Object
 		   			    }
 		   		    }
 
-		   		return ( array ( $result, $pos ) ) ;
+		   		return ( [ $result, $pos ] ) ;
 
 			// Parenthesis : Again, we have to find the closing parenthesis, taking care of escape sequences
-			// such as "\)" 
+			// such as "\)"
 		   	case 	"(" :
 		   		$pos 		=  $index + 1 ;
 		   		$result		=  $ch ;
@@ -1028,12 +1154,13 @@ class  PdfToText 	// extends Object
 		   				$result 	.=  $nch ;
 		   		   }
 
-		   		return ( array ( $result, $pos ) ) ;
+		   		return ( [ $result, $pos ] ) ;
 
-			// A construction of the form : "<< something >>"
+			// A construction of the form : "<< something >>", or a unicode character
 		   	case 	'<' :
 		   		if (  isset ( $data [ $index + 1 ] )  &&  $data [ $index + 1 ]  ==  '<' )
 		   		   {
+		   		   	echo "in <<" ; exit ;
 		   			$pos 	=  strpos ( $data, '>>', $index + 1 ) ;
 
 		   			if  ( $pos  ===  false )
@@ -1041,14 +1168,38 @@ class  PdfToText 	// extends Object
 
 		   			$token 	=  substr ( $data, $index, $pos - $index + 2 ) ;
 
-		   			return ( array ( $token, $pos + 2 ) ) ;
+		   			return ( [ $token, $pos + 2 ] ) ;
 		   		    }
+		   		else if  ( isset ( $data [ $index + 1 ] )  &&  ! ctype_xdigit ( $data [ $index + 1 ] ) )
+		   		   {
+		   		   	echo "here";exit;
+		   			$pos 	=  strpos ( $data, '>', $index + 1 ) ;
+
+		   			if  ( $pos  ===  false )
+		   				return ( false ) ;
+
+		   			$token 	=  substr ( $data, $index, $pos - $index + 2 ) ;
+
+		   			return ( [ $token, $pos + 2 ] ) ;
+		   		   }
 		   		else
-		   			return ( false ) ;
+		   		   {
+		   		   	echo "there";exit;
+		   		   	$token 	=  '<' ;
+		   		   	$pos 	=  $index + 1 ;
+
+		   		   	while  ( $pos  <  $data_length  &&  ( ctype_xdigit ( $data [ $pos ] )  ||  $data [ $pos ]  ==  '>' ) )
+		   		   		$token 	.=  $data [ $pos ++ ] ;
+
+		   		   	if  ( $pos  <  $data_length  &&  $token [ $pos ]  ==  '>' )
+		   		   		return ( [ $token . '>', $pos + 1 ] ) ;
+		   		   	else
+		   		   		return ( false ) ;
+		   		    }
 
 			// Tick character : consider it as a keyword, in the same way as the "TJ" or "Tj" keywords
 		   	case 	"'" :
-		   		return ( array ( "'", $index + 1 ) ) ;
+		   		return ( [ "'", $index + 1 ] ) ;
 
 			// Other cases : this may be either a floating-point number or a keyword
 		   	default :
@@ -1063,35 +1214,84 @@ class  PdfToText 	// extends Object
 		   		    }
 		   		else if  ( ctype_alpha ( $ch )  ||  $ch  ==  '/' )
 		   		   {
-					while  ( $index  <  $data_length  &&  ctype_alnum ( $data [ $index ] ) )
+					while  ( $index  <  $data_length  &&  ( ctype_alnum ( $data [ $index ] )  ||  $data [ $index ]  ==  '*' ) )
 						$value 	.=  $data [ $index ++ ] ;
 		   		    }
 
-		   		return ( array ( $value, $index ) ) ;
+		   		return ( [ $value, $index ] ) ;
 		    }
 	    }
 
 
+	// __extract_chars_from_array -
+	//	Extracts characters enclosed either within parentheses (character codes) or angle brackets (hex value)
+	//	from an array.
+	//	Example :
+	//
+	//		[<0D>-40<02>-36<03>-39<0E>-36<0F>-36<0B>-37<10>-37<10>-35(abc)]
+	//
+	// 	will return an array having the following entries :
+	//
+	//		<0D>, <02>, <03>, <0E>, <0F>, <0B>, <10>, <10>, (abc)
+	private function  __extract_chars_from_array ( $array )
+	   {
+		$length 	=  strlen ( $array ) - 1 ;
+		$result 	=  [] ;
+
+		for  ( $i = 0 ; $i  <  $length ; $i ++ )
+		   {
+		   	$ch 	=  $array [$i] ;
+
+			if  ( $ch  ==  '(' )
+				$endch 	=  ')' ;
+			else if  ( $ch  ==  '<' )
+				$endch 	=  '>' ;
+			else
+				continue ;
+
+			$char 	=  $ch ;
+			$i ++ ;
+
+			while  ( $i  <  $length )
+			   {
+			   	if  ( $array [$i]  ==  '\\' )
+			   		$char 	.=  '\\' . $array [++$i] ;
+				else
+					$char 	.=  $array [$i] ;
+
+				if  ( $array [$i]  ==  $endch )
+					break ;
+
+				$i ++ ;
+			   }
+
+			$result [] 	=  $char ;
+		    }
+
+		return ( $result ) ;
+	    }
+
+
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	    NAME
-	        Unescapes - Processes escape sequences from the specified string.
-	
+	        Unescape - Processes escape sequences from the specified string.
+
 	    PROTOTYPE
 	        $value	=  $this -> Unescape ( $text ) ;
-	
+
 	    DESCRIPTION
-	        Processes escape sequences within the specified text. The recognized escape sequences are like the 
+	        Processes escape sequences within the specified text. The recognized escape sequences are like the
 		C-language ones : \b (backspace), \f (form feed), \r (carriage return), \n (newline), \t (tab).
 		All other characters prefixed by "\" are returned as is.
-	
+
 	    PARAMETERS
 	        $text (string) -
 	                Text to be unescaped.
-	
+
 	    RETURN VALUE
 	        Returns the unescaped value of $text.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function   Unescape ( $text )
 	   {
@@ -1129,9 +1329,9 @@ class  PdfToText 	// extends Object
 
     PdfTexterFontTable class -
         The PdfTexterFontTable class is not supposed to be used outside the context of the PdfToText class.
-	Its purposes are to hold a list of font definitions taken from a pdf document, along with their 
+	Its purposes are to hold a list of font definitions taken from a pdf document, along with their
 	associated character mapping tables, if any.
-	This is why no provision has been made to design this class a a general purpose class ; its utility 
+	This is why no provision has been made to design this class a a general purpose class ; its utility
 	exists only in the scope of the PdfToText class.
 
   ==============================================================================================================*/
@@ -1139,7 +1339,8 @@ class 	PdfTexterFontTable 	// extends Object
    {
 	// Font table
 	private		$Fonts		=  [] ;
-
+	// Font mapping between a font number and an object number
+	private 	$FontMap 	=  [] ;
 
 	// Constructor -
 	//	Well, does not do anything special
@@ -1152,9 +1353,15 @@ class 	PdfTexterFontTable 	// extends Object
 	// Add -
 	//	Adds the current font declaration to the font table. Handles special cases where font id is not
 	//	given by the object id, but rather by <</Rx...>> constructs
-	public function  Add ( $object_id, $font_definition ) 
+	public function  Add ( $object_id, $font_definition )
 	   {
-		if  ( preg_match ( '#<< \s* (?P<rscdefs> /R\d+ .*) >>#ix', $font_definition, $match ) )
+		if  ( PdfToText::$DEBUG )
+		   {
+	   		echo "----------------------------------- FONT #$object_id\n" ;
+			echo $font_definition ;
+		    }
+
+	   	if  ( preg_match ( '#<< \s* (?P<rscdefs> /R\d+ .*) >>#ix', $font_definition, $match ) )
 		   {
 			$resource_definitions	=  $match [ 'rscdefs' ] ;
 
@@ -1171,7 +1378,7 @@ class 	PdfTexterFontTable 	// extends Object
 				$this -> Fonts [ $font_id ]	=  new  PdfTexterFont ( $font_id, $cmap_id ) ;
 			    }
 		    }
-		else 
+		else
 		   {
 			if  ( preg_match ( '#/ToUnicode \s* (?P<cmap> \d+)#ix', $font_definition, $match ) )
 				$cmap_id	=  $match [ 'cmap' ] ;
@@ -1179,6 +1386,21 @@ class 	PdfTexterFontTable 	// extends Object
 				$cmap_id	=  0 ;
 
 			$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id ) ;
+		    }
+	    }
+
+
+	// AddFontMap -
+	//	Process things like :
+	//		<</F1 26 0 R/F2 22 0 R/F3 18 0 R>>
+	//	which maps font 1 (when specified with the /Fx instruction) to object 26,
+	//	2 to object 22 and 3 to object 18, respectively, in the above example.
+	public function  AddFontMap ( $object_id, $object_data )
+	   {
+		if  ( preg_match_all ( '#/F(?P<font> \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		   {
+		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
+		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
 		    }
 	    }
 
@@ -1201,6 +1423,16 @@ class 	PdfTexterFontTable 	// extends Object
 	    }
 
 
+	// GetFontByMapId -
+	//	Returns the font id (object id) associated to the specified mapped id.
+	public function  GetFontByMapId ( $id )
+	   {
+		if  ( isset ( $this -> FontMap [ $id ] ) )
+			return ( $this -> FontMap [ $id ] ) ;
+		else
+			return ( -1 ) ;
+	    }
+
 	// IsFont -
 	//	Checks if the current object contents specify a font declaration.
 	public static function  IsFont ( $object_data )
@@ -1209,11 +1441,33 @@ class 	PdfTexterFontTable 	// extends Object
 	    }
 
 
+	// IsFontMap -
+	//	Checks if the code contains things like :
+	//		<</F1 26 0 R/F2 22 0 R/F3 18 0 R>>
+	//	which maps font 1 (when specified with the /Fx instruction) to object 26,
+	//	2 to object 22 and 3 to object 18, respectively, in the above example.
+	public static function  IsFontMap ( $object_data )
+	   {
+		if  ( preg_match ( '#<</F\d+\s+.*>>#', $object_data ) )
+			return ( true ) ;
+		else
+			return ( false ) ;
+	    }
+
+
 	// IsMapped -
 	//	Checks if the specified font has an associated character map.
 	public function  IsMapped ( $font )
 	   {
-		return ( isset ( $this -> Fonts [ $font ] )  && 
+		// For text contents that did not specify a font using the /Rx instruction,
+		// use the first declared font as the default font
+		if  ( $font  ==  -1 )
+		   {
+			reset ( $this -> Fonts ) ;
+			$font 	=  key ( $this -> Fonts ) ;
+		    }
+
+		return ( isset ( $this -> Fonts [ $font ] )  &&
 				$this -> Fonts [ $font ] -> CharacterMap ) ;
 	    }
 
@@ -1222,6 +1476,14 @@ class 	PdfTexterFontTable 	// extends Object
 	//	Returns the character associated to the specified one.
 	public function  MapCharacter ( $font, $ch )
 	   {
+		// For text contents that did not specify a font using the /Rx instruction,
+		// use the first declared font as the default font
+		if  ( $font  ==  -1 )
+		   {
+			reset ( $this -> Fonts ) ;
+			$font 	=  key ( $this -> Fonts ) ;
+		    }
+
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
 			return ( $this -> Fonts [ $font ] -> MapCharacter ( $ch ) ) ;
 		else
@@ -1236,7 +1498,7 @@ class 	PdfTexterFontTable 	// extends Object
     PdfTexterFont class -
         The PdfTexterFont class is not supposed to be used outside the context of the PdfToText class.
 	It holds an optional character mapping table associted with this font.
-	No provision has been made to design this class a a general purpose class ; its utility exists only in 
+	No provision has been made to design this class a a general purpose class ; its utility exists only in
 	the scope of the PdfToText class.
 
   ==============================================================================================================*/
@@ -1263,7 +1525,7 @@ class  PdfTexterFont		// extends Object
 	// MapCharacter -
 	//	Returns the substitution string value for the specified character, if the current font has an
 	//	associated character map, or the original character encoded in utf8, if not.
-	public function  MapCharacter ( $ch ) 
+	public function  MapCharacter ( $ch )
 	   {
 		if  ( $this -> CharacterMap )
 			return ( $this -> CharacterMap [ ord ( $ch ) ] ) ;
@@ -1278,7 +1540,7 @@ class  PdfTexterFont		// extends Object
     PdfTexterCharacterMap -
         The PdfTexterFont class is not supposed to be used outside the context of the PdfToText class.
 	Describes a character map.
-	No provision has been made to design this class a a general purpose class ; its utility exists only in 
+	No provision has been made to design this class a a general purpose class ; its utility exists only in
 	the scope of the PdfToText class.
 
   ==============================================================================================================*/
@@ -1294,13 +1556,19 @@ class	PdfTexterCharacterMap	// extends Object
 
 
 	// Constructor -
-	//	Analyzes the text contents of a CMAP and extracts mappings from the beginbfchar/endbfchar and 
+	//	Analyzes the text contents of a CMAP and extracts mappings from the beginbfchar/endbfchar and
 	//	beginbfrange/endbfrange constructs.
 	public function  __construct ( $object_id, $definitions )
 	   {
+		if  ( PdfToText::$DEBUG )
+		   {
+	   		echo "----------------------------------- CMAP #$object_id\n" ;
+			echo $definitions;
+		    }
+
 		preg_match ( '# /CMapName \s* /R (?P<num> \d+) #ix', $definitions, $match ) ;
 		$this -> ObjectId	=  $object_id ;
-		$this -> Id 		=  $match [ 'num' ] ;
+		$this -> Id 		=  isset ( $match [ 'num' ] ) ?  $match [ 'num' ] : -1 ;
 
 		// Process beginbfchar/endbfchar constructs
 		if  ( preg_match_all ( '/ beginbfchar \s* (?P<chars> .*?) endbfchar /imsx', $definitions, $char_matches ) )
@@ -1335,7 +1603,7 @@ class	PdfTexterCharacterMap	// extends Object
 					// Normal form :
 					//	<from><to><start>
 					//	Generates mappings from start+from to start+to.
-					if  ( preg_match ( '/ <\s* (?P<from> [0-9a-f]+) \s*> \s* <\s* (?P<to> [0-9a-f]+) \s* > \s* <\s* (?P<subst> [0-9a-f]+) \s* > /imx', 
+					if  ( preg_match ( '/ <\s* (?P<from> [0-9a-f]+) \s*> \s* <\s* (?P<to> [0-9a-f]+) \s* > \s* <\s* (?P<subst> [0-9a-f]+) \s* > /imx',
 									$range, $range_match ) )
 					   {
 						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
@@ -1349,7 +1617,7 @@ class	PdfTexterCharacterMap	// extends Object
 					//	<from><to>[ value1, value2, ... valuen ]
 					//	Generates mapping from "from" to "to" using the specified values. The value count
 					//	between square brackets must be the same as to - from + 1.
-				   	else if  ( preg_match ( '/ < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* \[(?P<subst> .*?)\] /imx', 
+				   	else if  ( preg_match ( '/ < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* \[(?P<subst> .*?)\] /imx',
 									$range, $range_match ) )
 					   {
 						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
@@ -1370,15 +1638,14 @@ class	PdfTexterCharacterMap	// extends Object
 	//	Checks if the specified text contents represent a character map definition or not.
 	public static function  IsCharacterMap  ( $decoded_data )
 	   {
-		return ( stripos ( $decoded_data, 'CMapName' )  !==  false  &&
-				preg_match ( '# /CMapName \s* /R (?P<num> \d+) #ix', $decoded_data ) ) ;
+		return ( stripos ( $decoded_data, 'begincmap' )  !==  false ) ;
 	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
-	
+
 	        Interface implementations.
-	
+
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  count ( )
 	   { return ( count ( $this -> Map ) ) ; }
@@ -1392,14 +1659,14 @@ class	PdfTexterCharacterMap	// extends Object
 	   {
 		if  ( isset ( $this -> Map [ $offset ] ) )
 			return ( mb_convert_encoding ( '&#' . sprintf ( '%d', $this -> Map [ $offset ] ) . ';', 'UTF-8', 'HTML-ENTITIES' ) ) ;
-		else 
-			return ( '&#' .  sprintf ( '%d', $offset ) . ';' ) ;
+		else
+			return ( chr ( $offset ) ) ;
 	    }
 
 	public function  offsetSet ( $offset, $value )
 	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
 
-	public function  offsetUnset ( $offset ) 
+	public function  offsetUnset ( $offset )
 	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
 
     }
