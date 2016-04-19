@@ -202,6 +202,21 @@
 
 		The object number being the one referenced by the /ToUnicode option of a font declaration.
 
+	CHARACTER MAPS II
+		Another form of character map can be specified in a font declaration using the following
+		form :
+
+			/Encoding x 0 R
+
+		where "x" is the number of an object containing  a definition of the form :
+
+			<</Type/Encoding/BaseEncoding/WinAnsiEncoding/Differences[
+			1/C/h/r/i/s/t/a/n/space/V/g/S/o/m/e/d
+			/seven/two/zero/L/M/l/colon/c/period/v/at/f]>>
+
+		Each character in the text to be drawn references an entry in this table, where substitutions
+		are specified between angle brackets.
+
 	TEXT DRAWING OBJECTS
 		Text drawing objects contain a sequence of operators for drawing text. They are too numerous
 		to be listed here, but the ones that are of interest for us are described below :
@@ -299,7 +314,7 @@
  ==============================================================================================================*/
 class  PdfToText 	// extends Object
    {
-	public static 		$DEBUG 		=  true ;
+	public static 		$DEBUG 		=  false ;
 
 	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
 	const 	PDF_UNKNOWN_ENCODING 		=  0 ;
@@ -401,6 +416,16 @@ class  PdfToText 	// extends Object
 				$this -> FontTable -> Add ( $object_number, $object_data ) ;
 				continue ;
 			    }
+			// Some character maps may also be in clear text
+			else if  ( PdfTexterCharacterMap::IsCharacterMap ( $object_data ) )
+			    {
+				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
+
+				if  ( $cmap )
+					$cmaps [] 	=  $cmap ;
+
+				continue ;
+			    }
 			// Check if there is an association between font number and object number
 			else if  ( PdfTexterFontTable::IsFontMap ( $object_data ) )
 		   	   {
@@ -425,8 +450,11 @@ class  PdfToText 	// extends Object
 			// Check for character maps
 			if  ( PdfTexterCharacterMap::IsCharacterMap ( $decoded_stream_data ) )
 			   {
-				$cmaps []	=  new PdfTexterCharacterMap ( $object_number, $decoded_stream_data ) ;
-			    }
+				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $decoded_stream_data ) ;
+
+				if  ( $cmap )
+					$cmaps [] 	=  $cmap ;
+			   }
 			// Font definitions
 			else if  ( PdfTexterFontTable::IsFont ( $decoded_stream_data ) )
 			   {
@@ -831,7 +859,7 @@ class  PdfToText 	// extends Object
 			   {
 				// "Tm" : Output text on the same line, if the "y" coordinates are equal
 			   	case 	'goto' :
-			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y )
+			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y  ||  abs ( $instruction [ 'y' ] - $last_goto_y )  <  $current_font_size )
 			   		   {
 			   			$use_same_line 		=  true ;
 			   			$extra_newlines 	=  0 ;
@@ -869,12 +897,16 @@ class  PdfToText 	// extends Object
 			   		   	if  ( $instruction [ 'leading' ]  &&  $text_leading  &&  $current_font_size )
 			   		   	   {
 			   		   		$count 	=  ( integer ) ( ( $text_leading - $current_font_size ) / $current_font_size ) ;
-			   		   		$extra	=  str_repeat ( PHP_EOL, $count ) ;
+
+			   		   		if  ( ! $count )
+			   		   			$count 	=  1 ;
 			   		   	    }
 			   		   	else
-			   		   		$extra 	=  PHP_EOL ;
+			   		   		$count 	=  1 ;
 
+		   		   		$extra		 =  str_repeat ( PHP_EOL, $count ) ;
 			   			$result 	.=  $extra ;
+						$last_goto_y 	-=  ( $count * $text_leading ) ;	// Approximation on y-coord change
 			   		    }
 
 			   		break ;
@@ -896,19 +928,25 @@ class  PdfToText 	// extends Object
 					// Fonts having character maps will require some special processing
 					if  ( $this -> FontTable -> IsMapped ( $current_font ) )
 					   {
-						// Lop through each text value
+					   	// Lop through each text value
 			   			foreach  ( $instruction [ 'values' ]  as  $text )
 			   			   {
 			   		   		$is_hex 	=  ( $text [0]  ==  '<' ) ;
 			   			   	$length 	=  strlen ( $text ) - 2 ;
 			   			   	$text 		=  substr ( $text, 1, $length ) ;
 
-			   			   	// Characters are encoded within angle brackets ( "<>" ). There is a single value in it
+			   			   	// Characters are encoded within angle brackets ( "<>" ).
 			   			   	if  ( $is_hex )
 			   			   	   {
-			   			   		$ch 	=  ( hex2bin ( $text ) ) ;
+								$width 	=  $this -> FontTable -> GetMapWidth ( $current_font ) ;
 
-			   			   		$result .= $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+			   			   	   	for  ( $i = 0 ; $i  <  $length ; $i += $width )
+			   			   	   	   {
+			   			   	   	   	$value 	=  str_pad ( substr ( $text, $i, $width ), $width, '0', STR_PAD_LEFT ) ;
+			   			   	   	   	$ch 	=  hexdec ( $value ) ;
+
+			   			   			$result .= $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+			   			   	   	    }
 			   			   	    }
 							// Character strings within parentheses.
 							// For every text value, use the character map table for substitutions
@@ -932,17 +970,37 @@ class  PdfToText 	// extends Object
 				   		   			    }
 
 									// Add substituted character to the output result
-									$result		.=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+									$result		.=  $this -> FontTable -> MapCharacter ( $current_font, ord ( $ch ) ) ;
 				   		   		    }
 							    }
 			   		   	    }
 			   		    }
 					// For fonts having no associated character map, we simply encode the string in UTF8
 					// after the C-like escape sequences have been processed
+					// Note that <xxxx> constructs can be encountered here, so we have to process them as well
 			   		else
 			   		   {
 			   			foreach  ( $instruction [ 'values' ]  as  $text )
-			   				$result 	.=  utf8_encode ( $this -> Unescape ( substr ( $text, 1, strlen ( $text ) - 2 ) ) ) ;
+			   			   {
+			   			   	$is_hex 	=  ( $text [0]  ==  '<' ) ;
+			   			   	$length 	=  strlen ( $text ) - 2 ;
+			   			   	$text 		=  substr ( $text, 1, $length ) ;
+
+			   			   	// Characters are encoded within angle brackets ( "<>" )
+			   			   	if  ( $is_hex )
+			   			   	   {
+			   			   	   	for  ( $i = 0 ; $i  <  $length ; $i += 4 )
+			   			   	   	   {
+			   			   	   	   	$value 	=  str_pad ( substr ( $text, $i, 4 ), 4, '0', STR_PAD_LEFT ) ;
+			   			   	   	   	$ch 	=  hexdec ( $value ) ;
+
+			   			   			$result .= mb_convert_encoding ( '&#' . sprintf ( '%d', $ch ) . ';',
+			   			   					'UTF-8', 'HTML-ENTITIES' ) ;
+			   			   	   	    }
+			   			   	    }
+			   			   	else
+			   					$result 	.=  utf8_encode ( $this -> Unescape ( $text ) ) ;
+			   			   }
 			   		    }
 			    }
 
@@ -950,8 +1008,6 @@ class  PdfToText 	// extends Object
 			// on the current or following line
 			$last_instruction 	=  $instruction ;
 		    }
-
-		$result 	.=  PHP_EOL . "\f" ;
 
 		// I noticed, with the RTF specification file sample, that the hyphen in hyphenated words can be placed on a
 		// separate line ; try to correct this, although it does not seem pertinent
@@ -1025,7 +1081,7 @@ class  PdfToText 	// extends Object
 			   	else
 					return ( $instruction ) ;
 			    }
-		   	else if  ( $token [0]  ==  '<' )
+		   	else if  ( $token [0]  ==  '<'  &&  ctype_xdigit ( $token [1] ) )
 			   {
 			   	$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
 			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ] ] ;
@@ -1096,6 +1152,7 @@ class  PdfToText 	// extends Object
 		   	case 	"[" :
 		   		$pos 		=  $index + 1 ;
 		   		$parent 	=  0 ;
+		   		$angle 	=  0 ;
 		   		$result		=  $ch ;
 
 		   		while  ( $pos  <  $data_length )
@@ -1114,6 +1171,16 @@ class  PdfToText 	// extends Object
 		   			   		$result 	.=  $nch ;
 		   			   		break ;
 
+		   			   	case 	'<' :
+		   			   		$angle ++ ;
+		   			   		$result 	.=  $nch ;
+		   			   		break ;
+
+		   			   	case 	'>' :
+		   			   		$angle -- ;
+		   			   		$result 	.=  $nch ;
+		   			   		break ;
+
 		   			   	case 	'\\' :
 		   					$result 	.=  $nch . $data [ $pos ++ ] ;
 		   					break ;
@@ -1121,7 +1188,7 @@ class  PdfToText 	// extends Object
 		   			   	case 	']' :
 		   					$result 	.=  ']' ;
 
-		   					if  ( ! $parent )
+		   					if  ( ! $parent  ||  ! $angle )
 		   						break  2 ;
 		   					else
 		   						break ;
@@ -1160,8 +1227,7 @@ class  PdfToText 	// extends Object
 		   	case 	'<' :
 		   		if (  isset ( $data [ $index + 1 ] )  &&  $data [ $index + 1 ]  ==  '<' )
 		   		   {
-		   		   	echo "in <<" ; exit ;
-		   			$pos 	=  strpos ( $data, '>>', $index + 1 ) ;
+		   		   	$pos 	=  strpos ( $data, '>>', $index + 1 ) ;
 
 		   			if  ( $pos  ===  false )
 		   				return ( false ) ;
@@ -1172,26 +1238,24 @@ class  PdfToText 	// extends Object
 		   		    }
 		   		else if  ( isset ( $data [ $index + 1 ] )  &&  ! ctype_xdigit ( $data [ $index + 1 ] ) )
 		   		   {
-		   		   	echo "here";exit;
-		   			$pos 	=  strpos ( $data, '>', $index + 1 ) ;
+		   		   	$pos 	=  strpos ( $data, '>', $index + 1 ) ;
 
 		   			if  ( $pos  ===  false )
 		   				return ( false ) ;
 
 		   			$token 	=  substr ( $data, $index, $pos - $index + 2 ) ;
 
-		   			return ( [ $token, $pos + 2 ] ) ;
+		   			return ( [ $token, $pos + 1 ] ) ;
 		   		   }
 		   		else
 		   		   {
-		   		   	echo "there";exit;
 		   		   	$token 	=  '<' ;
 		   		   	$pos 	=  $index + 1 ;
 
-		   		   	while  ( $pos  <  $data_length  &&  ( ctype_xdigit ( $data [ $pos ] )  ||  $data [ $pos ]  ==  '>' ) )
+		   		   	while  ( $pos  <  $data_length  &&  ctype_xdigit ( $data [ $pos ] ) )
 		   		   		$token 	.=  $data [ $pos ++ ] ;
 
-		   		   	if  ( $pos  <  $data_length  &&  $token [ $pos ]  ==  '>' )
+		   		   	if  ( $pos  <  $data_length  &&  $data[ $pos ]  ==  '>' )
 		   		   		return ( [ $token . '>', $pos + 1 ] ) ;
 		   		   	else
 		   		   		return ( false ) ;
@@ -1252,7 +1316,7 @@ class  PdfToText 	// extends Object
 			$char 	=  $ch ;
 			$i ++ ;
 
-			while  ( $i  <  $length )
+			while  ( $i  <  $length  &&  $array [$i]  !=  $endch )
 			   {
 			   	if  ( $array [$i]  ==  '\\' )
 			   		$char 	.=  '\\' . $array [++$i] ;
@@ -1265,7 +1329,7 @@ class  PdfToText 	// extends Object
 				$i ++ ;
 			   }
 
-			$result [] 	=  $char ;
+			$result [] 	 =  $char . $endch ;
 		    }
 
 		return ( $result ) ;
@@ -1378,15 +1442,14 @@ class 	PdfTexterFontTable 	// extends Object
 				$this -> Fonts [ $font_id ]	=  new  PdfTexterFont ( $font_id, $cmap_id ) ;
 			    }
 		    }
+		else if  ( preg_match ( '#/ToUnicode \s* (?P<cmap> \d+)#ix', $font_definition, $match ) )
+			$cmap_id	=  $match [ 'cmap' ] ;
+		else if  ( preg_match ( '#/Encoding \s+ (?P<cmap> \d+) \s+ \d+ #ix', $font_definition, $match ) )
+			$cmap_id 	=  $match [ 'cmap' ] ;
 		else
-		   {
-			if  ( preg_match ( '#/ToUnicode \s* (?P<cmap> \d+)#ix', $font_definition, $match ) )
-				$cmap_id	=  $match [ 'cmap' ] ;
-			else
-				$cmap_id	=  0 ;
+			$cmap_id 	=  0 ;
 
-			$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id ) ;
-		    }
+		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id ) ;
 	    }
 
 
@@ -1472,6 +1535,30 @@ class 	PdfTexterFontTable 	// extends Object
 	    }
 
 
+	// GetMapWidth -
+	//	Returns the number of hex digits needed to represent a character in the specified font.
+	public function  GetMapWidth ( $font )
+	   {
+		// For text contents that did not specify a font using the /Rx instruction,
+		// use the first declared font as the default font
+		if  ( $font  ==  -1 )
+		   {
+			reset ( $this -> Fonts ) ;
+			$font 	=  key ( $this -> Fonts ) ;
+		    }
+
+		if  ( isset ( $this -> Fonts [ $font ] )  &&  $this -> Fonts [ $font ] -> CharacterMap )
+		   {
+			$width 	=  $this -> Fonts [ $font ] -> CharacterMap -> HexCharWidth ;
+
+			if  ( $width )
+				return ( $width ) ;
+		    }
+
+		return ( 4 ) ; 		// Should never happen!
+	    }
+
+
 	// MapCharacter -
 	//	Returns the character associated to the specified one.
 	public function  MapCharacter ( $font, $ch )
@@ -1487,7 +1574,7 @@ class 	PdfTexterFontTable 	// extends Object
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
 			return ( $this -> Fonts [ $font ] -> MapCharacter ( $ch ) ) ;
 		else
-			return ( utf8_encode ( $ch ) ) ;
+			return ( utf8_encode ( chr ( $ch ) ) ) ;
 	    }
     }
 
@@ -1528,9 +1615,9 @@ class  PdfTexterFont		// extends Object
 	public function  MapCharacter ( $ch )
 	   {
 		if  ( $this -> CharacterMap )
-			return ( $this -> CharacterMap [ ord ( $ch ) ] ) ;
+			return ( $this -> CharacterMap [ $ch ] ) ;
 		else
-			return ( utf8_encode ( $ch ) ) ;
+			return ( chr ( $ch ) ) ;
 	    }
     }
 
@@ -1544,15 +1631,84 @@ class  PdfTexterFont		// extends Object
 	the scope of the PdfToText class.
 
   ==============================================================================================================*/
-class	PdfTexterCharacterMap	// extends Object
-				implements  \ArrayAccess, \Countable
+abstract class	PdfTexterCharacterMap	// extends Object
+					implements  \ArrayAccess, \Countable
    {
 	// Object id of the character map
 	public		$ObjectId ;
+
+
+
+	public function  __construct ( $object_id )
+	   {
+		//parent::__construct ( ) ;
+		$this -> ObjectId	=  $object_id ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    CreateInstance -
+	        Creates a PdfTexterCharacterMap instance of the correct type.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  CreateInstance ( $object_id, $definitions )
+	   {
+		if  ( stripos ( $definitions, 'begincmap' ) )
+			return ( new PdfTexterUnicodeMap ( $object_id, $definitions ) ) ;
+		else if  ( stripos ( $definitions, '/Differences' ) )
+			return ( new PdfTexterEncodingMap ( $object_id, $definitions ) ) ;
+		else
+			return ( false ) ;
+	    }
+
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    IsCharacterMap -
+	        Checks if the specified text contents represent a character map definition or not.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  IsCharacterMap  ( $decoded_data )
+	   {
+		return ( stripos ( $decoded_data, 'begincmap' )  	!==  false  ||
+			 stripos ( $decoded_data, '/Differences' )	!==  false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	        Interface implementations.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	abstract function  count 		( ) ;
+	abstract function  offsetExists 	( $offset ) ;
+	abstract function  offsetGet 		( $offset ) ;
+
+	public function  offsetSet ( $offset, $value )
+	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+
+	public function  offsetUnset ( $offset )
+	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+    }
+
+
+
+/*==============================================================================================================
+
+    PdfTexterUnicodeMap -
+        A class for fonts having a character map specified with the /ToUnicode parameter.
+
+  ==============================================================================================================*/
+    class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
+    {
 	// Id of the character map (specified by the /Rx flag)
 	public		$Id	;
 	// Character substitution table
 	protected	$Map			=  [] ;
+	// Number of hex digits in a character represented in hexadecimal notation
+	public 		$HexCharWidth ;
 
 
 	// Constructor -
@@ -1560,15 +1716,22 @@ class	PdfTexterCharacterMap	// extends Object
 	//	beginbfrange/endbfrange constructs.
 	public function  __construct ( $object_id, $definitions )
 	   {
+		parent::__construct ( $object_id ) ;
+
 		if  ( PdfToText::$DEBUG )
 		   {
-	   		echo "----------------------------------- CMAP #$object_id\n" ;
+	   		echo "----------------------------------- UNICODE CMAP #$object_id\n" ;
 			echo $definitions;
 		    }
 
+		// Retrieve the cmap id, if any
 		preg_match ( '# /CMapName \s* /R (?P<num> \d+) #ix', $definitions, $match ) ;
-		$this -> ObjectId	=  $object_id ;
 		$this -> Id 		=  isset ( $match [ 'num' ] ) ?  $match [ 'num' ] : -1 ;
+
+		// Get the codespace range, which will give us the width of a character specified in hexadecimal notation
+		preg_match ( '# begincodespacerange \s+ <\s* (?P<low> [0-9a-f]+) \s*> \s* <\s* (?P<high> [0-9a-f]+) \s*> \s*endcodespacerange #ix', $definitions, $match ) ;
+
+		$this -> HexCharWidth 	=  max ( strlen ( $match [ 'low' ] ), strlen ( $match [ 'high' ] ) ) ;
 
 		// Process beginbfchar/endbfchar constructs
 		if  ( preg_match_all ( '/ beginbfchar \s* (?P<chars> .*?) endbfchar /imsx', $definitions, $char_matches ) )
@@ -1595,7 +1758,7 @@ class	PdfTexterCharacterMap	// extends Object
 		   {
 			foreach  ( $range_matches [ 'ranges' ]  as  $range_list )
 			   {
-				$ranges 	=  explode ( "\n", trim ( $range_list ) ) ;
+			   	$ranges 	=  explode ( "\n", trim ( $range_list ) ) ;
 
 				// Loop through each range definition
 				foreach  ( $ranges  as  $range )
@@ -1630,16 +1793,7 @@ class	PdfTexterCharacterMap	// extends Object
 				   }
 			    }
 		    }
-
-	    }
-
-
-	// IsCharacterMap -
-	//	Checks if the specified text contents represent a character map definition or not.
-	public static function  IsCharacterMap  ( $decoded_data )
-	   {
-		return ( stripos ( $decoded_data, 'begincmap' )  !==  false ) ;
-	    }
+	     }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -1658,7 +1812,12 @@ class	PdfTexterCharacterMap	// extends Object
 	public function  offsetGet ( $offset )
 	   {
 		if  ( isset ( $this -> Map [ $offset ] ) )
-			return ( mb_convert_encoding ( '&#' . sprintf ( '%d', $this -> Map [ $offset ] ) . ';', 'UTF-8', 'HTML-ENTITIES' ) ) ;
+		   {
+		   	$entity 	=  '&#' . sprintf ( "%d", $this -> Map [ $offset ] ) . ';' ;
+		   	$result 	=  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ;
+
+			return ( $result ) ;
+		    }
 		else
 			return ( chr ( $offset ) ) ;
 	    }
@@ -1670,3 +1829,358 @@ class	PdfTexterCharacterMap	// extends Object
 	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
 
     }
+
+
+
+/*==============================================================================================================
+
+    PdfTexterEncodingMap -
+        A class for fonts having a character map specified with the /Encoding parameter.
+
+  ==============================================================================================================*/
+class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
+   {
+	// Possible encodings (there is a 5th one, MacExpertEncoding, but used for "expert fonts" ; no need to deal
+	// with it here since we only want to extract text)
+	// Note that the values of these constants are direct indices to the second dimension of the $Encodings table
+	const 	PDF_STANDARD_ENCODING 		=  0 ;
+	const 	PDF_MAC_ROMAN_ENCODING 		=  1 ;
+	const 	PDF_WIN_ANSII_ENCODING 		=  2 ;
+	const 	PDF_DOC_ENCODING 		=  3 ;
+
+	// Correspondance between an encoding name and its corresponding character in the
+	// following format : Standard, Mac, Windows, Pdf
+	private static 		$Encodings 	=
+	   [
+		'A'			=>  [ 0101, 0101, 0101, 0101 ],
+	   	'AE'			=>  [ 0341, 0256, 0306, 0306 ],
+	   	'Aacute'		=>  [    0, 0347, 0301, 0301 ],
+	   	'Acircumflex'		=>  [    0, 0345, 0302, 0302 ],
+		'Adieresis'		=>  [    0, 0200, 0304, 0304 ],
+		'Agrave'		=>  [    0, 0313, 0300, 0300 ],
+		'Aring'			=>  [    0, 0201, 0305, 0305 ],
+		'Atilde'		=>  [    0, 0314, 0303, 0303 ],
+		'B'			=>  [ 0102, 0102, 0102, 0102 ],
+	   	'C' 			=>  [ 0103, 0103, 0103, 0103 ],
+		'Ccedilla'		=>  [    0, 0202, 0307, 0307 ],
+		'D'			=>  [ 0104, 0104, 0104, 0104 ],
+	   	'E' 			=>  [ 0105, 0105, 0105, 0105 ],
+		'Eacute'		=>  [    0, 0203, 0311, 0311 ],
+		'Ecircumflex'		=>  [    0, 0346, 0312, 0312 ],
+		'Edieresis'		=>  [    0, 0350, 0313, 0313 ],
+		'Egrave'		=>  [    0, 0351, 0310, 0310 ],
+		'Eth' 			=>  [    0,    0, 0320, 0320 ],
+		'Euro'			=>  [    0,    0, 0200, 0240 ],
+		'F'			=>  [ 0106, 0106, 0106, 0106 ],
+		'G'			=>  [ 0107, 0107, 0107, 0107 ],
+		'H'			=>  [ 0110, 0110, 0110, 0110 ],
+		'I'			=>  [ 0111, 0111, 0111, 0111 ],
+	   	'Iacute'		=>  [    0, 0352, 0315, 0315 ],
+	   	'Icircumflex'		=>  [    0, 0353, 0316, 0316 ],
+		'Idieresis'		=>  [    0, 0354, 0317, 0317 ],
+		'Igrave'		=>  [    0, 0355, 0314, 0314 ],
+		'J'			=>  [ 0112, 0112, 0112, 0112 ],
+		'K'			=>  [ 0113, 0113, 0113, 0113 ],
+		'L'			=>  [ 0114, 0114, 0114, 0114 ],
+		'Lslash'		=>  [ 0350,    0,    0, 0225 ],
+		'M'			=>  [ 0115, 0115, 0115, 0115 ],
+		'N'			=>  [ 0116, 0116, 0116, 0116 ],
+		'Ntilde'		=>  [    0, 0204, 0321, 0321 ],
+	   	'O'			=>  [ 0117, 0117, 0117, 0117 ],
+		'OE' 			=>  [ 0352, 0316, 0214, 0226 ],
+		'Oacute' 		=>  [    0, 0356, 0323, 0323 ],
+		'Ocircumflex'		=>  [    0, 0357, 0324, 0324 ],
+		'Odieresis'		=>  [    0, 0205, 0326, 0326 ],
+		'Ograve'		=>  [    0, 0361, 0322, 0322 ],
+		'Oslash' 		=>  [ 0351, 0257, 0330, 0330 ],
+		'Otilde' 		=>  [    0, 0315, 0325, 0325 ],
+	   	'P'			=>  [ 0120, 0120, 0120, 0120 ],
+	   	'Q'			=>  [ 0121, 0121, 0121, 0121 ],
+	   	'R'			=>  [ 0122, 0122, 0122, 0122 ],
+	   	'S'			=>  [ 0123, 0123, 0123, 0123 ],
+		'Scaron'		=>  [    0,    0, 0212, 0227 ],
+		'T'			=>  [ 0124, 0124, 0124, 0124 ],
+		'Thorn'			=>  [    0,    0, 0336, 0336 ],
+		'U'			=>  [ 0125, 0125, 0125, 0125 ],
+		'Uacute'		=>  [    0, 0362, 0332, 0332 ],
+		'Ucircumflex'		=>  [    0, 0363, 0333, 0333 ],
+		'Udieresis'		=>  [    0, 0206, 0334, 0334 ],
+		'Ugrave'		=>  [    0, 0364, 0331, 0331 ],
+		'V'			=>  [ 0126, 0126, 0126, 0126 ],
+		'W'			=>  [ 0127, 0127, 0127, 0127 ],
+		'X'			=>  [ 0130, 0130, 0130, 0130 ],
+		'Y'			=>  [ 0131, 0131, 0131, 0131 ],
+		'Yacute'		=>  [    0,    0, 0335, 0335 ],
+		'Ydieresis'		=>  [    0, 0331, 0237, 0230 ],
+		'Z'			=>  [ 0132, 0132, 0132, 0132 ],
+	   	'Zcaron'		=>  [    0,    0, 0216, 0231 ],
+		'a' 			=>  [ 0141, 0141, 0141, 0141 ],
+		'aacute'		=>  [    0, 0207, 0341, 0341 ],
+		'acircumflex'		=>  [    0, 0211, 0342, 0342 ],
+		'acute'			=>  [ 0302, 0253, 0264, 0264 ],
+		'adieresis'		=>  [    0, 0212, 0344, 0344 ],
+		'ae'			=>  [ 0361, 0276, 0346, 0346 ],
+		'agrave' 		=>  [    0, 0210, 0340, 0340 ],
+		'ampersand' 		=>  [ 0046, 0046, 0046, 0046 ],
+		'aring' 		=>  [    0, 0214, 0345, 0345 ],
+		'asciicircum' 		=>  [ 0136, 0136, 0136, 0136 ],
+		'asciitilde'		=>  [ 0176, 0176, 0176, 0176 ],
+		'asterisk' 		=>  [ 0052, 0052, 0052, 0052 ],
+		'at'			=>  [ 0100, 0100, 0100, 0100 ],
+		'atilde'		=>  [    0, 0213, 0343, 0343 ],
+		'b' 			=>  [ 0142, 0142, 0142, 0142 ],
+		'backslash' 		=>  [ 0134, 0134, 0134, 0134 ],
+		'bar' 			=>  [ 0174, 0174, 0174, 0174 ],
+		'braceleft'		=>  [ 0173, 0173, 0173, 0173 ],
+		'braceright' 		=>  [ 0175, 0175, 0175, 0175 ],
+		'bracketleft' 		=>  [ 0133, 0133, 0133, 0133 ],
+		'bracketright' 		=>  [ 0135, 0135, 0135, 0135 ],
+		'breve'			=>  [ 0306, 0371,    0, 0030 ],
+		'brokenbar' 		=>  [    0,    0, 0246, 0246 ],
+		'bullet' 		=>  [ 0267, 0245, 0225, 0200 ],
+		'c'			=>  [ 0143, 0143, 0143, 0143 ],
+		'caron'			=>  [ 0317, 0377,    0, 0031 ],
+		'ccedilla'		=>  [    0, 0215, 0347, 0347 ],
+		'cedilla'		=>  [ 0313, 0374, 0270, 0270 ],
+		'cent' 			=>  [ 0242, 0242, 0242, 0242 ],
+		'circumflex' 		=>  [ 0303, 0366, 0210, 0032 ],
+		'colon' 		=>  [ 0072, 0072, 0072, 0072 ],
+		'comma'			=>  [ 0054, 0054, 0054, 0054 ],
+		'copyright'		=>  [    0, 0251, 0251, 0251 ],
+		'currency'		=>  [ 0250, 0333, 0244, 0244 ],
+		'd'			=>  [ 0144, 0144, 0144, 0144 ],
+		'dagger' 		=>  [ 0262, 0240, 0206, 0201 ],
+		'daggerdbl' 		=>  [ 0263, 0340, 0207, 0202 ],
+		'degree' 		=>  [    0, 0241, 0260, 0260 ],
+		'dieresis'		=>  [ 0310, 0254, 0250, 0250 ],
+		'divide' 		=>  [    0, 0326, 0367, 0367 ],
+		'dollar' 		=>  [ 0044, 0044, 0044, 0044 ],
+		'dotaccent' 		=>  [ 0307, 0372,    0, 0033 ],
+		'dotlessi'		=>  [ 0365, 0365,    0, 0232 ],
+		'e' 			=>  [ 0145, 0145, 0145, 0145 ],
+		'eacute'		=>  [    0, 0216, 0351, 0351 ],
+		'ecircumflex'		=>  [    0, 0220, 0352, 0352 ],
+		'edieresis' 		=>  [    0, 0221, 0353, 0353 ],
+		'egrave'		=>  [    0, 0217, 0350, 0350 ],
+		'eight' 		=>  [ 0070, 0070, 0070, 0070 ],
+		'ellipsis' 		=>  [ 0274, 0311, 0205, 0203 ],
+		'emdash' 		=>  [ 0320, 0321, 0227, 0204 ],
+		'endash' 		=>  [ 0261, 0320, 0226, 0205 ],
+		'equal' 		=>  [ 0075, 0075, 0075, 0075 ],
+		'eth'			=>  [    0,    0, 0360, 0360 ],
+		'exclam' 		=>  [ 0041, 0041, 0041, 0041 ],
+		'exclamdown' 		=>  [ 0241, 0301, 0241, 0241 ],
+		'f' 			=>  [ 0146, 0146, 0146, 0146 ],
+		'fi' 			=>  [ 0256, 0336,    0, 0223 ],
+		'five' 			=>  [ 0065, 0065, 0065, 0065 ],
+		'fl' 			=>  [ 0257, 0337,    0, 0224 ],
+		'florin' 		=>  [ 0246, 0304, 0203, 0206 ],
+		'four'			=>  [ 0064, 0064, 0064, 0064 ],
+		'fraction'		=>  [ 0244, 0332,    0, 0207 ],
+		'g' 			=>  [ 0147, 0147, 0147, 0147 ],
+		'germandbls'		=>  [ 0373, 0247, 0337, 0337 ],
+		'grave' 		=>  [ 0301, 0140, 0140, 0140 ],
+		'greater' 		=>  [ 0076, 0076, 0076, 0076 ],
+		'guillemotleft'		=>  [ 0253, 0307, 0253, 0253 ],
+		'guillemotright' 	=>  [ 0273, 0310, 0273, 0273 ],
+		'guilsinglleft'		=>  [ 0254, 0334, 0213, 0210 ],
+		'guilsinglright'	=>  [ 0255, 0335, 0233, 0211 ],
+		'h'			=>  [ 0150, 0150, 0150, 0150 ],
+		'hungarumlaut'		=>  [ 0315, 0375,    0, 0034 ],
+		'hyphen' 		=>  [ 0055, 0055, 0055, 0055 ],
+		'i' 			=>  [ 0151, 0151, 0151, 0151 ],
+		'iacute'		=>  [    0, 0222, 0355, 0355 ],
+		'icircumflex' 		=>  [    0, 0224, 0356, 0356 ],
+		'idieresis'		=>  [    0, 0225, 0357, 0357 ],
+		'igrave' 		=>  [    0, 0223, 0354, 0354 ],
+		'j' 			=>  [ 0152, 0152, 0152, 0152 ],
+		'k' 			=>  [ 0153, 0153, 0153, 0153 ],
+		'l' 			=>  [ 0154, 0154, 0154, 0154 ],
+		'less'			=>  [ 0074, 0074, 0074, 0074 ],
+		'logicalnot' 		=>  [    0, 0302, 0254, 0254 ],
+		'lslash'		=>  [ 0370,    0,    0, 0233 ],
+		'm'			=>  [ 0155, 0155, 0155, 0155 ],
+		'macron'		=>  [ 0305, 0370, 0257, 0257 ],
+		'minus' 		=>  [    0,    0,    0, 0212 ],
+		'mu' 			=>  [    0, 0265, 0265, 0265 ],
+		'multiply'		=>  [    0,    0, 0327, 0327 ],
+		'n' 			=>  [ 0156, 0156, 0156, 0156 ],
+		'nine' 			=>  [ 0071, 0071, 0071, 0071 ],
+		'ntilde' 		=>  [    0, 0226, 0361, 0361 ],
+		'numbersign' 		=>  [ 0043, 0043, 0043, 0043 ],
+		'o'			=>  [ 0157, 0157, 0157, 0157 ],
+		'oacute' 		=>  [    0, 0227, 0363, 0363 ],
+		'ocircumflex' 		=>  [    0, 0231, 0364, 0364 ],
+		'odieresis'		=>  [    0, 0232, 0366, 0366 ],
+		'oe' 			=>  [ 0372, 0317, 0234, 0234 ],
+		'ogonek' 		=>  [ 0316, 0376,    0, 0035 ],
+		'ograve'		=>  [    0, 0230, 0362, 0362 ],
+		'one' 			=>  [ 0061, 0061, 0061, 0061 ],
+		'onehalf' 		=>  [    0,    0, 0275, 0275 ],
+		'onequarter' 		=>  [    0,    0, 0274, 0274 ],
+		'onesuperior'		=>  [    0,    0, 0271, 0271 ],
+		'ordfeminine' 		=>  [ 0343, 0273, 0252, 0252 ],
+		'ordmasculine' 		=>  [ 0353, 0274, 0272, 0272 ],
+		'oslash'		=>  [ 0371, 0277, 0370, 0370 ],
+		'otilde' 		=>  [    0, 0233, 0365, 0365 ],
+		'p'			=>  [ 0160, 0160, 0160, 0160 ],
+		'paragraph' 		=>  [ 0266, 0246, 0266, 0266 ],
+		'parenleft' 		=>  [ 0050, 0050, 0050, 0050 ],
+		'parenright'		=>  [ 0051, 0051, 0051, 0051 ],
+		'percent' 		=>  [ 0045, 0045, 0045, 0045 ],
+		'period' 		=>  [ 0056, 0056, 0056, 0056 ],
+		'periodcentered'	=>  [ 0264, 0341, 0267, 0267 ],
+		'perthousand' 		=>  [ 0275, 0344, 0211, 0213 ],
+		'plus' 			=>  [ 0053, 0053, 0053, 0053 ],
+		'plusminus' 		=>  [    0, 0261, 0261, 0261 ],
+		'q' 			=>  [ 0161, 0161, 0161, 0161 ],
+		'question' 		=>  [ 0077, 0077, 0077, 0077 ],
+		'questiondown' 		=>  [ 0277, 0300, 0277, 0277 ],
+		'quotedbl' 		=>  [ 0042, 0042, 0042, 0042 ],
+		'quotedblbase' 		=>  [ 0271, 0343, 0204, 0214 ],
+		'quotedblleft'		=>  [ 0252, 0322, 0223, 0215 ],
+		'quotedblright'		=>  [ 0272, 0323, 0224, 0216 ],
+		'quoteleft' 		=>  [ 0140, 0324, 0221, 0217 ],
+		'quoteright'		=>  [ 0047, 0325, 0222, 0220 ],
+		'quotesinglbase'	=>  [ 0270, 0342, 0202, 0221 ],
+		'quotesingle'		=>  [ 0251, 0047, 0047, 0047 ],
+		'r'			=>  [ 0162, 0162, 0162, 0162 ],
+		'registered' 		=>  [    0, 0250, 0256, 0256 ],
+		'ring' 			=>  [ 0312, 0373,    0, 0036 ],
+		's'			=>  [ 0163, 0163, 0163, 0163 ],
+		'scaron'		=>  [    0,    0, 0232, 0235 ],
+		'section'		=>  [ 0247, 0244, 0247, 0247 ],
+		'semicolon' 		=>  [ 0073, 0073, 0073, 0073 ],
+		'seven' 		=>  [ 0067, 0067, 0067, 0067 ],
+		'six' 			=>  [ 0066, 0066, 0066, 0066 ],
+		'slash' 		=>  [ 0057, 0057, 0057, 0057 ],
+		'space' 		=>  [ 0040, 0040, 0040, 0040 ],
+		'sterling'		=>  [ 0243, 0243, 0243, 0243 ],
+		't'			=>  [ 0164, 0164, 0164, 0164 ],
+		'thorn' 		=>  [    0,    0, 0376, 0376 ],
+		'three'			=>  [ 0063, 0063, 0063, 0063 ],
+		'threequarters'		=>  [    0,    0, 0276, 0276 ],
+		'threesuperior' 	=>  [    0,    0, 0263, 0263 ],
+		'tilde'			=>  [ 0304, 0367, 0230, 0037 ],
+		'trademark' 		=>  [    0, 0252, 0231, 0222 ],
+		'two' 			=>  [ 0062, 0062, 0062, 0062 ],
+		'twosuperior'		=>  [    0,    0, 0262, 0262 ],
+		'u' 			=>  [ 0165, 0165, 0165, 0165 ],
+		'uacute'		=>  [    0, 0234, 0372, 0372 ],
+		'ucircumflex' 		=>  [    0, 0236, 0373, 0373 ],
+		'udieresis'		=>  [    0, 0237, 0374, 0374 ],
+		'ugrave' 		=>  [    0, 0235, 0371, 0371 ],
+		'underscore' 		=>  [ 0137, 0137, 0137, 0137 ],
+		'v' 			=>  [ 0166, 0166, 0166, 0166 ],
+		'w' 			=>  [ 0167, 0167, 0167, 0167 ],
+		'x' 			=>  [ 0170, 0170, 0170, 0170 ],
+		'y' 			=>  [ 0171, 0171, 0171, 0171 ],
+		'yacute' 		=>  [    0,    0, 0375, 0375 ],
+		'ydieresis' 		=>  [    0, 0330, 0377, 0377 ],
+		'yen' 			=>  [ 0245, 0264, 0245, 0245 ],
+		'z'			=>  [ 0172, 0172, 0172, 0172 ],
+		'zcaron' 		=>  [    0,    0, 0236, 0236 ],
+		'zero' 			=>  [ 0060, 0060, 0060, 0060 ]
+	   ] ;
+
+
+	// Encoding type (one of the PDF_*_ENCODING constants)
+	public 		$Encoding ;
+	// Differences array (a character substitution table to the standard encodings)
+	protected 	$Map 		=  [] ;
+
+
+   	// Constructor -
+	//	Analyzes the text contents of a CMAP and extracts mappings from the beginbfchar/endbfchar and
+	//	beginbfrange/endbfrange constructs.
+	public function  __construct ( $object_id, $definitions )
+	   {
+		parent::__construct ( $object_id ) ;
+
+		if  ( PdfToText::$DEBUG )
+		   {
+	   		echo "----------------------------------- ENCODING CMAP #$object_id\n" ;
+			echo $definitions;
+		    }
+
+		// Retrieve text encoding
+		preg_match ( '# / (?P<encoding> (WinAnsiEncoding) | (PDFDocEncoding) | (MacRomanEncoding) | (StandardEncoding) ) #i',
+				$definitions, $encoding_match ) ;
+
+		switch ( strtolower ( $encoding_match [ 'encoding' ] ) )
+		   {
+		   	case 	'pdfdocencoding' 	:  $this -> Encoding	=  self::PDF_DOC_ENCODING 	; break ;
+		   	case 	'macromanencoding' 	:  $this -> Encoding 	=  self::PDF_MAC_ROMAN_ENCODING ; break ;
+		   	case 	'standardencoding' 	:  $this -> Encoding 	=  self::PDF_STANDARD_ENCODING 	; break ;
+		   	case 	'winansiencoding' 	:
+		   	default 		 	:  $this -> Encoding 	=  self::PDF_WIN_ANSII_ENCODING	;
+		    }
+
+		// Build a virgin character map using the detected encoding
+		foreach  ( self::$Encodings  as  $code_array )
+		   {
+			$char 			=  $code_array [ $this -> Encoding ] ;
+			$this -> Map [ $char ] 	=  $char ;
+		    }
+
+		// Extract the Differences array
+	   	preg_match ( '/ \[ (?P<contents> [^\]]*)  \] /x', $definitions, $match ) ;
+		$data 		=  trim ( preg_replace ( '/(\d+)/', '/$1', $match [ 'contents' ] ) ) ;
+		$items 		=  explode ( '/', $data ) ;
+		array_shift ( $items ) ;
+
+		$index 		=  0 ;
+
+		for  ( $i = 0, $item_count = count ( $items ) ; $i  <  $item_count ; $i ++ )
+		   {
+		   	$item 		=  trim ( $items [$i] ) ;
+
+		   	// Integer value  : index of next character in map
+			if  ( is_numeric ( $item ) )
+				$index 	=  ( integer ) $item ;
+			// String value : a character name, as defined by Adobe
+			else
+			   {
+			   	// Keyword (character name) exists in the encoding table
+				if  ( isset ( self::$Encodings [ $item ] ) )
+					$this -> Map [ $index ] 	=  self::$Encodings [ $item ] [ $this -> Encoding ];
+				// Otherwise, put a quotation mark instead
+				else
+					$this -> Map [ $index ] 	=  '?' ;
+
+				$index ++ ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	        Interface implementations.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( count ( $this -> Map ) ) ; }
+
+
+	public function  offsetExists ( $offset )
+	   { return ( isset ( $this -> Map [ $offset ] ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   {
+		if  ( isset ( $this -> Map [ $offset ] ) )
+		   {
+			return ( chr ( $this -> Map [ $offset ] ) ) ;
+		    }
+		else
+			return ( chr ( $offset ) ) ;
+	    }
+
+	public function  offsetSet ( $offset, $value )
+	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+
+	public function  offsetUnset ( $offset )
+	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+
+}
