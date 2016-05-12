@@ -300,8 +300,13 @@
 				be represented as "\n" and "\r" respectively.
 
     HISTORY
-    [Version : 1.0]    [Date : 2016/04/16]     [Author : CV]
+    [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
         Initial version.
+
+    [Version : 1.0.1]	[Date : 2016/05/12]     [Author : CV]
+	. Added code to ignore page headers and footers, which caused unnecessary newlines to be added to the
+	  output (handling page headers and footers would require to break the code).
+	. The last y-position was not correctly tracked in some cases.
 
  **************************************************************************************************************/
 
@@ -871,9 +876,9 @@ class  PdfToText 	// extends Object
 					   		$extra_newlines =  ( integer ) ( ( $last_goto_y - $instruction [ 'y' ] - $current_font_size ) / $current_font_size ) ;
 
 						$use_same_line 		=  ( $last_goto_y  ==  -1 ) ;
-					   	$last_goto_y 		=  $instruction [ 'y' ] ;
 					    }
 
+					$last_goto_y 		=  $instruction [ 'y' ] ;
 			   		break ;
 
 				// "/Rx" : sets the current font
@@ -917,9 +922,8 @@ class  PdfToText 	// extends Object
 					// Check if we have to insert a newline
 			   		if ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  !=  'text'  &&  ! $use_same_line )
 			   			$result 	.=  PHP_EOL ;
-
 			   		// Roughly simulate spacing between lines by inserting newline characters
-			   		if  ( $extra_newlines  > 0 )
+			   		else if  ( $extra_newlines  > 0 )
 			   		   {
 			   			$result 	.=  str_repeat ( PHP_EOL, $extra_newlines ) ;
 			   			$extra_newlines  =  0 ;
@@ -928,7 +932,7 @@ class  PdfToText 	// extends Object
 					// Fonts having character maps will require some special processing
 					if  ( $this -> FontTable -> IsMapped ( $current_font ) )
 					   {
-					   	// Lop through each text value
+					   	// Loop through each text value
 			   			foreach  ( $instruction [ 'values' ]  as  $text )
 			   			   {
 			   		   		$is_hex 	=  ( $text [0]  ==  '<' ) ;
@@ -1035,11 +1039,35 @@ class  PdfToText 	// extends Object
 		// Holds the floating-point values encountered so far
 		$number_stack 	=  [] ;
 
+		// Used to ignore everything until the last "ET" token (for page headers and footers)
+		$ignore		=  false ;
+
 		// Loop through the stream of tokens
 		while  ( ( $part = $this -> __next_token ( $data, $data_length, $index ) )  !==  false )
 		   {
 			$token 		=  $part [0] ;
 			$next_index 	=  $part [1] ;
+
+			// If we are in a page header or footer definition, ignore evrything
+			if  ( $ignore )  
+			   {
+				if  ( $token  ==  'ET' )
+					$ignore		=  false ;
+
+				$index		=  $next_index ;
+				continue ;
+			    }
+			// Otherwise, try to see if we're in a page header or footer description, something like :
+			//	<</Attached [/Top]/Type/Pagination/Subtype/Header>>
+			// or :
+			//	<</Attached [/Bottom]/Type/Pagination/Subtype/Footer>>
+			else if  ( preg_match ( '#/Type/Pagination/Subtype/((Header)|(Footer))#ix', $token ) )
+			   {
+				$ignore		=  true ;
+				$index		=  $next_index ;
+
+				continue ;
+			    }
 
 			// Floating-point number : push it onto the stack
 			if  ( ctype_digit ( $token [0] )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+' )
@@ -2183,4 +2211,4 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	public function  offsetUnset ( $offset )
 	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
 
-}
+    }
