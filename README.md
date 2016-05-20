@@ -14,6 +14,8 @@ The same PdfToText object can be reused to process additional files :
 	$pdf -> Load ( 'sample2.pdf' ) ;
 	echo $pdf -> Text ;
 
+Additionally, the **PdfToText** class provides support methods for getting the page number of any text in the underlying PDF file.
+
 Look at the class' blog for an overview on the underlying mechanics that are involved into extracting text contents from pdf files.
 
 Examples are also provided in the **examples/** directory. Please have a look at the [examples/README.md](examples/README.md "README.md") file for a brief explanation on their structure.
@@ -70,3 +72,97 @@ However, all of that will not guarantee that it will work in every situation ; s
 		christian.vigh@wuthering-bytes.com
 
   
+# REFERENCE #
+
+## METHODS ##
+
+### Constructor ###
+
+	$pdf 	=  new PdfToText ( $filename = null ) ;
+
+Instantiates a **PdfToText** object. If a filename has been specified, its text contents will be loaded and made available in the *Text* property (otherwise, you will have to call the *Load()* method for that).
+
+### Load ( $filename ) ###
+
+Loads the text contents of the specified filename.
+
+
+### GetPageFromOffset ( $offset ) ###
+
+Given a byte offset in the Text property, returns its page number in the pdf document.
+
+Page numbers start from 1.
+
+
+### text\_strpos, text\_stripos ###
+
+    $result		=  $pdf -> text_strpos  ( $search, $start = 0 ) ;
+    $result		=  $pdf -> text_stripos ( $search, $start = 0 ) ;
+
+These methods behave as the strpos/stripos PHP functions, except that :
+
+- They operate on the text contents of the pdf file (Text property)
+- They return an array containing the page number and text offset. $result [0] will be set to the page number of the searched text, and $result [1] to its offset in the Text property
+
+Parameters are the following :
+
+- *$search* (string) : String to be searched.
+- *$start* (integer) : Start offset in the pdf text contents.
+
+The method returns an array of two values containing the page number and text offset if the searched string has been found, or *false* otherwise.
+
+### document\_strpos, document\_stripos ###
+
+    $result		=  $pdf -> document_strpos  ( $search, $group_by_page = false ) ;
+    $result		=  $pdf -> document_stripos ( $search, $group_by_page = false ) ;
+
+Searches for ALL occurrences of a given string in the pdf document. The value of the $group_by_page parameter determines how the results are returned :
+
+- When true, the returned value will be an associative array whose keys will be page numbers and values arrays of offset of the found string within the page
+- When false, the returned value will be an array of arrays containing two entries : the page number and the text offset.
+
+For example, if a pdf document contains the string "here" at character offset 100 and 200 in page 1, and position 157 in page 3, the returned value will be :
+
+- When *$group\_by\_page* is false :
+
+		[ [ 1, 100 ], [ 1, 200 ], [ 3, 157 ] ]
+
+- When *$group\_by\_page* is true :
+
+		[ 1 => [ 100, 200 ], 3 => [ 157 ]
+	
+The parameters are the following :
+
+- *$search* (string) : String to be searched.
+
+- *$group\_by\_page (boolean) : Indicates whether the found offsets should be grouped by page number or not.
+
+The method returns an array of page numbers/character offsets or *false* if the specified string does not appear in the document.
+
+
+### text\_match, document\_match ###
+
+    $status		=  $pdf -> text_match ( $pattern, &$match = null, $flags = 0, $offset = 0 ) ;
+    $status		=  $pdf -> document_match ( $pattern, &$match = null, $flags = 0, $offset = 0 ) ;
+
+*text\_match()* calls the preg\_match() PHP function on the pdf text contents, to locate the first occurrence of text that matches the specified regular expression.
+
+*document\_match()* calls the preg\_match\_all() function to locate all occurrences that match the specified regular expression.
+
+Note that both methods add the PREG\_OFFSET\_CAPTURE flag when calling preg\_match/preg\_match\_all so you should be aware that all captured results are an array containing the following entries :
+
+- Item [0] is the captured string
+- Item [1] is its text offset
+- The *text\_match()* and *document\_match()* methods add an extra array item (index 2), which contains the number of the page where the matched text resides
+
+Parameters are the following :
+
+- *$pattern* (string) : Regular expression to be searched.
+
+- *$match* (any) : Output captures. See preg\_match/preg\_match\_all.
+
+- *$flags* (integer) : PCRE flags. See preg\_match/preg\_match\_all.
+
+- *$offset* (integer) : Start offset. See preg\_match/preg\_match\_all.
+
+As for their PHP counterparts, these methods return the number of matched occurrences, or *false* if the specified regular expression is invalid.

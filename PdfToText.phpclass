@@ -290,7 +290,7 @@
 				(which thanslates character \u0001 to a space, and character \u0002 to uppercase
 				A), the text " A " will be specified as :
 
-					[(SOH]delta1(STX)delta2(SOH)] TJ
+					[(SOH)delta1(STX)delta2(SOH)] TJ
 
 				Where "SOH" and "STX" are the official Ascii names for character 1 and 2,
 				respectively.
@@ -307,6 +307,14 @@
 	. Added code to ignore page headers and footers, which caused unnecessary newlines to be added to the
 	  output (handling page headers and footers would require to break the code).
 	. The last y-position was not correctly tracked in some cases.
+
+    [Version : 1.1]	[Date : 2016/05/21]     [Author : CV]
+	. Added support to retrieve the page number associated to a character offset in the Text contents. New
+	  methods are :
+	  - GetPageFromOffset
+	  - text_strpos/text_stripos
+	  - document_strpos/document_stripos
+	  - text_match/document_match
 
  **************************************************************************************************************/
 
@@ -331,9 +339,15 @@ class  PdfToText 	// extends Object
 	public 		$Filename 		=  false ;
 	// Extracted text
 	public		$Text			=  '' ;
+	// Document pages
+	public		$Pages			=  [] ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
+	// Page mappings
+	protected	$PageMappings		=  [] ;
+	// Page locations - holds page numbers and start/end offsets in the Text property 
+	protected	$PageLocations		=  [] ;
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -361,6 +375,18 @@ class  PdfToText 	// extends Object
 	public function  __tostring ( )
 	   { return ( $this -> Text ) ; }
 
+
+	/**************************************************************************************************************
+	 **************************************************************************************************************
+	 **************************************************************************************************************
+	 ******                                                                                                  ******
+	 ******                                                                                                  ******
+	 ******                                          PUBLIC METHODS                                          ******
+	 ******                                                                                                  ******
+	 ******                                                                                                  ******
+	 **************************************************************************************************************
+	 **************************************************************************************************************
+	 **************************************************************************************************************/
 
 	/*--------------------------------------------------------------------------------------------------------------
 
@@ -398,6 +424,8 @@ class  PdfToText 	// extends Object
 		$this -> Text 		=  '' ;
 		$this -> FontTable 	=  new PdfTexterFontTable ( ) ;
 		$this -> Filename 	=  $filename ;
+		$this -> PageMappings	=  [] ;
+		$this -> Pages		=  [] ;
 
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
 		if  ( ! preg_match_all ( '/(?P<num> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $object_matches ) )
@@ -406,6 +434,9 @@ class  PdfToText 	// extends Object
 		// Character maps encountered so far
 		$cmaps			=  [] ;
 
+		// Page definitions - if the optional /Pages /Kids[] construct is encountered
+		$pages			=  false ;
+
 		// Loop through the objects
 		$text		=  [] ;
 
@@ -413,6 +444,19 @@ class  PdfToText 	// extends Object
 		   {
 		   	$object_data 	=  $object_matches [ 'object' ] [$i] ;
 		   	$object_number 	=  $object_matches [ 'num' ] [$i] ;
+
+			// Check if current data contains page information. We don't put a "continue" statement here, 
+			// since the data can contain additional relevant information, such as font declarations...
+			if  ( $this -> IsPage ( $object_data ) )
+			   {
+				$this -> AddPage ( $object_number, $object_data ) ;
+			    }
+
+			// Check if current data contains page list 
+			if  ( $this -> IsPageList ( $object_data ) )
+			   {
+				$pages	=  $this -> GetPageList ( $object_data ) ;
+			    }
 
 			// Some font definitions are in clear text in an object, some are encoded in a stream within the object
 			// We process here the unencoded ones
@@ -479,6 +523,7 @@ class  PdfToText 	// extends Object
 		// Current font defaults to -1, which means : take the first available font as the current one.
 		// Sometimes it may happen that text drawing instructions do not set a font at all (PdfPro for example)
 		$current_font	=  -1 ;
+		$last_page	=  1 ;
 
 		// Extract text from the collected TEXT elements
 		foreach  ( $text  as  $id => $str )
@@ -489,10 +534,467 @@ class  PdfToText 	// extends Object
 			if  ( $this -> Text )
 				$this -> Text	.=  "\f" ;
 
+			// Add this new page
+			$start						=  strlen ( $this -> Text ) ;
+
+			// Trying this class on the PDF specifications 1.7 file shows that 3 pages are like "orphans", ie they
+			// are not referenced by any /Page option
+			if  ( ! isset ( $this -> PageMappings [ $id ] ) )
+				$this -> PageMappings [ $id] [ 'page' ]		=  $last_page + 1 ;
+
+			$page_number					=  $this -> PageMappings [ $id ] [ 'page' ] ;
+			$this -> PageLocations [ $page_number ]		=  [ 'start' => $start ] ;
+
+			// Then add this page to the text already collected
 			$this -> Text	.=  $text ;
+			$last_page	 =  $page_number ;
 		    }
 
-		return ( true ) ;
+		// Remap pages in case of the /Kids parameter would give a different order (not yet tested)
+		$this -> RemapPages ( $pages ) ;
+
+		// Rearrange the PageLocations property so that we have a text length and an ending offset for each page
+		$text_length	=  strlen ( $this -> Text ) ;
+		$page_numbers	=  array_keys ( $this -> PageLocations ) ;
+
+		for  ( $i_page = 0, $count = count ( $this -> PageLocations ) ; $i_page  <  $count ; $i_page ++ )
+		   {
+			$i		=  $page_numbers [ $i_page ] ;
+			$next		=  ( $i_page + 1  <  $count  &&  isset ( $this -> PageLocations [ $i + 1 ] ) ) ?  
+						$this -> PageLocations [ $i + 1 ] [ 'start' ] : $text_length ;
+			
+			$this -> PageLocations [$i] [ 'end' ]		=  $next - 1 ;
+			$this -> PageLocations [$i] [ 'length' ]	=  $next - $this -> PageLocations [$i] [ 'start' ] ;
+		    }
+
+		// Build page array
+		foreach  ( $this -> PageLocations  as  $page_number => $location )
+			$this -> Pages [ $page_number ]		=  substr ( $this -> Text, $location [ 'start' ], $location [ 'length' ] ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetPageFromOffset - Returns a page number from a text offset.
+	
+	    PROTOTYPE
+	        $offset		=  $pdf -> GetPageFromOffset ( $offset ) ;
+	
+	    DESCRIPTION
+	        Given a byte offset in the Text property, returns its page number in the pdf document.
+	
+	    PARAMETERS
+	        $offset (integer) -
+	                Offset, in the Text property, whose page number is to be retrieved.
+	
+	    RETURN VALUE
+	        Returns a page number in the pdf document, or false if the specified offset does not exist.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetPageFromOffset ( $offset )
+	   {
+		if  ( $offset  ===  false ) 
+			return ( false ) ;
+
+		foreach  ( $this -> PageLocations  as  $page => $location )
+		   {
+			if  ( $offset  >=  $location [ 'start' ]  &&  $offset  <=  $location [ 'end' ] )
+				return ( $page ) ;
+		    }
+
+		return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        text_strpos, text_stripos - Search for an occurrence of a string.
+	
+	    PROTOTYPE
+	        $result		=  $pdf -> text_strpos  ( $search, $start = 0 ) ;
+	        $result		=  $pdf -> text_stripos ( $search, $start = 0 ) ;
+	
+	    DESCRIPTION
+	        These methods behave as the strpos/stripos PHP functions, except that :
+		- They operate on the text contents of the pdf file (Text property)
+		- They return an array containing the page number and text offset. $result [0] will be set to the page
+		  number of the searched text, and $result [1] to its offset in the Text property
+	
+	    PARAMETERS
+	        $search (string) -
+	                String to be searched.
+
+		$start (integer) -
+			Start offset in the pdf text contents.
+	
+	    RETURN VALUE
+	        Returns an array of two values containing the page number and text offset if the searched string has
+		been found, or false otherwise.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  text_strpos ( $search, $start = 0 )
+	   {
+		$offset		=  strpos ( $this -> Text, $search, $start ) ;
+
+		if  ( $offset  !==  false )
+			return ( [ $this -> GetPageFromOffset ( $offset ), $offset ] ) ;
+
+		return ( false ) ;
+	    }
+
+
+	public function  text_stripos ( $search, $start = 0 )
+	   {
+		$offset		=  stripos ( $this -> Text, $search, $start ) ;
+
+		if  ( $offset  !==  false )
+			return ( [ $this -> GetPageFromOffset ( $offset ), $offset ] ) ;
+
+		return ( false ) ;
+	    }
+
+
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        document_strpos, document_stripos - Search for an occurrence of a string.
+	
+	    PROTOTYPE
+	        $result		=  $pdf -> document_strpos  ( $search, $group_by_page = false ) ;
+	        $result		=  $pdf -> document_stripos ( $search, $group_by_page = false ) ;
+	
+	    DESCRIPTION
+		Searches for ALL occurrences of a given string in the pdf document. The value of the $group_by_page
+		parameter determines how the results are returned :
+		- When true, the returned value will be an associative array whose keys will be page numbers and values
+		  arrays of offset of the found string within the page
+		- When false, the returned value will be an array of arrays containing two entries : the page number
+		  and the text offset.
+
+		For example, if a pdf document contains the string "here" at character offset 100 and 200 in page 1, and
+		position 157 in page 3, the returned value will be :
+		- When $group_by_page is false :
+			[ [ 1, 100 ], [ 1, 200 ], [ 3, 157 ] ]
+		- When $group_by_page is true :
+			[ 1 => [ 100, 200 ], 3 => [ 157 ]
+	
+	    PARAMETERS
+	        $search (string) -
+	                String to be searched.
+
+		$group_by_page (boolean) -
+			Indicates whether the found offsets should be grouped by page number or not.
+	
+	    RETURN VALUE
+	        Returns an array of page numbers/character offsets (see Description above) or false if the specified
+		string does not appear in the document.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  document_strpos ( $text, $group_by_page = false )
+	   {
+		$length		=  strlen ( $text ) ;
+
+		if  ( ! $length )
+			return ( false ) ;
+
+		$result		=  [] ;
+		$index		=  0 ;
+
+		while ( ( $index =  strpos ( $this -> Text, $text, $index ) )  !==  false )
+		   {
+			$page	=  $this -> GetPageFromOffset ( $index ) ;
+
+			if  ( $group_by_page )
+				$result [ $page ] []	=  $index ;
+			else
+				$result []		=  [ $page, $index ] ;
+
+			$index	+=  $length ;
+		    }
+
+		return ( $result ) ;
+	    }
+
+
+	public function  document_stripos ( $text, $group_by_page = false )
+	   {
+		$length		=  strlen ( $text ) ;
+
+		if  ( ! $length )
+			return ( false ) ;
+
+		$result		=  [] ;
+		$index		=  0 ;
+
+		while ( ( $index =  stripos ( $this -> Text, $text, $index ) )  !==  false )
+		   {
+			$page	=  $this -> GetPageFromOffset ( $index ) ;
+
+			if  ( $group_by_page )
+				$result [ $page ] []	=  $index ;
+			else
+				$result []		=  [ $page, $index ] ;
+
+			$index	+=  $length ;
+		    }
+
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        text_match, document_match - Search string using regular expressions.
+	
+	    PROTOTYPE
+	        $status		=  $pdf -> text_match ( $pattern, &$match = null, $flags = 0, $offset = 0 ) ;
+	        $status		=  $pdf -> document_match ( $pattern, &$match = null, $flags = 0, $offset = 0 ) ;
+	
+	    DESCRIPTION
+	        text_match() calls the preg_match() PHP function on the pdf text contents, to locate the first occurrence
+		of text that matches the specified regular expression.
+		document_match() calls the preg_match_all() function to locate all occurrences that match the specified
+		regular expression.
+		Note that both methods add the PREG_OFFSET_CAPTURE flag when calling preg_match/preg_match_all so you 
+		should be aware that all captured results are an array containing the following entries :
+		- Item [0] is the captured string
+		- Item [1] is its text offset
+		- The text_match() and document_match() methods add an extra array item (index 2), which contains the
+		  page number where the matched text resides
+	
+	    PARAMETERS
+	        $pattern (string) -
+	                Regular expression to be searched.
+
+		$match (any) -
+			Output captures. See preg_match/preg_match_all.
+
+		$flags (integer) -
+			PCRE flags. See preg_match/preg_match_all.
+
+		$offset (integer) -
+			Start offset. See preg_match/preg_match_all.
+	
+	    RETURN VALUE
+	        Returns the number of matched occurrences, or false if the specified regular expression is invalid.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  text_match ( $pattern, &$match = null, $flags = 0, $offset = 0 )
+	   {
+		$local_match	=  null ;
+		$status		=  preg_match ( $pattern, $this -> Text, $local_match, $flags | PREG_OFFSET_CAPTURE, $offset ) ;
+
+		if  ( $status ) 
+		   {
+			foreach  ( $local_match  as  &$entry )
+				$entry [2]	=  $this -> GetPageFromOffset ( $entry [1] ) ;
+
+			$match	=  $local_match ;
+		    }
+
+		return ( $status ) ;
+	    }
+
+
+	public function  document_match ( $pattern, &$matches = null, $flags = 0, $offset = 0 )
+	   {
+		$local_matches	=  null ;
+		$status		=  preg_match_all ( $pattern, $this -> Text, $local_matches, $flags | PREG_OFFSET_CAPTURE, $offset ) ;
+
+		if  ( $status ) 
+		   {
+			foreach  ( $local_matches  as  &$entry )
+			   {
+				foreach  ( $entry  as  &$subentry )
+				$subentry [2]	=  $this -> GetPageFromOffset ( $subentry [1] ) ;
+			    }
+
+			$matches	=  $local_matches ;
+		    }
+
+		return ( $status ) ;
+	    }
+
+
+	/**************************************************************************************************************
+	 **************************************************************************************************************
+	 **************************************************************************************************************
+	 ******                                                                                                  ******
+	 ******                                                                                                  ******
+	 ******                                         INTERNAL METHODS                                         ******
+	 ******                                                                                                  ******
+	 ******                                                                                                  ******
+	 **************************************************************************************************************
+	 **************************************************************************************************************
+	 **************************************************************************************************************/
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        AddPage - Adds a page reference to the page mappings.
+	
+	    PROTOTYPE
+	        $this -> AddPage ( $object_data ) ;
+	
+	    DESCRIPTION
+	        Normally, a way to distinguish pages is locating a /Type/Page construct. When this construct is present,
+		there is a /Contents keyword that references the object who has the page contents.
+	
+	    PARAMETERS
+	        $object_data (string) -
+	                Object data, ie the contents located between the "obj" and "endobj" keywords.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  AddPage ( $object_id, $object_data )
+	   {
+		if  ( preg_match ( '#/Contents \s+ (?P<object> \d+)#imsx', $object_data, $match ) )
+		   {
+			$count						=  count ( $this -> PageMappings ) ;
+			$this -> PageMappings [ $match [ 'object' ] ]	=  
+			   [ 
+				'page'		=>  $count + 1, 
+				'page-object'	=>  ( integer ) $match [ 'object' ],
+				'object'	=>  ( integer ) $object_id
+			    ] ;
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetPageList - Retrieves the page list given by the /Pages/Kids[] construct.
+	
+	    PROTOTYPE
+	        $list	=  $this -> GetPageList ( $object_data ) ;
+	
+	    DESCRIPTION
+	        This method is called to catch the optional /Pages/Kids[] construct, that lists between square brackets
+		the references to the objects that hold the successive page contents.
+	
+	    PARAMETERS
+	        $object_data (string) -
+	                Object data, ie the contents located between the "obj" and "endobj" keywords.
+	
+	    RETURN VALUE
+	        Returns an associative array whose keys are the page numbers and values the object ids.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetPageList ( $object_data )
+	   {
+		if  ( preg_match ( '#/Kids \s* \[ (?P<list> [^\]]+)#imsx', $object_data, $list ) )
+		   {
+			preg_match_all ( '#(?P<object> \d+) \s+ \d+ \s+ R#imsx', $list [ 'list' ], $matches ) ;
+			$page_number	=  0 ;
+			$result		=  [] ;
+
+			foreach ( $matches [ 'object' ]  as  $id )
+				$result [ ++ $page_number ]	=  ( integer ) $id ;
+
+			return ( $result ) ;
+		    }
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        RemapPages - Remaps page information.
+	
+	    PROTOTYPE
+	        $this -> RemapPages ( $pages ) ;
+	
+	    DESCRIPTION
+	        Remaps the page numbers of the current document.
+	
+	    PARAMETERS
+	        $pages (associative array) -
+	                An array of page/object ids associations that has been returned by the GetPageList() method.
+			If this parameter is empty, no remapping will occur.
+	
+	    NOTES
+	        It may happen that the page list given by the /Pages /Kids[] provides a page order that is different
+		from the sequential page order given by the /Page /Contents constructs. Although I didn't encounter
+		such a situation so far, this method will renumber the page numbers built sequentially using the real
+		order given by the /Kids option.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  RemapPages ( $pages )
+	   {
+		if  ( ! $pages )
+			return ;
+
+		foreach  ( $this -> PageMappings  as  &$mapping )
+		   {
+			foreach  ( $pages  as  $page => $object )
+			   {
+				if  ( $mapping [ 'object' ]  ==  $object )
+					$mapping [ 'page' ]	=  $page ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        IsPage - Check if the specified object contents denote a page reference.
+
+	    PROTOTYPE
+	        $status		=  $this -> IsPage ( $object_data ) ;
+
+	    DESCRIPTION
+	        Checks if the specified object contents denote a page reference.
+
+	    PARAMETERS
+	        $object_data (string) -
+	                Object data, ie the contents located between the "obj" and "endobj" keywords.
+
+	    RETURN VALUE
+	        True if the specified contents contains a /Type/Page keyword, false otherwise.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsPage ( $object_data )
+	   {
+		if  ( preg_match ( '#/Type\s*/Page[^s]#', $object_data ) )
+			return(  true ) ;
+
+		return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        IsPageList - Check if the specified object contents denote a page list
+
+	    PROTOTYPE
+	        $status		=  $this -> IsPageList ( $object_data ) ;
+
+	    DESCRIPTION
+	        Checks if the specified object contents denote a page list.
+
+	    PARAMETERS
+	        $object_data (string) -
+	                Object data, ie the contents located between the "obj" and "endobj" keywords.
+
+	    RETURN VALUE
+	        True if the specified contents contains a /Type/Pages/Kids keyword, false otherwise.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsPageList ( $object_data )
+	   {
+		if  ( preg_match ( '#/Type\s*/Pages\s*/Kids#imsx', $object_data ) )
+			return(  true ) ;
+
+		return ( false ) ;
 	    }
 
 
@@ -1022,7 +1524,7 @@ class  PdfToText 	// extends Object
 
 
 	// __next_instruction -
-	//	Retrieves the next instruction frm the drawing text block.
+	//	Retrieves the next instruction from the drawing text block.
 	function  __next_instruction ( $data, $data_length, $index )
 	   {
 		static 	$last_instruction 	=  false ;
@@ -1729,7 +2231,7 @@ abstract class	PdfTexterCharacterMap	// extends Object
         A class for fonts having a character map specified with the /ToUnicode parameter.
 
   ==============================================================================================================*/
-    class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
+class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
     {
 	// Id of the character map (specified by the /Rx flag)
 	public		$Id	;
@@ -1849,13 +2351,6 @@ abstract class	PdfTexterCharacterMap	// extends Object
 		else
 			return ( chr ( $offset ) ) ;
 	    }
-
-	public function  offsetSet ( $offset, $value )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
-
-	public function  offsetUnset ( $offset )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
-
     }
 
 
@@ -2132,8 +2627,11 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		    }
 
 		// Retrieve text encoding
-		preg_match ( '# / (?P<encoding> (WinAnsiEncoding) | (PDFDocEncoding) | (MacRomanEncoding) | (StandardEncoding) ) #i',
+		preg_match ( '# / (?P<encoding> (WinAnsiEncoding) | (PDFDocEncoding) | (MacRomanEncoding) | (StandardEncoding) ) #ix',
 				$definitions, $encoding_match ) ;
+
+		if ( ! isset ( $encoding_match [ 'encoding' ] ) )
+			$encoding_match [ 'encoding' ]	=  'WinAnsiEncoding' ;
 
 		switch ( strtolower ( $encoding_match [ 'encoding' ] ) )
 		   {
@@ -2204,11 +2702,4 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		else
 			return ( chr ( $offset ) ) ;
 	    }
-
-	public function  offsetSet ( $offset, $value )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
-
-	public function  offsetUnset ( $offset )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
-
     }
