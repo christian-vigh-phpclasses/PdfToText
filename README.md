@@ -153,7 +153,7 @@ Note that both methods add the PREG\_OFFSET\_CAPTURE flag when calling preg\_mat
 
 - Item [0] is the captured string
 - Item [1] is its text offset
-- The *text\_match()* and *document\_match()* methods add an extra array item (index 2), which contains the number of the page where the matched text resides
+- The *text\_match()* and *document\_match()* methods add an extra array item (index 2), which contains the number of the page where the matched text was found
 
 Parameters are the following :
 
@@ -166,3 +166,19 @@ Parameters are the following :
 - *$offset* (integer) : Start offset. See preg\_match/preg\_match\_all.
 
 As for their PHP counterparts, these methods return the number of matched occurrences, or *false* if the specified regular expression is invalid.
+
+## PROPERTIES ##
+ 
+This section describes the properties that are available in a **PdfTText** object. Note that they should be considered as read-only.
+
+### Filename ###
+
+Name of the file whose text contents have been extracted.
+
+### Pages ###
+
+Associative array containing individual page contents. The array key is the page number, starting from 1.
+
+### Text ###
+
+A string containing the whole text extracted from the underlying pdf file. Note that pages are separated with a form feed.
