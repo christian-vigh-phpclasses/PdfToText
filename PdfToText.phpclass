@@ -316,6 +316,20 @@
 	  - document_strpos/document_stripos
 	  - text_match/document_match
 
+    [Version : 1.2.1]	[Date : 2016/05/28]     [Author : CV]
+	. Changed the regular expression to match stream/endstream constructs because it captured too much as
+	  in the following example :
+
+		<< ... /Type /Stream >>
+		stream 
+			...
+		endstream
+
+	  (the captured data was : " >>\nstream..."). Now a stream construct is detected if not preceded by a
+	  slash.
+	. Found one case where the beginbfchar/enbfchar and all its contents were put on one line, thus making
+	  the regular expression for capturing characters to fail. Hope this will not happen with beginbfrange...
+
  **************************************************************************************************************/
 
 
@@ -482,7 +496,7 @@ class  PdfToText 	// extends Object
 				continue ;
 			    }
 			// Ignore other objects that do not contain an encoded stream
-		   	else if  ( ! preg_match ( '/stream \r? \n (?P<stream> .*?) endstream/imsx', $object_data, $stream_match ) )
+		   	else if  ( ! preg_match ( '#[^/] stream \r? \n (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
 		   		continue ;
 
 			// Isolate stream data and try to find its encoding type
@@ -661,7 +675,7 @@ class  PdfToText 	// extends Object
 	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
-	        document_strpos, document_stripos - Search for an occurrence of a string.
+	        document_strpos, document_stripos - Search for all occurrences of a string.
 	
 	    PROTOTYPE
 	        $result		=  $pdf -> document_strpos  ( $search, $group_by_page = false ) ;
@@ -2268,18 +2282,17 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		    {
 		    	foreach  ( $char_matches [ 'chars' ]  as  $char_list )
 		    	   {
-		    		$chars 		=  explode ( "\n", trim ( $char_list ) ) ;
+				// Don't believe that the contents between beginbfchar/endbfchar are separated by line breaks !
+				// I have met one example where all was put on the same line
+				preg_match_all ( '/ < \s* (?P<char> [0-9a-f]+) \s* > /imx', $char_list, $code_matches ) ;
 
-		    		foreach ( $chars  as  $char )
-		    		   {
-			    		if  ( preg_match ( '/ < \s* (?P<src> [0-9a-f]+) \s*> \s* < \s* (?P<dst> [0-9a-f]+) \s* > /imx', $char, $char_match ) )
-			    		   {
-						$src 	=  hexdec ( $char_match [ 'src' ] ) ;
-						$dst 	=  hexdec ( $char_match [ 'dst' ] ) ;
+				for  ( $i = 0, $count = count ( $code_matches [ 'char' ] ) ; $i  <  $count ; $i += 2 )
+				   {
+					   $src		=  hexdec ( $code_matches [ 'char' ] [ $i ] ) ;
+					   $dst		=  hexdec ( $code_matches [ 'char' ] [ $i + 1 ] ) ;
 
-						$this -> Map [ $src ] 	=  $dst ;
-			    		    }
-		    		    }
+					   $this -> Map [ $src ]	=  $dst ;
+				    }
 		    	    }
 		     }
 
@@ -2701,5 +2714,20 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		    }
 		else
 			return ( chr ( $offset ) ) ;
+	    }
+    }
+
+
+/*==============================================================================================================
+
+    PdfTexterPageMap -
+        A class for fonts having a character map specified with the /Encoding parameter.
+
+  ==============================================================================================================*/
+class  PdfTexterPageMap		extends  Object
+   {
+	public function  __construct ( )
+	   {
+
 	    }
     }
