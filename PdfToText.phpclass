@@ -2724,7 +2724,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
         A class for fonts having a character map specified with the /Encoding parameter.
 
   ==============================================================================================================*/
-class  PdfTexterPageMap		extends  Object
+class  PdfTexterPageMap		//extends  Object
    {
 	public function  __construct ( )
 	   {
