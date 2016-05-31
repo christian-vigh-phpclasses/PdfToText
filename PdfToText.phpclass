@@ -330,6 +330,14 @@
 	. Found one case where the beginbfchar/enbfchar and all its contents were put on one line, thus making
 	  the regular expression for capturing characters to fail. Hope this will not happen with beginbfrange...
 
+    [Version : 1.2.2]	[Date : 2016/05/31]     [Author : CV]
+	. Modified the PdfTexterUnicodeMap class to handle cases where substitutions in beginbfchar/endbfchar
+	  constructs contains several characters. For example :
+
+		<012B> <00660067>
+
+	  which means that a reference to character #012B must be substituted with #0066 and #0067.
+
  **************************************************************************************************************/
 
 
@@ -546,7 +554,7 @@ class  PdfToText 	// extends Object
 
 			// Put a form feed between each text block - not sure it is appropriate
 			if  ( $this -> Text )
-				$this -> Text	.=  "\f" ;
+				$this -> Text	.=  "\n\f\n" ;
 
 			// Add this new page
 			$start						=  strlen ( $this -> Text ) ;
@@ -2283,13 +2291,17 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		    	foreach  ( $char_matches [ 'chars' ]  as  $char_list )
 		    	   {
 				// Don't believe that the contents between beginbfchar/endbfchar are separated by line breaks !
-				// I have met one example where all was put on the same line
+				// I have met one example where everything was put on the same line
 				preg_match_all ( '/ < \s* (?P<char> [0-9a-f]+) \s* > /imx', $char_list, $code_matches ) ;
 
 				for  ( $i = 0, $count = count ( $code_matches [ 'char' ] ) ; $i  <  $count ; $i += 2 )
 				   {
 					   $src		=  hexdec ( $code_matches [ 'char' ] [ $i ] ) ;
-					   $dst		=  hexdec ( $code_matches [ 'char' ] [ $i + 1 ] ) ;
+					   $chunks	=  str_split ( $code_matches [ 'char' ] [ $i + 1 ], $this -> HexCharWidth ) ;
+					   $dst		=  [] ;
+
+					   foreach  ( $chunks  as  $chunk )
+						$dst []		=  hexdec ( $chunk ) ;
 
 					   $this -> Map [ $src ]	=  $dst ;
 				    }
@@ -2317,7 +2329,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						$subst 		=  hexdec ( $range_match [ 'subst' ] ) ;
 
 						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> Map [$i] 	=  $subst + $count ;
+							$this -> Map [$i] 	=  [ $subst + $count ] ;
 					    }
 					// Array form :
 					//	<from><to>[ value1, value2, ... valuen ]
@@ -2331,7 +2343,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						$subst 		=  preg_split ( '/\s+/',  trim ( $range_match [ 'subst' ] ) ) ;
 
 						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> Map [$i] 	=  hexdec ( $subst [ $count ] ) ;
+							$this -> Map [$i] 	=  [ hexdec ( $subst [ $count ] ) ] ;
 					    }
 				   }
 			    }
@@ -2356,8 +2368,13 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 	   {
 		if  ( isset ( $this -> Map [ $offset ] ) )
 		   {
-		   	$entity 	=  '&#' . sprintf ( "%d", $this -> Map [ $offset ] ) . ';' ;
-		   	$result 	=  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ;
+			$result		=  '' ;
+
+			foreach  ( $this -> Map [ $offset ]  as  $code )
+			   {
+		   		$entity 	 =  '&#' . sprintf ( "%d", $code ) .  ';' ;
+		   		$result 	.=  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ;
+			    }
 
 			return ( $result ) ;
 		    }
