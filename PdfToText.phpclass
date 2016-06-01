@@ -338,6 +338,15 @@
 
 	  which means that a reference to character #012B must be substituted with #0066 and #0067.
 
+    [Version : 1.2.3]	[Date : 2016/06/01]     [Author : CV]
+	. Found a PDF coming from MAC outer galaxies where some lines were terminated by "\r\n", and some other
+	  by "\r".
+	. Added more debugging messages when the $DEBUG static class variable is set to an integer value
+	  greater than 1.
+	. Character references to a CMAP can be specified as \xyz, where "xyz" are octal digits
+	. The begincmap/endcmap constructs can be omitted. Checked for the presence of beginbfchar/beginbfrange
+	  in this case.
+
  **************************************************************************************************************/
 
 
@@ -504,16 +513,26 @@ class  PdfToText 	// extends Object
 				continue ;
 			    }
 			// Ignore other objects that do not contain an encoded stream
-		   	else if  ( ! preg_match ( '#[^/] stream \r? \n (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
+		   	else if  ( ! preg_match ( '#[^/] stream ( (\r? \n) | \r ) (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
+			   {
+				if  ( self::$DEBUG  >  1 )
+					echo "----------------------------------- UNSTREAMED #$object_number\n$object_data" ;
+
 		   		continue ;
+			    }
 
 			// Isolate stream data and try to find its encoding type
 			$stream_data 		=  $stream_match [ 'stream' ] ;
 			$type 			=  $this -> GetEncodingType ( $object_data ) ;
 
-			// Ignore this stream if the object does not contain an encoding type (/FLATE, /ASCIIHEX or /ASCII85)
+			// Ignore this stream if the object does not contain an encoding type (/FLATEDECODE, /ASCIIHEX or /ASCII85)
 			if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
+			   {
+				if  ( self::$DEBUG  >  1 )
+					echo "----------------------------------- UNENCODED #$object_number\n$object_data" ;
+
 				continue ;
+			    }
 
 			// Decode the encoded stream
 			$decoded_stream_data 	=  $this -> DecodeData ( $stream_data, $type ) ;
@@ -536,6 +555,8 @@ class  PdfToText 	// extends Object
 			   {
 				$text [ $object_number ]	=  $decoded_stream_data ;
 			    }
+			else if  ( self::$DEBUG  >  1 )
+				echo "----------------------------------- UNRECOGNIZED #$object_number\n$decoded_stream_data\n" ;
 		    }
 
 		// Associate character maps with declared fonts
@@ -1154,7 +1175,7 @@ class  PdfToText 	// extends Object
 		   		$decoded_stream_data 	=  $this -> __decode_ascii_hex ( $stream_data ) ;
 		   		break ;
 
-		   	case 	PDF_ASCII85_ENCODING :
+			case 	self::PDF_ASCII85_ENCODING :
 				$decoded_stream_data 	=  $this -> __decode_ascii_85 ( $stream_data ) ;
 		    }
 
@@ -1347,7 +1368,7 @@ class  PdfToText 	// extends Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	private function  ExtractText ( $object_id, $data, &$current_font )
 	   {
-		if  ( PdfToText::$DEBUG )
+		if  ( self::$DEBUG )
 		   {
 			echo "----------------------------------- TEXT #$object_id\n" ;
 			echo $data ;
@@ -1494,6 +1515,30 @@ class  PdfToText 	// extends Object
 				   		   				   {
 				   		   					case 	'n' 	:  $ch =  "\n" ; break ;
 				   		   					case 	'r' 	:  $ch =  "\r" ; break ;
+
+											// However, an octal form can also be specified ; in this case we have to take into account
+											// the character width for the current font (if the character width is 4 hex digits, then we
+											// will encounter constructs such as "\000\077").
+											// The method used here is dirty : we build a regex to match octal character representations on a substring
+											// of the text 
+											default :
+												$width		=  $this -> FontTable -> GetMapWidth ( $current_font ) / 2 ;	// Convert to byte count
+												$subtext	=  substr ( $text, $i - 1 ) ;
+												$regex		=  "#^ (\\\\ [0-7]+){1,$width} #imsx" ;
+
+												$status		=  preg_match ( $regex, $subtext, $octal_matches ) ;
+
+												if  ( $status )
+												   {
+													$octal_values	=  explode ( '\\', substr ( $octal_matches [0], 1 ) ) ;
+													$ord		=  0 ;
+
+													foreach  ( $octal_values  as  $octal_value ) 
+														$ord	=  ( $ord  <<  8 ) + octdec ( $octal_value ) ;
+
+													$ch	 =  chr ( $ord ) ;
+													$i	+=  strlen ( $octal_matches [0] ) - 1 ;
+												    }
 				   		   				    }
 				   		   			    }
 
@@ -1763,7 +1808,21 @@ class  PdfToText 	// extends Object
 		   			$nch 	=  $data [ $pos ++ ] ;
 
 		   			if  ( $nch  ==  '\\' )
-		   				$result 	.=  $nch . $data [ $pos ++ ] ;
+					   {
+						$after		 =  $data [ $pos ] ;
+
+						// Character references specified as \xyz, where "xyz" are octal digits
+						if  ( $after  >=  '0'  &&  $after  <=  '7' )
+						   {
+							$result		.=  $nch ;
+
+							while  ( $data [ $pos ]  >=  '0'  &&  $data [ $pos ]  <=  '7' )
+								$result		.=  $data [ $pos ++ ] ;
+						    }
+						// Regular character escapes
+						else
+		   					$result 	.=  $nch . $data [ $pos ++ ] ;
+					    }
 		   			else if  ( $nch  ==  ')' )
 		   			   {
 		   				$result 	.=  ')' ;
@@ -2188,6 +2247,8 @@ abstract class	PdfTexterCharacterMap	// extends Object
    {
 	// Object id of the character map
 	public		$ObjectId ;
+	// Number of hex digits in a character represented in hexadecimal notation
+	public 		$HexCharWidth ;
 
 
 
@@ -2206,9 +2267,11 @@ abstract class	PdfTexterCharacterMap	// extends Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public static function  CreateInstance ( $object_id, $definitions )
 	   {
-		if  ( stripos ( $definitions, 'begincmap' ) )
+		if  ( stripos ( $definitions, 'begincmap'    )  !==  false  ||  
+		      stripos ( $definitions, 'beginbfchar'  )  !==  false  ||
+		      stripos ( $definitions, 'beginbfrange' )  !==  false )
 			return ( new PdfTexterUnicodeMap ( $object_id, $definitions ) ) ;
-		else if  ( stripos ( $definitions, '/Differences' ) )
+		else if  ( stripos ( $definitions, '/Differences' )  !==  false )
 			return ( new PdfTexterEncodingMap ( $object_id, $definitions ) ) ;
 		else
 			return ( false ) ;
@@ -2225,6 +2288,8 @@ abstract class	PdfTexterCharacterMap	// extends Object
 	public static function  IsCharacterMap  ( $decoded_data )
 	   {
 		return ( stripos ( $decoded_data, 'begincmap' )  	!==  false  ||
+			 stripos ( $decoded_data, 'beginbfchar' )  	!==  false  ||		// "begincmap" does not seem to be mandatory...
+			 stripos ( $decoded_data, 'beginbfrange' )  	!==  false  ||	
 			 stripos ( $decoded_data, '/Differences' )	!==  false ) ;
 	    }
 
@@ -2259,8 +2324,6 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 	public		$Id	;
 	// Character substitution table
 	protected	$Map			=  [] ;
-	// Number of hex digits in a character represented in hexadecimal notation
-	public 		$HexCharWidth ;
 
 
 	// Constructor -
@@ -2348,6 +2411,9 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				   }
 			    }
 		    }
+
+		if  ( PdfToText::$DEBUG  >  1 )
+			dump ($this -> Map ) ;
 	     }
 
 
@@ -2649,6 +2715,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	public function  __construct ( $object_id, $definitions )
 	   {
 		parent::__construct ( $object_id ) ;
+
+		$this -> HexCharWidth	=  2 ;
 
 		if  ( PdfToText::$DEBUG )
 		   {
