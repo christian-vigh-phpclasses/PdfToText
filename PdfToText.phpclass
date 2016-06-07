@@ -344,10 +344,247 @@
 	. Added more debugging messages when the $DEBUG static class variable is set to an integer value
 	  greater than 1.
 	. Character references to a CMAP can be specified as \xyz, where "xyz" are octal digits
-	. The begincmap/endcmap constructs can be omitted. Checked for the presence of beginbfchar/beginbfrange
-	  in this case.
+	. The begincmap/endcmap constructs can be omitted, which initially was the criteria to determine if the
+	  current object is a character map. Checked for the presence of beginbfchar/beginbfrange in this case.
+
+    [Version : 1.2.4]	[Date : 2016/06/03]     [Author : CV]
+	. Introduced the PdfObjectBase class, from which all the classes defined here inherit. Moved all general
+	  methods at this level.
+	. Added the PdfPageMap class
+	   
 
  **************************************************************************************************************/
+
+
+/*==============================================================================================================
+
+    class PfObjectBase -
+        Base class for all PDF objects defined here.
+
+  ==============================================================================================================*/
+abstract class  PdfObjectBase		// extends  Object
+   {
+	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
+	const 	PDF_UNKNOWN_ENCODING 		=  0 ;
+	const 	PDF_ASCIIHEX_ENCODING 		=  1 ;
+	const 	PDF_ASCII85_ENCODING		=  2 ;
+	const 	PDF_FLATE_ENCODING		=  3 ;
+
+
+	public function  __construct ( )
+	   { 
+		// parent::__construct ( ) ; 
+	    }
+
+
+ 	/*--------------------------------------------------------------------------------------------------------------
+
+	    IsCharacterMap -
+	        Checks if the specified text contents represent a character map definition or not.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsCharacterMap  ( $decoded_data )
+	   {
+		return ( stripos ( $decoded_data, 'begincmap' )  	!==  false  ||
+			 stripos ( $decoded_data, 'beginbfchar' )  	!==  false  ||		// "begincmap" does not seem to be mandatory...
+			 stripos ( $decoded_data, 'beginbfrange' )  	!==  false  ||	
+			 stripos ( $decoded_data, '/Differences' )	!==  false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    IsFont -
+		Checks if the current object contents specify a font declaration.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsFont ( $object_data )
+	   {
+		return ( stripos ( $object_data, '/BaseFont' )  !==  false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    IsFontMap -
+		Checks if the code contains things like :
+			<</F1 26 0 R/F2 22 0 R/F3 18 0 R>>
+		which maps font 1 (when specified with the /Fx instruction) to object 26, 2 to object 22 and 3 to 
+		object 18, respectively, in the above example.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  IsFontMap ( $object_data )
+	   {
+		if  ( preg_match ( '#<</F\d+\s+.*>>#', $object_data ) )
+			return ( true ) ;
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        IsText - Check if the specified object contents denote a text stream.
+
+	    PROTOTYPE
+	        $status		=  $this -> IsText ( $object_data, $decoded_stream_data ) ;
+
+	    DESCRIPTION
+	        Checks if the specified object contents denote a text stream.
+
+	    PARAMETERS
+	        $object_data (string) -
+	                Object data, ie the contents located between the "obj" and "endobj" keywords.
+
+	        $decoded_stream_data (string) -
+	        	The flags specified in the object data are not sufficient to be sure that we have a block of
+	        	drawing instructions. We must also check for certain common instructions to be present.
+
+	    RETURN VALUE
+	        True if the specified contents MAY be text contents, false otherwise.
+
+	    NOTES
+		I do not consider this method as bullet-proof. There may arise some cases where non-text blocks can be
+		mistakenly considered as text blocks, so it is subject to evolve in the future.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsText ( $object_data, $decoded_stream_data )
+	   {
+		if  ( stripos ( $object_data, '/Filter'  )  !==  false  &&
+		      stripos ( $object_data, '/Length'  )  !==  false  &&
+		      stripos ( $object_data, '/Length1' )  ===  false  &&
+		      stripos ( $object_data, '/Type'    )  ===  false  &&
+		      stripos ( $object_data, '/Subtype' )  ===  false )
+		   {
+		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm)\\b/', $decoded_stream_data ) )
+				return ( true ) ;
+		   	else
+		   		return ( false ) ;
+		    }
+
+		return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        GetEncodingType - Gets an object encoding type.
+
+	    PROTOTYPE
+	        $type	=  $this -> GetEncodingType ( $object_data ) ;
+
+	    DESCRIPTION
+	        When an object is a stream, returns its encoding type.
+
+	    PARAMETERS
+	        $object_data (string) -
+	                Object contents.
+
+	    RETURN VALUE
+	        Returns one of the following values :
+
+		- PdfToText::PDF_ASCIIHEX_ENCODING :
+			Hexdecimal encoding of the binary values.
+			Decoding algorithm was taken from the unknown contributor and not tested so far, since I
+			couldn't find a PDF file with such an encoding type.
+
+		- PdfToText::PDF_ASCII85_ENCODING :
+			Obscure encoding format.
+			Decoding algorithm was taken from the unknown contributor and not tested so far, since I
+			couldn't find a PDF file with such an encoding type.
+
+		- PdfToText::PDF_FLATE_ENCODING :
+			gzip/deflate encoding.
+
+		- PdfToText::PDF_UNKNOWN_ENCODING :
+			The object data does not specify any encoding at all. It can happen on objects that do not have
+			a "stream" part.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetEncodingType ( $object_data )
+	   {
+		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) ) #imsx', $object_data, $match ) ;
+
+		if  ( ! $status )
+			return ( self::PDF_UNKNOWN_ENCODING ) ;
+
+		switch ( strtolower ( $match [ 'encoding' ] ) )
+		    {
+		    	case 	'asciihexdecode' 	:  return ( self::PDF_ASCIIHEX_ENCODING ) ;
+		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING ) ;
+		    	default 			:  return ( self::PDF_FLATE_ENCODING ) ;
+		     }
+	    }
+
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetObjectReferences - Gets object references from a specified construct.
+	
+	    PROTOTYPE
+	        $status		=  $this -> GetObjectReferences ( $object_id, $object_data, $searched_string, &$object_ids ) ;
+	
+	    DESCRIPTION
+	        Certain parameter specifications are followed by an object reference of the form :
+			x 0 R
+		but it can also be an array of references :
+			[x1 0 R x2 0 R ... xn 0 r]
+		Those kind of constructs can occur after parameters such as : /Pages, /Contents, /Kids...
+		This method extracts the object references found in such a construct.
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Id of the object to be analyzed.
+
+		$object_data (string) -
+			Object contents.
+
+		$searched_string (string) - 
+			String to be searched, that must be followed by an object or an array of object references.
+			This parameter can contain constructs used in regular expressions. Note however that the '#'
+			character must be escaped, since it is used as a delimiter in the regex that is applied on
+			object data.
+
+		$object_ids (array of integers) -
+			Returns on output the ids of the pdf object that have been found after the searched string.
+	
+	    RETURN VALUE
+	        True if the searched string has been found and is followed by an object or array of object references,
+		false otherwise.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetObjectReferences ( $object_id, $object_data, $searched_string, &$object_ids )
+	   {
+		$status		=  true ;
+		$object_ids	=  [] ;
+
+		if  ( preg_match ( "#$searched_string \s+ (?P<object> \d+) \s+ \d+ \s+ R#ix", $object_data, $match ) )
+		   {
+			$object_ids []	=  ( integer ) $match [ 'object' ] ;
+		    }
+		else if  ( preg_match ( "#$searched_string \s* \\[ (?P<objects> [^\]]+ ) \\]#ix", $object_data, $match ) )
+		   {
+			$object_list	=  $match [ 'objects' ] ;
+
+			if  ( preg_match_all ( '/(?P<object> \d+) \s+ \d+ \s+ R/x', $object_list, $matches ) )
+			   {
+				foreach  ( $matches [ 'object' ]  as  $id )
+					$object_ids []	=  ( integer ) $id ;
+			    }
+			else
+				$status		=  false ;
+		    }
+		else
+			$status		=  false ;
+
+		return ( $status ) ;
+	    }
+
+   }
 
 
 /*==============================================================================================================
@@ -356,15 +593,11 @@
 	A class for extracting text from Pdf files.
 
  ==============================================================================================================*/
-class  PdfToText 	// extends Object
+class  PdfToText 	extends PdfObjectBase
    {
+	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
+	// When integer > 1, outputs additional information about other objects.
 	public static 		$DEBUG 		=  false ;
-
-	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
-	const 	PDF_UNKNOWN_ENCODING 		=  0 ;
-	const 	PDF_ASCIIHEX_ENCODING 		=  1 ;
-	const 	PDF_ASCII85_ENCODING		=  2 ;
-	const 	PDF_FLATE_ENCODING		=  3 ;
 
 	// Current filename
 	public 		$Filename 		=  false ;
@@ -375,10 +608,10 @@ class  PdfToText 	// extends Object
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
-	// Page mappings
-	protected	$PageMappings		=  [] ;
-	// Page locations - holds page numbers and start/end offsets in the Text property 
-	protected	$PageLocations		=  [] ;
+	// Page map object
+	protected	$PageMap ;
+	// Page locations (start and end offsets)
+	protected	$PageLocations ;
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -455,8 +688,8 @@ class  PdfToText 	// extends Object
 		$this -> Text 		=  '' ;
 		$this -> FontTable 	=  new PdfTexterFontTable ( ) ;
 		$this -> Filename 	=  $filename ;
-		$this -> PageMappings	=  [] ;
-		$this -> Pages		=  [] ;
+		$this -> PageMap	=  new PdfTexterPageMap ( ) ;
+		$this -> PageLocations	=  [] ;
 
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
 		if  ( ! preg_match_all ( '/(?P<num> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $object_matches ) )
@@ -465,39 +698,25 @@ class  PdfToText 	// extends Object
 		// Character maps encountered so far
 		$cmaps			=  [] ;
 
-		// Page definitions - if the optional /Pages /Kids[] construct is encountered
-		$pages			=  false ;
-
 		// Loop through the objects
 		$text		=  [] ;
 
 		for ( $i = 0 ; $i < count ( $object_matches [ 'object' ] ) ; $i ++ )
 		   {
 		   	$object_data 	=  $object_matches [ 'object' ] [$i] ;
-		   	$object_number 	=  $object_matches [ 'num' ] [$i] ;
+		   	$object_number 	=  ( integer ) $object_matches [ 'num' ] [$i] ;
 
-			// Check if current data contains page information. We don't put a "continue" statement here, 
-			// since the data can contain additional relevant information, such as font declarations...
-			if  ( $this -> IsPage ( $object_data ) )
-			   {
-				$this -> AddPage ( $object_number, $object_data ) ;
-			    }
-
-			// Check if current data contains page list 
-			if  ( $this -> IsPageList ( $object_data ) )
-			   {
-				$pages	=  $this -> GetPageList ( $object_data ) ;
-			    }
+			$this -> PageMap -> Peek ( $object_number, $object_data ) ;
 
 			// Some font definitions are in clear text in an object, some are encoded in a stream within the object
 			// We process here the unencoded ones
-			if  ( PdfTexterFontTable::IsFont ( $object_data ) )
+			if  ( $this -> IsFont ( $object_data ) )
 			   {
 				$this -> FontTable -> Add ( $object_number, $object_data ) ;
 				continue ;
 			    }
 			// Some character maps may also be in clear text
-			else if  ( PdfTexterCharacterMap::IsCharacterMap ( $object_data ) )
+			else if  ( $this -> IsCharacterMap ( $object_data ) )
 			    {
 				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
 
@@ -507,7 +726,7 @@ class  PdfToText 	// extends Object
 				continue ;
 			    }
 			// Check if there is an association between font number and object number
-			else if  ( PdfTexterFontTable::IsFontMap ( $object_data ) )
+			else if  ( $this -> IsFontMap ( $object_data ) )
 		   	   {
 				$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
 				continue ;
@@ -529,7 +748,7 @@ class  PdfToText 	// extends Object
 			if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
 			   {
 				if  ( self::$DEBUG  >  1 )
-					echo "----------------------------------- UNENCODED #$object_number\n$object_data" ;
+					echo "----------------------------------- UNENCODED #$object_number :\n$object_data" ;
 
 				continue ;
 			    }
@@ -538,7 +757,7 @@ class  PdfToText 	// extends Object
 			$decoded_stream_data 	=  $this -> DecodeData ( $stream_data, $type ) ;
 
 			// Check for character maps
-			if  ( PdfTexterCharacterMap::IsCharacterMap ( $decoded_stream_data ) )
+			if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
 			   {
 				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $decoded_stream_data ) ;
 
@@ -546,7 +765,7 @@ class  PdfToText 	// extends Object
 					$cmaps [] 	=  $cmap ;
 			   }
 			// Font definitions
-			else if  ( PdfTexterFontTable::IsFont ( $decoded_stream_data ) )
+			else if  ( $this -> IsFont ( $decoded_stream_data ) )
 			   {
 				$this -> FontTable -> Add ( $object_number, $decoded_stream_data ) ;
 			    }
@@ -556,7 +775,7 @@ class  PdfToText 	// extends Object
 				$text [ $object_number ]	=  $decoded_stream_data ;
 			    }
 			else if  ( self::$DEBUG  >  1 )
-				echo "----------------------------------- UNRECOGNIZED #$object_number\n$decoded_stream_data\n" ;
+				echo "----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
 		    }
 
 		// Associate character maps with declared fonts
@@ -566,53 +785,40 @@ class  PdfToText 	// extends Object
 		// Current font defaults to -1, which means : take the first available font as the current one.
 		// Sometimes it may happen that text drawing instructions do not set a font at all (PdfPro for example)
 		$current_font	=  -1 ;
-		$last_page	=  1 ;
+
+		$this -> Pages	=  [] ;
+		$this -> PageMap -> MapObjects ( ) ;
 
 		// Extract text from the collected TEXT elements
 		foreach  ( $text  as  $id => $str )
 		   {
-			$text	=  $this -> ExtractText ( $id, $str, $current_font ) ;
+			$page_number	=  $this -> PageMap [ $id ] ;
 
-			// Put a form feed between each text block - not sure it is appropriate
-			if  ( $this -> Text )
-				$this -> Text	.=  "\n\f\n" ;
+			if  ( $page_number  !==  false )
+			   {
+				$object_text	=  $this -> ExtractText ( $id, $str, $current_font ) ;
 
-			// Add this new page
-			$start						=  strlen ( $this -> Text ) ;
-
-			// Trying this class on the PDF specifications 1.7 file shows that 3 pages are like "orphans", ie they
-			// are not referenced by any /Page option
-			if  ( ! isset ( $this -> PageMappings [ $id ] ) )
-				$this -> PageMappings [ $id] [ 'page' ]		=  $last_page + 1 ;
-
-			$page_number					=  $this -> PageMappings [ $id ] [ 'page' ] ;
-			$this -> PageLocations [ $page_number ]		=  [ 'start' => $start ] ;
-
-			// Then add this page to the text already collected
-			$this -> Text	.=  $text ;
-			$last_page	 =  $page_number ;
+				if  ( isset ( $this -> Pages [ $page_number ] ) )
+					$this -> Pages [ $page_number ]	.=  $object_text ;
+				else
+					$this -> Pages [ $page_number ]	 =  $object_text ;
+			    }
+			else if  ( self::$DEBUG  >  1 )
+				echo "----------------------------------- OBJECT WITHOUT PAGE #$id :\n$str\n" ;
 		    }
 
-		// Remap pages in case of the /Kids parameter would give a different order (not yet tested)
-		$this -> RemapPages ( $pages ) ;
+		// Build the page locations (ie, starting and ending offsets)
+		$offset		=  0 ;
 
-		// Rearrange the PageLocations property so that we have a text length and an ending offset for each page
-		$text_length	=  strlen ( $this -> Text ) ;
-		$page_numbers	=  array_keys ( $this -> PageLocations ) ;
-
-		for  ( $i_page = 0, $count = count ( $this -> PageLocations ) ; $i_page  <  $count ; $i_page ++ )
+		foreach  ( $this -> Pages  as  $page )
 		   {
-			$i		=  $page_numbers [ $i_page ] ;
-			$next		=  ( $i_page + 1  <  $count  &&  isset ( $this -> PageLocations [ $i + 1 ] ) ) ?  
-						$this -> PageLocations [ $i + 1 ] [ 'start' ] : $text_length ;
-			
-			$this -> PageLocations [$i] [ 'end' ]		=  $next - 1 ;
-			$this -> PageLocations [$i] [ 'length' ]	=  $next - $this -> PageLocations [$i] [ 'start' ] ;
+			$length				 =  strlen ( $page ) ;
+			$this -> PageLocations []	 =  [ 'start' => $offset, 'end' => $offset + $length - 1 ] ;
+			$offset				+=  $length ;
 		    }
 
-		// Build page array
-		foreach  ( $this -> PageLocations  as  $page_number => $location )
-			$this -> Pages [ $page_number ]		=  substr ( $this -> Text, $location [ 'start' ], $location [ 'length' ] ) ;
+		// And finally, the Text property
+		$this -> Text	=  implode ( '', $this -> Pages ) ;
 	    }
 
 
@@ -875,268 +1081,6 @@ class  PdfToText 	// extends Object
 	 **************************************************************************************************************
 	 **************************************************************************************************************
 	 **************************************************************************************************************/
-
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    NAME
-	        AddPage - Adds a page reference to the page mappings.
-	
-	    PROTOTYPE
-	        $this -> AddPage ( $object_data ) ;
-	
-	    DESCRIPTION
-	        Normally, a way to distinguish pages is locating a /Type/Page construct. When this construct is present,
-		there is a /Contents keyword that references the object who has the page contents.
-	
-	    PARAMETERS
-	        $object_data (string) -
-	                Object data, ie the contents located between the "obj" and "endobj" keywords.
-	
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  AddPage ( $object_id, $object_data )
-	   {
-		if  ( preg_match ( '#/Contents \s+ (?P<object> \d+)#imsx', $object_data, $match ) )
-		   {
-			$count						=  count ( $this -> PageMappings ) ;
-			$this -> PageMappings [ $match [ 'object' ] ]	=  
-			   [ 
-				'page'		=>  $count + 1, 
-				'page-object'	=>  ( integer ) $match [ 'object' ],
-				'object'	=>  ( integer ) $object_id
-			    ] ;
-		    }
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    NAME
-	        GetPageList - Retrieves the page list given by the /Pages/Kids[] construct.
-	
-	    PROTOTYPE
-	        $list	=  $this -> GetPageList ( $object_data ) ;
-	
-	    DESCRIPTION
-	        This method is called to catch the optional /Pages/Kids[] construct, that lists between square brackets
-		the references to the objects that hold the successive page contents.
-	
-	    PARAMETERS
-	        $object_data (string) -
-	                Object data, ie the contents located between the "obj" and "endobj" keywords.
-	
-	    RETURN VALUE
-	        Returns an associative array whose keys are the page numbers and values the object ids.
-	
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  GetPageList ( $object_data )
-	   {
-		if  ( preg_match ( '#/Kids \s* \[ (?P<list> [^\]]+)#imsx', $object_data, $list ) )
-		   {
-			preg_match_all ( '#(?P<object> \d+) \s+ \d+ \s+ R#imsx', $list [ 'list' ], $matches ) ;
-			$page_number	=  0 ;
-			$result		=  [] ;
-
-			foreach ( $matches [ 'object' ]  as  $id )
-				$result [ ++ $page_number ]	=  ( integer ) $id ;
-
-			return ( $result ) ;
-		    }
-		else
-			return ( false ) ;
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    NAME
-	        RemapPages - Remaps page information.
-	
-	    PROTOTYPE
-	        $this -> RemapPages ( $pages ) ;
-	
-	    DESCRIPTION
-	        Remaps the page numbers of the current document.
-	
-	    PARAMETERS
-	        $pages (associative array) -
-	                An array of page/object ids associations that has been returned by the GetPageList() method.
-			If this parameter is empty, no remapping will occur.
-	
-	    NOTES
-	        It may happen that the page list given by the /Pages /Kids[] provides a page order that is different
-		from the sequential page order given by the /Page /Contents constructs. Although I didn't encounter
-		such a situation so far, this method will renumber the page numbers built sequentially using the real
-		order given by the /Kids option.
-	
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  RemapPages ( $pages )
-	   {
-		if  ( ! $pages )
-			return ;
-
-		foreach  ( $this -> PageMappings  as  &$mapping )
-		   {
-			foreach  ( $pages  as  $page => $object )
-			   {
-				if  ( $mapping [ 'object' ]  ==  $object )
-					$mapping [ 'page' ]	=  $page ;
-			    }
-		    }
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-
-	    NAME
-	        IsPage - Check if the specified object contents denote a page reference.
-
-	    PROTOTYPE
-	        $status		=  $this -> IsPage ( $object_data ) ;
-
-	    DESCRIPTION
-	        Checks if the specified object contents denote a page reference.
-
-	    PARAMETERS
-	        $object_data (string) -
-	                Object data, ie the contents located between the "obj" and "endobj" keywords.
-
-	    RETURN VALUE
-	        True if the specified contents contains a /Type/Page keyword, false otherwise.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  IsPage ( $object_data )
-	   {
-		if  ( preg_match ( '#/Type\s*/Page[^s]#', $object_data ) )
-			return(  true ) ;
-
-		return ( false ) ;
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-
-	    NAME
-	        IsPageList - Check if the specified object contents denote a page list
-
-	    PROTOTYPE
-	        $status		=  $this -> IsPageList ( $object_data ) ;
-
-	    DESCRIPTION
-	        Checks if the specified object contents denote a page list.
-
-	    PARAMETERS
-	        $object_data (string) -
-	                Object data, ie the contents located between the "obj" and "endobj" keywords.
-
-	    RETURN VALUE
-	        True if the specified contents contains a /Type/Pages/Kids keyword, false otherwise.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  IsPageList ( $object_data )
-	   {
-		if  ( preg_match ( '#/Type\s*/Pages\s*/Kids#imsx', $object_data ) )
-			return(  true ) ;
-
-		return ( false ) ;
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-
-	    NAME
-	        IsText - Check if the specified object contents denote a text stream.
-
-	    PROTOTYPE
-	        $status		=  $this -> IsText ( $object_data, $decoded_stream_data ) ;
-
-	    DESCRIPTION
-	        Checks if the specified object contents denote a text stream.
-
-	    PARAMETERS
-	        $object_data (string) -
-	                Object data, ie the contents located between the "obj" and "endobj" keywords.
-
-	        $decoded_stream_data (string) -
-	        	The flags specified in the object data are not sufficient to be sure that we have a block of
-	        	drawing instructions. We must also check for certain common instructions to be present.
-
-	    RETURN VALUE
-	        True if the specified contents MAY be text contents, false otherwise.
-
-	    NOTES
-		I do not consider this method as bullet-proof. There may arise some cases where non-text blocks can be
-		mistakenly considered as text blocks, so it is subject to evolve in the future.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  IsText ( $object_data, $decoded_stream_data )
-	   {
-		if  ( stripos ( $object_data, '/Filter'  )  !==  false  &&
-		      stripos ( $object_data, '/Length'  )  !==  false  &&
-		      stripos ( $object_data, '/Length1' )  ===  false  &&
-		      stripos ( $object_data, '/Type'    )  ===  false  &&
-		      stripos ( $object_data, '/Subtype' )  ===  false )
-		   {
-		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm)\\b/', $decoded_stream_data ) )
-				return ( true ) ;
-		   	else
-		   		return ( false ) ;
-		    }
-
-		return ( false ) ;
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-
-	    NAME
-	        GetEncodingType - Gets an object encoding type.
-
-	    PROTOTYPE
-	        $type	=  $this -> GetEncodingType ( $object_data ) ;
-
-	    DESCRIPTION
-	        When an object is a stream, returns its encoding type.
-
-	    PARAMETERS
-	        $object_data (string) -
-	                Object contents.
-
-	    RETURN VALUE
-	        Returns one of the following values :
-
-		- PdfToText::PDF_ASCIIHEX_ENCODING :
-			Hexdecimal encoding of the binary values.
-			Decoding algorithm was taken from the unknown contributor and not tested so far, since I
-			couldn't find a PDF file with such an encoding type.
-
-		- PdfToText::PDF_ASCII85_ENCODING :
-			Obscure encoding format.
-			Decoding algorithm was taken from the unknown contributor and not tested so far, since I
-			couldn't find a PDF file with such an encoding type.
-
-		- PdfToText::PDF_FLATE_ENCODING :
-			gzip/deflate encoding.
-
-		- PdfToText::PDF_UNKNOWN_ENCODING :
-			The object data does not specify any encoding at all. It can happen on objects that do not have
-			a "stream" part.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  GetEncodingType ( $object_data )
-	   {
-		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) ) #imsx', $object_data, $match ) ;
-
-		if  ( ! $status )
-			return ( self::PDF_UNKNOWN_ENCODING ) ;
-
-		switch ( strtolower ( $match [ 'encoding' ] ) )
-		    {
-		    	case 	'asciihexdecode' 	:  return ( self::PDF_ASCIIHEX_ENCODING ) ;
-		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING ) ;
-		    	default 			:  return ( self::PDF_FLATE_ENCODING ) ;
-		     }
-	    }
-
 
 	/*--------------------------------------------------------------------------------------------------------------
 
@@ -2107,28 +2051,6 @@ class 	PdfTexterFontTable 	// extends Object
 			return ( -1 ) ;
 	    }
 
-	// IsFont -
-	//	Checks if the current object contents specify a font declaration.
-	public static function  IsFont ( $object_data )
-	   {
-		return ( stripos ( $object_data, '/BaseFont' )  !==  false ) ;
-	    }
-
-
-	// IsFontMap -
-	//	Checks if the code contains things like :
-	//		<</F1 26 0 R/F2 22 0 R/F3 18 0 R>>
-	//	which maps font 1 (when specified with the /Fx instruction) to object 26,
-	//	2 to object 22 and 3 to object 18, respectively, in the above example.
-	public static function  IsFontMap ( $object_data )
-	   {
-		if  ( preg_match ( '#<</F\d+\s+.*>>#', $object_data ) )
-			return ( true ) ;
-		else
-			return ( false ) ;
-	    }
-
-
 	// IsMapped -
 	//	Checks if the specified font has an associated character map.
 	public function  IsMapped ( $font )
@@ -2277,21 +2199,6 @@ abstract class	PdfTexterCharacterMap	// extends Object
 			return ( false ) ;
 	    }
 
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-
-	    IsCharacterMap -
-	        Checks if the specified text contents represent a character map definition or not.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	public static function  IsCharacterMap  ( $decoded_data )
-	   {
-		return ( stripos ( $decoded_data, 'begincmap' )  	!==  false  ||
-			 stripos ( $decoded_data, 'beginbfchar' )  	!==  false  ||		// "begincmap" does not seem to be mandatory...
-			 stripos ( $decoded_data, 'beginbfrange' )  	!==  false  ||	
-			 stripos ( $decoded_data, '/Differences' )	!==  false ) ;
-	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -2806,13 +2713,215 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 /*==============================================================================================================
 
     PdfTexterPageMap -
-        A class for fonts having a character map specified with the /Encoding parameter.
+        A class for detecting page objects mappings and retrieving page number for a specified object.
+	There is a quadruple level of indirection here :
+
+	- The first level contains a /Type /Catalog parameter, with a /Pages one that references an object which
+	  contains a /Count and /Kids. I don't know yet if the /Pages parameter can reference more than one
+	  object using the array notation. However, the class is designed to handle such situations.
+	- The object containing the /Kids parameter references objects who, in turn, lists the objects contained
+	  into one single page.
+	- Each object referenced in /Kids has a /Type/Page parameter, together with /Contents, which lists the
+	  objects of the current page.
+
+	Object references are of the form : "x y R", where "x" is the object number.
+
+	Of course, anything can be in any order, otherwise it would not be funny ! Consider the following 
+	example :
+
+		(1) 5 0 obj
+			<< ... /Pages 1 0 R ... >>
+		    endobj
+
+		(2) 1 0 obj
+			<< ... /Count 1 /Kids[6 0 R] ... /Type/Pages ... >>
+		    endobj
+
+		(3)  6 0 obj
+			<< ... /Type/Page ... /Parent 1 0 R ... /Contents [10 0 R 11 0 R ... x 0 R]
+		     endobj
+
+	Object #5 says that object #1 contains the list of page contents (in this example, there is only one page,
+	referenced by object #6).
+	Object #6 says that the objects #10, #11 through #x are contained into the same page.
+	The quadruple indirection comes when you are handling one of the objects referenced in object #6 and you
+	need to retrieve their page number...
+
+	Of course, you cannot rely on the fact that all objects appear in logical order.
+
+	And, of course #2, there may be no page catalog at all ! in such cases, objects containing drawing 
+	instructions will have to be considered as a single page, whose number will be sequential.
+
+	And, of course #3, as this is the case with the official PDF 1.7 Reference from Adobe, there can be a
+	reference to a non-existing object which was meant to contain the /Kids parameter (!). In this case,
+	taking the ordinal number of objects of type (3) gives the page number minus one.
+
+	One mystery is that the PDF 1.7 Reference file contains 1310 pages but only 1309 are recognized here...
 
   ==============================================================================================================*/
-class  PdfTexterPageMap		//extends  Object
+class  PdfTexterPageMap		extends		PdfObjectBase	
+				implements	\ArrayAccess, \Countable
    {
+	// Page catalog, ie the id(s) of object(s) giving the list of objects describing pages (/Type/Catalog together with /Pages referencing an object)
+	protected	$PageCatalog		=  [] ;
+	// List of object listing the objects grouped per page (/Count and /Kids parameters)
+	protected	$PageObjects		=  [] ;
+	// List of objects grouped into one page (/Type/Page parameter, with /Contents)
+	protected 	$PageContentObjects	=  [] ;
+	// Once everything has been collected in the pdf file, the MapPages() method must be called to map object ids to page numbers
+	protected	$PageNumbers		=  [] ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    CONSTRUCTOR
+		Creates a PdfTexterPageMap object. Actually, nothing significant is perfomed here, as this class' goal
+		is to be used internally by PdfTexter.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  __construct ( )
 	   {
-
+		parent::__construct ( ) ;
 	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Peek - Peeks page information from a pdf object.
+	
+	    PROTOTYPE
+	        $pagemap -> Peek ( ) ;
+	
+	    DESCRIPTION
+	        Retrieves page information which can be of type (1), (2) or (3), as described in the class comments.
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Id of the current pdf object.
+
+		$object_data (string) -
+			Pdf object contents.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  Peek ( $object_id, $object_data )
+	   {
+		// Page catalog (/Type/Catalog and /Pages x 0 R)
+		if  ( preg_match ( '#/Type \s* /Catalog#ix', $object_data )  &&  $this -> GetObjectReferences ( $object_id, $object_data, '/Pages', $references ) )
+		   {
+			$this -> PageCatalog	=  array_merge ( $this -> PageCatalog, $references ) ;
+		    }
+		// Object listing the object numbers that give the list of objects contained in a single page (/Types/Pages and /Count x /Kids[x1 0 R ... xn 0 R]
+		else if  ( preg_match ( '#/Type \s* /Pages#ix', $object_data ) )
+		   {
+			if  ( $this -> GetObjectReferences ( $object_id, $object_data, '/Kids', $references ) )
+			   {
+				preg_match ( '#/Count \s+ (?P<count> \d+)#ix', $object_data, $match ) ;
+				$page_count		=  ( isset ( $match [ 'count' ] ) ) ?  ( integer ) $match [ 'count' ] : false ;
+				$reference_count	=  count ( $references ) ;
+
+				if  ( $page_count  !==  false  &&  $reference_count  !=  $page_count )
+				   {
+					warning ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
+						  "referenced by the /Kids parameter ($reference_count)." ) ;
+				    }
+
+				$this -> PageObjects [ $object_id ]	=  $references ;
+			    }
+		    }
+		// Object listing the other objects that are contained in this page (/Type/Page and /Contents[x1 0 R ... xn 0 R]
+		else if  ( preg_match ( '#/Type \s* /Page\b#ix', $object_data ) )
+		   {
+			if  ( $this -> GetObjectReferences ( $object_id, $object_data, '/Contents', $references ) )
+			   {
+				preg_match ( '#/Parent \s+ (?P<parent> \d+)#ix', $object_data, $match ) ;
+
+				if  ( ! isset ( $match [ 'parent' ] ) )
+				   {
+					warning ( "Object #$object_id : No parent object given (/Parent)." ) ;
+				    }
+				else 
+					$this -> PageContentObjects [ $object_id ]	=  [ 'parent' => ( integer ) $match [ 'parent' ], 'objects' => $references ] ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        MapObjects - Builds a correspondance between object and page numbers.
+	
+	    PROTOTYPE
+	        $pagemap -> MapObjects ( ) ;
+	
+	    DESCRIPTION
+	        Builds a correspondance between object and page numbers. The page number corresponding to an object id 
+		will after that be available using the array notation.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  MapObjects ( )
+	   {
+		if  ( count ( $this -> PageObjects ) )
+		    {
+			foreach  ( $this -> PageContentObjects  as  $kids_id => $page_contents )
+			   {
+				foreach  ( $page_contents [ 'objects' ]  as  $id )
+				   {
+					$index	=  1 ;
+
+				
+					foreach  ( $this -> PageObjects [ $page_contents [ 'parent' ] ]  as  $parent_id )
+					   {
+						if  ( $parent_id  ==  $kids_id )
+							$this -> PageNumbers [ $id ]	=  $index ;
+
+						$index ++ ;
+					    }
+				    }
+			    }
+		     }
+		else
+		    {
+			$index	=  1 ;
+
+			foreach  ( $this -> PageContentObjects  as  $kids_id => $page_contents )
+			   {
+				foreach  ( $page_contents [ 'objects' ]  as  $id )
+				   {
+					$this -> PageNumbers [ $id ]	=  $index ;
+				    }
+
+				$index ++ ;
+			    }
+		     }
+
+		return ( 0 ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Interfaces implementation.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( count ( $this -> PageNumbers ) ) ; }
+
+	public function  offsetExists ( $object_id )
+	   { return ( isset ( $this -> PageNumbers [ $object_id ] ) ) ; }
+
+	public function  offsetGet ( $object_id ) 
+	   { 
+		if ( isset ( $this -> PageNumbers [ $object_id ] ) )
+			return ( $this -> PageNumbers [ $object_id ] ) ;
+		else 
+			return ( false ) ;
+	    }
+
+	public function  offsetSet ( $offset, $value )
+	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+
+	public function  offsetUnset ( $offset )
+	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
     }
