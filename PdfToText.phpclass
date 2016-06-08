@@ -2868,8 +2868,8 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 
 				if  ( $page_count  !==  false  &&  $reference_count  !=  $page_count )
 				   {
-					warning ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
-						  "referenced by the /Kids parameter ($reference_count)." ) ;
+					echo ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
+						  "referenced by the /Kids parameter ($reference_count).\n" ) ;
 				    }
 
 				$this -> PageObjects [ $object_id ]	=  $references ;
@@ -2884,7 +2884,7 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 
 				if  ( ! isset ( $match [ 'parent' ] ) )
 				   {
-					warning ( "Object #$object_id : No parent object given (/Parent)." ) ;
+					echo ( "Object #$object_id : No parent object given (/Parent).\n" ) ;
 				    }
 				else 
 					$this -> PageContentObjects [ $object_id ]	=  [ 'parent' => ( integer ) $match [ 'parent' ], 'objects' => $references ] ;
