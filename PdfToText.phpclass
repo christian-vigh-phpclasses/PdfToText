@@ -351,6 +351,12 @@
 	. Introduced the PdfObjectBase class, from which all the classes defined here inherit. Moved all general
 	  methods at this level.
 	. Added the PdfPageMap class
+
+    [Version : 1.2.5]	[Date : 2016/06/07]     [Author : CV]
+	. Tried to enhance performance by first looking for objects that contain stream/endstream constructs, 
+	  to avoid unnecessary detections of character maps, font definitions, etc.
+	. Consecutive text shapes introduced by the "Do" instruction were gathered on the same text line.  A
+	  line break is now inserted when a "Do" instruction is encountered.
 	   
 
  **************************************************************************************************************/
@@ -708,36 +714,39 @@ class  PdfToText 	extends PdfObjectBase
 
 			$this -> PageMap -> Peek ( $object_number, $object_data ) ;
 
-			// Some font definitions are in clear text in an object, some are encoded in a stream within the object
-			// We process here the unencoded ones
-			if  ( $this -> IsFont ( $object_data ) )
+			if  ( strpos ( $object_data, 'stream' )  ===  false  ||  ! preg_match ( '#[^/] stream ( (\r? \n) | \r ) (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
 			   {
-				$this -> FontTable -> Add ( $object_number, $object_data ) ;
-				continue ;
-			    }
-			// Some character maps may also be in clear text
-			else if  ( $this -> IsCharacterMap ( $object_data ) )
-			    {
-				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
+				// Some font definitions are in clear text in an object, some are encoded in a stream within the object
+				// We process here the unencoded ones
+				if  ( $this -> IsFont ( $object_data ) )
+				   {
+					$this -> FontTable -> Add ( $object_number, $object_data ) ;
+					continue ;
+				    }
+				// Some character maps may also be in clear text
+				else if  ( $this -> IsCharacterMap ( $object_data ) )
+				    {
+					$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
 
-				if  ( $cmap )
-					$cmaps [] 	=  $cmap ;
+					if  ( $cmap )
+						$cmaps [] 	=  $cmap ;
 
-				continue ;
-			    }
-			// Check if there is an association between font number and object number
-			else if  ( $this -> IsFontMap ( $object_data ) )
-		   	   {
-				$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
-				continue ;
-			    }
-			// Ignore other objects that do not contain an encoded stream
-		   	else if  ( ! preg_match ( '#[^/] stream ( (\r? \n) | \r ) (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
-			   {
-				if  ( self::$DEBUG  >  1 )
-					echo "----------------------------------- UNSTREAMED #$object_number\n$object_data" ;
+					continue ;
+				    }
+				// Check if there is an association between font number and object number
+				else if  ( $this -> IsFontMap ( $object_data ) )
+		   		   {
+					$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
+					continue ;
+				    }
+				// Ignore other objects that do not contain an encoded stream
+		   		else 
+				   {
+					if  ( self::$DEBUG  >  1 )
+						echo "----------------------------------- UNSTREAMED #$object_number\n$object_data" ;
 
-		   		continue ;
+		   			continue ;
+				    }
 			    }
 
 			// Isolate stream data and try to find its encoding type
@@ -1526,9 +1535,6 @@ class  PdfToText 	extends PdfObjectBase
 			$last_instruction 	=  $instruction ;
 		    }
 
-		// I noticed, with the RTF specification file sample, that the hyphen in hyphenated words can be placed on a
-		// separate line ; try to correct this, although it does not seem pertinent
-		$result 	=  str_replace ( [ "\r\n-\r\n", "\n-\n", "-\r\n", "-\n" ], '', $result ) ;
 
 		return ( $result ) ;
 	    }
@@ -1561,7 +1567,7 @@ class  PdfToText 	extends PdfObjectBase
 			$token 		=  $part [0] ;
 			$next_index 	=  $part [1] ;
 
-			// If we are in a page header or footer definition, ignore evrything
+			// If we are in a page header or footer definition, ignore everything
 			if  ( $ignore )  
 			   {
 				if  ( $token  ==  'ET' )
@@ -1605,9 +1611,14 @@ class  PdfToText 	extends PdfObjectBase
 			// Text leading (spacing used by T*)
 			else if  ( $token  ==  'TL' )
 				return ( [ 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0] ] ) ;
-				// Position to next line
+			// Position to next line
 			else if  ( $token  ==  'T*' )
 				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return an "newline" instruction
+			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
+			// appear in the pdf file (which is likely to be different from their position on a graphic screen).
+			else if  ( $token  ==  'Do' )
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => false ] ) ;
 			// Raw text output
 			else if  ( $token [0]  ==  '(' )
 			   {
