@@ -357,7 +357,26 @@
 	  to avoid unnecessary detections of character maps, font definitions, etc.
 	. Consecutive text shapes introduced by the "Do" instruction were gathered on the same text line.  A
 	  line break is now inserted when a "Do" instruction is encountered.
-	   
+
+    [Version : 1.2.6]	[Date : 2016/06/08]     [Author : CV]
+	. Stream/endstream contents can be unencoded and appear in clear text ! Added the PDF_TEXT_ENCODING 
+	  constant to handle this case.
+	. Changed the regular expression in IsFontMap() to allow spaces between "<<" and the first "/F". 
+	. Character maps strike again ! after the issue uncovered in version 1.2.2, where constructs such as :
+
+		<012B> <00660067>
+
+	  means "replace every reference to 0x0012B with unicode characters 0x0066 and 0x0067 (for maps having 
+	  a width of 2 bytes), I discovered that some pdf documents having character maps of 1 byte could hold 
+	  entries such as :
+
+		<03> <0020>
+
+	  which simply means "replace every reference to 0x03 with character 0x20"... I have not seen any 
+	  differentiating factor between the sample I handled in version 1.2.2 and this one. All I can say is
+	  that I put a horrible kludge in PdfTexterUnicodeMap::offsetGet(), to handle a situation were 
+	  character widths are one-byte long, and their substitutions can be 2-bytes long, with a leading byte
+	  of zero. S..t.
 
  **************************************************************************************************************/
 
@@ -375,6 +394,7 @@ abstract class  PdfObjectBase		// extends  Object
 	const 	PDF_ASCIIHEX_ENCODING 		=  1 ;
 	const 	PDF_ASCII85_ENCODING		=  2 ;
 	const 	PDF_FLATE_ENCODING		=  3 ;
+	const	PDF_TEXT_ENCODING		=  4 ;
 
 
 	public function  __construct ( )
@@ -421,7 +441,7 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public static function  IsFontMap ( $object_data )
 	   {
-		if  ( preg_match ( '#<</F\d+\s+.*>>#', $object_data ) )
+		if  ( preg_match ( '#<< \s* /F \d+ \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -465,9 +485,9 @@ abstract class  PdfObjectBase		// extends  Object
 		   {
 		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm)\\b/', $decoded_stream_data ) )
 				return ( true ) ;
-		   	else
-		   		return ( false ) ;
 		    }
+		else if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm)\\b/', $decoded_stream_data ) )
+			return ( true ) ;
 
 		return ( false ) ;
 	    }
@@ -504,6 +524,9 @@ abstract class  PdfObjectBase		// extends  Object
 		- PdfToText::PDF_FLATE_ENCODING :
 			gzip/deflate encoding.
 
+		- PdfToText::PDF_TEXT_ENCODING :
+			Stream data is unencoded (ie, it is pure ascii).
+
 		- PdfToText::PDF_UNKNOWN_ENCODING :
 			The object data does not specify any encoding at all. It can happen on objects that do not have
 			a "stream" part.
@@ -514,13 +537,14 @@ abstract class  PdfObjectBase		// extends  Object
 		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) ) #imsx', $object_data, $match ) ;
 
 		if  ( ! $status )
-			return ( self::PDF_UNKNOWN_ENCODING ) ;
+			return ( self::PDF_TEXT_ENCODING ) ;
 
 		switch ( strtolower ( $match [ 'encoding' ] ) )
 		    {
 		    	case 	'asciihexdecode' 	:  return ( self::PDF_ASCIIHEX_ENCODING ) ;
-		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING ) ;
-		    	default 			:  return ( self::PDF_FLATE_ENCODING ) ;
+		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING  ) ;
+		    	case	'flatedecode'		:  return ( self::PDF_FLATE_ENCODING    ) ;
+			default				:  return ( self::PDF_UNKNOWN_ENCODING  ) ;
 		     }
 	    }
 
@@ -1130,6 +1154,12 @@ class  PdfToText 	extends PdfObjectBase
 
 			case 	self::PDF_ASCII85_ENCODING :
 				$decoded_stream_data 	=  $this -> __decode_ascii_85 ( $stream_data ) ;
+				break ;
+
+			case	self::PDF_TEXT_ENCODING :
+				$decoded_stream_data	=  $stream_data ;
+				break ;
+				
 		    }
 
 		return ( $decoded_stream_data ) ;
@@ -2175,8 +2205,8 @@ class  PdfTexterFont		// extends Object
 	the scope of the PdfToText class.
 
   ==============================================================================================================*/
-abstract class	PdfTexterCharacterMap	// extends Object
-					implements  \ArrayAccess, \Countable
+abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
+					implements	\ArrayAccess, \Countable
    {
 	// Object id of the character map
 	public		$ObjectId ;
@@ -2330,8 +2360,8 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 			    }
 		    }
 
-		if  ( PdfToText::$DEBUG  >  1 )
-			dump ($this -> Map ) ;
+		//if  ( PdfToText::$DEBUG  >  1 )
+		//	dump ($this -> Map ) ;
 	     }
 
 
@@ -2356,6 +2386,11 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 
 			foreach  ( $this -> Map [ $offset ]  as  $code )
 			   {
+				// This is the horrible kludge to fix the issue about character maps of size x having substitutions
+				// of size x+2, as described in the history entry for version 1.2.6
+				if  ( $this -> HexCharWidth  ==  2  &&  ! $code )
+					continue ;
+
 		   		$entity 	 =  '&#' . sprintf ( "%d", $code ) .  ';' ;
 		   		$result 	.=  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ;
 			    }
