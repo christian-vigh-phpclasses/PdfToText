@@ -378,7 +378,64 @@
 	  character widths are one-byte long, and their substitutions can be 2-bytes long, with a leading byte
 	  of zero. S..t.
 
+    [Version : 1.2.7]	[Date : 2016/06/11]     [Author : CV]
+	. Added the Images array property, which makes available the images found in the document. The elements
+	  of this array are image data.
+	. Added a few PDF_*_ENCODING constants which were missing. Not all encoding types have been implemented,
+	  however.
+	. Added the IsImage() and DecodeImage() methods.
+	. Added the PdfImage class
+	. To simplify the management of this source between the Thrak framework and the specific version made
+	  for publishing on phpclasses, added the following :
+	  - error() and warning() functions
+	  - PdfToTextException class
+
  **************************************************************************************************************/
+
+
+/*==============================================================================================================
+
+    class PdfToTextException -
+        Implements an exception thrown when an error is encountered while decoding PDF files.
+
+  ==============================================================================================================*/
+class  PdfToTextException		extends  \Exception
+   { 
+	public static	$IsObject		=  false ;
+
+	public function  __construct ( $message, $object_id = false )
+	   {
+		$text	=  "Pdf decoding error" ;
+
+		if  ( $object_id  !==  false )
+			$text	.=  " (object #$object_id)" ;
+
+		$text	.=  " : $message" ;
+
+		parent::__construct ( $text ) ;
+	    }
+    }
+
+
+if  ( ! function_exists ( 'warning' ) )
+   {
+	function  warning ( $message )
+	   {
+		trigger_error ( $message, E_USER_WARNING ) ;
+	    }
+    }
+
+
+if  ( ! function_exists ( 'error' ) )
+   {
+	function  error ( $message )
+	   {
+		if  ( is_string ( $message ) )
+			trigger_error ( $message, E_USER_ERROR ) ;
+		else if (  is_a ( $message, '\Exception' ) )
+			throw $message ;
+	    }
+    }
 
 
 /*==============================================================================================================
@@ -390,11 +447,17 @@
 abstract class  PdfObjectBase		// extends  Object
    {
 	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
-	const 	PDF_UNKNOWN_ENCODING 		=  0 ;
-	const 	PDF_ASCIIHEX_ENCODING 		=  1 ;
-	const 	PDF_ASCII85_ENCODING		=  2 ;
-	const 	PDF_FLATE_ENCODING		=  3 ;
-	const	PDF_TEXT_ENCODING		=  4 ;
+	const 	PDF_UNKNOWN_ENCODING 		=   0 ;		// No stream decoding type could be identified
+	const 	PDF_ASCIIHEX_ENCODING 		=   1 ;		// AsciiHex encoding - not tested
+	const 	PDF_ASCII85_ENCODING		=   2 ;		// Ascii85 encoding - not tested
+	const 	PDF_FLATE_ENCODING		=   3 ;		// Flate/deflate encoding
+	const	PDF_TEXT_ENCODING		=   4 ;		// Stream data appears in clear text - no decoding required
+	const	PDF_LZW_ENCODING		=   5 ;		// Not implemented yet
+	const	PDF_RLE_ENCODING		=   6 ;		// Runtime length encoding ; not implemented yet
+	const	PDF_DCT_ENCODING		=   7 ;		// JPEG images
+	const	PDF_CCITT_FAX_ENCODING		=   8 ;		// CCITT Fax encoding - not implemented yet
+	const	PDF_JBIG2_ENCODING		=   9 ;		// JBIG2 filter encoding (black/white) - not implemented yet
+	const	PDF_JPX_ENCODING		=  10 ;		// JPEG2000 encoding - not implemented yet
 
 
 	public function  __construct ( )
@@ -442,6 +505,22 @@ abstract class  PdfObjectBase		// extends  Object
 	public static function  IsFontMap ( $object_data )
 	   {
 		if  ( preg_match ( '#<< \s* /F \d+ \s+ .* >>#msx', $object_data ) )
+			return ( true ) ;
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    IsImage -
+		Checks if the code contains things like :
+			/Subtype/Image
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  IsImage ( $object_data )
+	   {
+		if  ( preg_match ( '#/Subtype \s* /Image#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -499,12 +578,15 @@ abstract class  PdfObjectBase		// extends  Object
 	        GetEncodingType - Gets an object encoding type.
 
 	    PROTOTYPE
-	        $type	=  $this -> GetEncodingType ( $object_data ) ;
+	        $type	=  $this -> GetEncodingType ( $object_id, $object_data ) ;
 
 	    DESCRIPTION
 	        When an object is a stream, returns its encoding type.
 
 	    PARAMETERS
+		$object_id (integer) -
+			PDF object number.
+
 	        $object_data (string) -
 	                Object contents.
 
@@ -531,10 +613,37 @@ abstract class  PdfObjectBase		// extends  Object
 			The object data does not specify any encoding at all. It can happen on objects that do not have
 			a "stream" part.
 
+		- PdfToText::PDF_DCT_ENCODING :
+			a lossy filter based on the JPEG standard.
+
+		The following constants are defined but not yet implemented ; an exception will be thrown if they are
+		encountered somewhere in the PDF file :
+
+		- PDF_LZW-ENCODING :
+			a filter based on LZW Compression; it can use one of two groups of predictor functions for more 
+			compact LZW compression : Predictor 2 from the TIFF 6.0 specification and predictors (filters) 
+			from the PNG specification
+
+		- PDF_RLE_ENCODING :
+			a simple compression method for streams with repetitive data using the run-length encoding 
+			algorithm and the image-specific filters.
+
+		PDF_CCITT_FAX_ENCODING :
+			a lossless bi-level (black/white) filter based on the Group 3 or Group 4 CCITT (ITU-T) fax 
+			compression standard defined in ITU-T T.4 and T.6.
+
+		PDF_JBIG2_ENCODING :
+			a lossy or lossless bi-level (black/white) filter based on the JBIG2 standard, introduced in 
+			PDF 1.4.
+
+		PDF_JPX_ENCODING :
+			a lossy or lossless filter based on the JPEG 2000 standard, introduced in PDF 1.5.
+
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  GetEncodingType ( $object_data )
+	protected function  GetEncodingType ( $object_id, $object_data )
 	   {
-		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) ) #imsx', $object_data, $match ) ;
+		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) | (DCTDecode) | ' .
+						                   '(LZWDecode) | (RunLengthDecode) | (CCITTFaxDecode) | (JBIG2Decode) | (JPXDecode) ) #imsx', $object_data, $match ) ;
 
 		if  ( ! $status )
 			return ( self::PDF_TEXT_ENCODING ) ;
@@ -544,10 +653,18 @@ abstract class  PdfObjectBase		// extends  Object
 		    	case 	'asciihexdecode' 	:  return ( self::PDF_ASCIIHEX_ENCODING ) ;
 		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING  ) ;
 		    	case	'flatedecode'		:  return ( self::PDF_FLATE_ENCODING    ) ;
+			case    'dctdecode'		:  return ( self::PDF_DCT_ENCODING      ) ;
+
+			case	'lzwdecode'		:
+			case	'runlengthdecode'	: 
+			case	'ccittfaxdecode'	:
+			case	'jbig2decode'		: 
+			case	'jpxdecode'		:
+				error ( "Encoding type \"{$match [ 'encoding' ]}\" not yet implemented for pdf object #$object_id." ) ;
+
 			default				:  return ( self::PDF_UNKNOWN_ENCODING  ) ;
 		     }
 	    }
-
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -633,8 +750,10 @@ class  PdfToText 	extends PdfObjectBase
 	public 		$Filename 		=  false ;
 	// Extracted text
 	public		$Text			=  '' ;
-	// Document pages
+	// Document pages (array of strings)
 	public		$Pages			=  [] ;
+	// Document images (array of PdfImage objects)
+	public		$Images			=  [] ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
@@ -659,7 +778,7 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  	__construct ( $filename = null )
 	   {
-		// parent::__construct ;
+		parent::__construct ( ) ;
 
 		if  ( $filename )
 			$this -> Load ( $filename ) ;
@@ -703,14 +822,14 @@ class  PdfToText 	extends PdfObjectBase
 	   {
 		// Check if the file exists
 		if  ( ! file_exists ( $filename ) )
-			throw ( new  \Exception ( "File \"$filename\" does not exist." ) ) ;
+			error ( new  PdfToTextException ( "File \"$filename\" does not exist." ) ) ;
 
 		// Load its contents
 		$contents 	=  file_get_contents ( $filename, FILE_BINARY ) ;
 
 		// Check that this is a PDF file
 		if  ( ! preg_match ( '/^ %PDF- (?P<version> \d+ (\. \d+)*) /ix', $contents, $match ) )
-			throw ( new \Exception ( "File \"$filename\" is not a valid PDF file." ) ) ;
+			error ( new PdfToTextException ( "File \"$filename\" is not a valid PDF file." ) ) ;
 
 		$this -> PdfVersion 	=  $match [ 'version' ] ;
 
@@ -718,6 +837,8 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> Text 		=  '' ;
 		$this -> FontTable 	=  new PdfTexterFontTable ( ) ;
 		$this -> Filename 	=  $filename ;
+		$this -> Pages		=  [] ;
+		$this -> Images		=  [] ;
 		$this -> PageMap	=  new PdfTexterPageMap ( ) ;
 		$this -> PageLocations	=  [] ;
 
@@ -737,6 +858,7 @@ class  PdfToText 	extends PdfObjectBase
 		   	$object_number 	=  ( integer ) $object_matches [ 'num' ] [$i] ;
 
 			$this -> PageMap -> Peek ( $object_number, $object_data ) ;
+			$type 		=  $this -> GetEncodingType ( $object_number, $object_data ) ;
 
 			if  ( strpos ( $object_data, 'stream' )  ===  false  ||  ! preg_match ( '#[^/] stream ( (\r? \n) | \r ) (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
 			   {
@@ -772,10 +894,17 @@ class  PdfToText 	extends PdfObjectBase
 		   			continue ;
 				    }
 			    }
+			// Extract image data, if any
+			else if  ( $this -> IsImage ( $object_data ) )
+			   {
+				$image	=  $this -> DecodeImage ( $object_number, $stream_match [ 'stream' ], $type ) ;
+
+				$this -> Images []	=  $image ;
+				continue ;
+			    }
 
 			// Isolate stream data and try to find its encoding type
 			$stream_data 		=  $stream_match [ 'stream' ] ;
-			$type 			=  $this -> GetEncodingType ( $object_data ) ;
 
 			// Ignore this stream if the object does not contain an encoding type (/FLATEDECODE, /ASCIIHEX or /ASCII85)
 			if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
@@ -1295,6 +1424,44 @@ class  PdfToText 	extends PdfObjectBase
 
 
 	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        DecodeImage - Returns decoded image contents.
+	
+	    PROTOTYPE
+	        TBC
+	
+	    DESCRIPTION
+	        description
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Pdf object number.
+
+		$object_data (string) -
+			Object data.
+
+		$type (integer) -
+			One of the PdfToText::PDF_*_ENCODING constants.
+	
+	    RETURN VALUE
+	        description
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  DecodeImage ( $object_id, $object_data, $type )
+	   {
+		switch  ( $type )  
+		   {
+			case	self::PDF_DCT_ENCODING :
+				return ( new PdfImage ( $object_data ) ) ;
+
+			default :
+				error ( new PdfToTextException ( "Image format type #$type not yet implemented for object #$object_id." ) ) ;
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
 
 	    NAME
 		ExtractText - extracts text from a pdf stream.
@@ -1390,7 +1557,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Process current instruction
 			switch  ( $instruction [ 'instruction' ] )
 			   {
-				// "Tm" : Output text on the same line, if the "y" coordinates are equal
+				// "Tm", "Td" or "TD" : Output text on the same line, if the "y" coordinates are equal
 			   	case 	'goto' :
 			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y  ||  abs ( $instruction [ 'y' ] - $last_goto_y )  <  $current_font_size )
 			   		   {
@@ -1629,6 +1796,14 @@ class  PdfToText 	extends PdfObjectBase
 
 				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y ] ) ;
 			    }
+			// 'Td' oe 'TD' instructions : return a goto instruction with the x and y coordinates (1st and 2nd args)
+			else if  ( $token  ==  'Td'  ||  $token  ==  'TD' )
+			   {
+				$x 	=  $number_stack [0] ;
+				$y 	=  $number_stack [1] ;
+
+				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y ] ) ;
+			    }
 			// Output text "'" instruction, with conditional newline
 			else if  ( $token [0]  ==  "'" )
 				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false ] ) ;
@@ -1644,7 +1819,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Position to next line
 			else if  ( $token  ==  'T*' )
 				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
-			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return an "newline" instruction
+			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return a "newline" instruction
 			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
 			// appear in the pdf file (which is likely to be different from their position on a graphic screen).
 			else if  ( $token  ==  'Do' )
@@ -1995,7 +2170,7 @@ class  PdfToText 	extends PdfObjectBase
 	exists only in the scope of the PdfToText class.
 
   ==============================================================================================================*/
-class 	PdfTexterFontTable 	// extends Object
+class 	PdfTexterFontTable 	extends PdfObjectBase
    {
 	// Font table
 	private		$Fonts		=  [] ;
@@ -2006,7 +2181,7 @@ class 	PdfTexterFontTable 	// extends Object
 	//	Well, does not do anything special
 	public function  __construct ( )
 	   {
-		// parent::__construct ( ) ;
+		parent::__construct ( ) ;
 	    }
 
 
@@ -2163,7 +2338,7 @@ class 	PdfTexterFontTable 	// extends Object
 	the scope of the PdfToText class.
 
   ==============================================================================================================*/
-class  PdfTexterFont		// extends Object
+class  PdfTexterFont		extends PdfObjectBase
    {
 	// Font resource id (may be an object id, overridden by <</Rx...>> constructs
 	public		$Id ;
@@ -2177,7 +2352,7 @@ class  PdfTexterFont		// extends Object
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
 	public function  __construct ( $resource_id, $cmap_id )
 	   {
-		// parent::__construct ( ) ;
+		parent::__construct ( ) ;
 		$this -> Id		=  $resource_id ;
 		$this -> CharacterMapId	=  $cmap_id ;
 	    }
@@ -2217,7 +2392,7 @@ abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
 
 	public function  __construct ( $object_id )
 	   {
-		//parent::__construct ( ) ;
+		parent::__construct ( ) ;
 		$this -> ObjectId	=  $object_id ;
 	    }
 
@@ -2252,10 +2427,10 @@ abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
 	abstract function  offsetGet 		( $offset ) ;
 
 	public function  offsetSet ( $offset, $value )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
 
 	public function  offsetUnset ( $offset )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
     }
 
 
@@ -2868,8 +3043,8 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 
 				if  ( $page_count  !==  false  &&  $reference_count  !=  $page_count )
 				   {
-					echo ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
-						  "referenced by the /Kids parameter ($reference_count).\n" ) ;
+					warning ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
+						  "referenced by the /Kids parameter ($reference_count)." ) ;
 				    }
 
 				$this -> PageObjects [ $object_id ]	=  $references ;
@@ -2884,7 +3059,7 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 
 				if  ( ! isset ( $match [ 'parent' ] ) )
 				   {
-					echo ( "Object #$object_id : No parent object given (/Parent).\n" ) ;
+					warning ( "Object #$object_id : No parent object given (/Parent)." ) ;
 				    }
 				else 
 					$this -> PageContentObjects [ $object_id ]	=  [ 'parent' => ( integer ) $match [ 'parent' ], 'objects' => $references ] ;
@@ -2966,8 +3141,103 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 	    }
 
 	public function  offsetSet ( $offset, $value )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
 
 	public function  offsetUnset ( $offset )
-	   { throw ( new \RuntimeException ( "Unsupported operation." ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfImage -
+        Holds image data coming from pdf.
+
+  ==============================================================================================================*/
+class  PdfImage			extends  PdfObjectBase 
+   {
+	// Iage resource that can be used to process image data, using the php imagexxx() functions
+	public		$ImageResource ;
+	// Original image data
+	protected	$ImageData ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    CONSTRUCTOR
+	        Creates a PdfImage object with a resource that can be used with imagexxx() php functions.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $image_data )
+	   {
+		$this -> ImageData	=  $image_data ;
+		$this -> ImageResource	=  imagecreatefromstring ( $image_data ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        SaveAs - Saves the current image to a file.
+	
+	    PROTOTYPE
+	        $pdfimage -> SaveAs ( $output_file, $image_type = IMG_JPEG ) ;
+	
+	    DESCRIPTION
+	        Saves the current image resource to the specified output file, in the specified format.
+	
+	    PARAMETERS
+	        $output_file (string) -
+	                Output filename.
+
+		$image_type (integer) -
+			Output format. Can be any of the predefined php constants IMG_*.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SaveAs ( $output_file, $image_type = IMG_JPEG )
+	   {
+		$image_types		=  imagetypes ( ) ;
+
+		switch  ( $image_type )
+		   {
+			case	IMG_JPEG :
+			case	IMG_JPG :
+				if  ( ! ( $image_types & IMG_JPEG )  &&  ! ( $image_types & IMG_JPG ) )
+					error ( new PdfToTextException ( "Your current PHP version does not support JPG images." ) ) ;
+
+				imagejpeg ( $this -> ImageResource, $output_file, 100 ) ;
+				break ;
+
+			case	IMG_GIF :
+				if  ( ! ( $image_types & IMG_GIF ) )
+					error ( new PdfToTextException ( "Your current PHP version does not support GIF images." ) ) ;
+
+				imagegif ( $this -> ImageResource, $output_file ) ;
+				break ;
+
+			case	IMG_PNG :
+				if  ( ! ( $image_types & IMG_PNG ) )
+					error ( new PdfToTextException ( "Your current PHP version does not support PNG images." ) ) ;
+
+				imagepng ( $this -> ImageResource, $output_file, 0 ) ;
+				break ;
+				
+			case	IMG_WBMP :
+				if  ( ! ( $image_types & IMG_WBMP ) )
+					error ( new PdfToTextException ( "Your current PHP version does not support WBMP images." ) ) ;
+
+				imagewbmp ( $this -> ImageResource, $output_file ) ;
+				break ;
+				
+			case	IMG_XPM :
+				if  ( ! ( $image_types & IMG_XPM ) )
+					error ( new PdfToTextException ( "Your current PHP version does not support XPM images." ) ) ;
+
+				imagexbm ( $this -> ImageResource, $output_file ) ;
+				break ;
+
+			default :
+				error ( new PdfToTextException ( "Unknown image type #$image_type." ) ) ;
+		    }
+	    }
     }

@@ -175,6 +175,19 @@ This section describes the properties that are available in a **PdfTText** objec
 
 Name of the file whose text contents have been extracted.
 
+
+### Images ###
+
+An array of **PdfImage** objects.
+
+The class currently supports the following properties :
+
+- *ImageResource* : a resource that can be used with the Php *imagexxx()* functions to process image contents.
+
+The following methods are available :
+
+- *SaveAs ( $output\_file, $image\_type = IMG\_JPG )* : Saves the current image to the specified output file, using the specified file format (one of the predefined PHP constants : IMG\_JPG, IMG\_GIF, IMG\_PNG, IMG\_XBMP and IMG\_XBM).
+
 ### Pages ###
 
 Associative array containing individual page contents. The array key is the page number, starting from 1.
