@@ -390,6 +390,9 @@
 	  - error() and warning() functions
 	  - PdfToTextException class
 
+    [Version : 1.2.8]	[Date : 2016/06/12]     [Author : CV]
+	. Corrected the visibility of the Isxxx() methods, which were public instead of protected.
+
  **************************************************************************************************************/
 
 
@@ -502,7 +505,7 @@ abstract class  PdfObjectBase		// extends  Object
 		object 18, respectively, in the above example.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public static function  IsFontMap ( $object_data )
+	protected function  IsFontMap ( $object_data )
 	   {
 		if  ( preg_match ( '#<< \s* /F \d+ \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
@@ -518,7 +521,7 @@ abstract class  PdfObjectBase		// extends  Object
 			/Subtype/Image
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public static function  IsImage ( $object_data )
+	protected function  IsImage ( $object_data )
 	   {
 		if  ( preg_match ( '#/Subtype \s* /Image#msx', $object_data ) )
 			return ( true ) ;
@@ -899,7 +902,9 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				$image	=  $this -> DecodeImage ( $object_number, $stream_match [ 'stream' ], $type ) ;
 
-				$this -> Images []	=  $image ;
+				if  ( $image  !==  false )
+					$this -> Images []	=  $image ;
+					
 				continue ;
 			    }
 
@@ -1454,6 +1459,9 @@ class  PdfToText 	extends PdfObjectBase
 		   {
 			case	self::PDF_DCT_ENCODING :
 				return ( new PdfImage ( $object_data ) ) ;
+
+			case	self::PDF_FLATE_ENCODING :
+				return ( false ) ;
 
 			default :
 				error ( new PdfToTextException ( "Image format type #$type not yet implemented for object #$object_id." ) ) ;
