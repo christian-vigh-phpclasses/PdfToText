@@ -392,6 +392,8 @@
 
     [Version : 1.2.8]	[Date : 2016/06/12]     [Author : CV]
 	. Corrected the visibility of the Isxxx() methods, which were public instead of protected.
+	. Some positioning instructions can be cumulated (a 'Tm' can be followed by a 'Td'). Consider that the
+	  last instruction wins.
 
  **************************************************************************************************************/
 
@@ -1460,6 +1462,7 @@ class  PdfToText 	extends PdfObjectBase
 			case	self::PDF_DCT_ENCODING :
 				return ( new PdfImage ( $object_data ) ) ;
 
+			// For now, I have not found enough information to be able to decode the data in an inflated stream...
 			case	self::PDF_FLATE_ENCODING :
 				return ( false ) ;
 
@@ -1567,6 +1570,11 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				// "Tm", "Td" or "TD" : Output text on the same line, if the "y" coordinates are equal
 			   	case 	'goto' :
+					// Some text is positioned using 'Tm' instructions ; however they can be immediatley followed by 'Td' instructions
+					// which give a relative positioning ; so consider that the last instruction wins
+					if  ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  ==  'goto' )
+						$last_goto_y	=  $instruction [ 'y' ]  ;
+
 			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y  ||  abs ( $instruction [ 'y' ] - $last_goto_y )  <  $current_font_size )
 			   		   {
 			   			$use_same_line 		=  true ;
