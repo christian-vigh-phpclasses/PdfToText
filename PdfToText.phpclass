@@ -395,6 +395,13 @@
 	. Some positioning instructions can be cumulated (a 'Tm' can be followed by a 'Td'). Consider that the
 	  last instruction wins.
 
+    [Version : 1.2.9]	[Date : 2016/06/15]     [Author : CV]
+	. Array of characters which included line breaks were not correctly interpreted
+	. Added the Separator property, which can be used to separate chunks of text that are recognized to be
+	  on the same line. This is useful for pdf documents that contain mainly tabular data, but it could
+	  break words if it contains textual data.
+	. Handled a new strange way to specify font numbers (/f-x-y instead of /Fx).
+
  **************************************************************************************************************/
 
 
@@ -509,7 +516,7 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFontMap ( $object_data )
 	   {
-		if  ( preg_match ( '#<< \s* /F \d+ \s+ .* >>#msx', $object_data ) )
+		if  ( preg_match ( '#<< \s* (/F \d+) | (/f-\d+-\d+) \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -759,6 +766,8 @@ class  PdfToText 	extends PdfObjectBase
 	public		$Pages			=  [] ;
 	// Document images (array of PdfImage objects)
 	public		$Images			=  [] ;
+	// Text chunk separator
+	public		$Separator		=  '' ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
@@ -1559,6 +1568,9 @@ class  PdfToText 	extends PdfObjectBase
 		// Text leading used by T*
 		$text_leading 			=  0 ;
 
+		// Set to true if a separator needs to be inserted
+		$needs_separator		=  false ;
+
 		// Loop through instructions
 		while  ( ( $instruction =  $this -> __next_instruction ( $data, $data_length, $data_index ) )  !==  false )
 		   {
@@ -1620,9 +1632,10 @@ class  PdfToText 	extends PdfObjectBase
 			   		   	else
 			   		   		$count 	=  1 ;
 
-		   		   		$extra		 =  str_repeat ( PHP_EOL, $count ) ;
-			   			$result 	.=  $extra ;
-						$last_goto_y 	-=  ( $count * $text_leading ) ;	// Approximation on y-coord change
+		   		   		$extra			 =  str_repeat ( PHP_EOL, $count ) ;
+			   			$result 		.=  $extra ;
+						$needs_separator	 =  false ;
+						$last_goto_y 		-=  ( $count * $text_leading ) ;	// Approximation on y-coord change
 			   		    }
 
 			   		break ;
@@ -1632,13 +1645,22 @@ class  PdfToText 	extends PdfObjectBase
 			   	case 	'text' :
 					// Check if we have to insert a newline
 			   		if ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  !=  'text'  &&  ! $use_same_line )
-			   			$result 	.=  PHP_EOL ;
+					   {
+			   			$result 		.=  PHP_EOL ;
+						$needs_separator	 =  false ;
+					    }
 			   		// Roughly simulate spacing between lines by inserting newline characters
 			   		else if  ( $extra_newlines  > 0 )
 			   		   {
-			   			$result 	.=  str_repeat ( PHP_EOL, $extra_newlines ) ;
-			   			$extra_newlines  =  0 ;
+			   			$result 		.=  str_repeat ( PHP_EOL, $extra_newlines ) ;
+			   			$extra_newlines		 =  0 ;
+						$needs_separator	 =  false ;
 			   		    }
+
+					if  ( $needs_separator )
+						$result		.=  $this -> Separator ;
+
+					$needs_separator	=  true ;
 
 					// Fonts having character maps will require some special processing
 					if  ( $this -> FontTable -> IsMapped ( $current_font ) )
@@ -1885,7 +1907,11 @@ class  PdfToText 	extends PdfObjectBase
 		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
 			else if  ( ! strncasecmp ( $token, '/F', 2 ) )
 			   {
-				$resource 	=  ( integer ) substr ( $token, 2 ) ;
+				$resource 	=  substr ( $token, 2 ) ;
+
+				if  ( $resource [0]  ==  '-' )
+					$resource	=  substr ( $resource, 1 ) ;
+
 				$id 		=  $this -> FontTable -> GetFontByMapId ( $resource ) ;
 
 				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id ] ) ;
@@ -1965,6 +1991,10 @@ class  PdfToText 	extends PdfObjectBase
 		   						break  2 ;
 		   					else
 		   						break ;
+
+						case	"\n" :
+						case	"\r" :
+							break ;
 
 		   			   	default :
 		   			   		$result 	.=  $nch ;
@@ -2065,7 +2095,7 @@ class  PdfToText 	extends PdfObjectBase
 		   		    }
 		   		else if  ( ctype_alpha ( $ch )  ||  $ch  ==  '/' )
 		   		   {
-					while  ( $index  <  $data_length  &&  ( ctype_alnum ( $data [ $index ] )  ||  $data [ $index ]  ==  '*' ) )
+					while  ( $index  <  $data_length  &&  ( ctype_alnum ( $data [ $index ] )  ||  $data [ $index ]  ==  '*'  ||  $data [ $index ]  ==  '-' ) )
 						$value 	.=  $data [ $index ++ ] ;
 		   		    }
 
@@ -2245,9 +2275,16 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//		<</F1 26 0 R/F2 22 0 R/F3 18 0 R>>
 	//	which maps font 1 (when specified with the /Fx instruction) to object 26,
 	//	2 to object 22 and 3 to object 18, respectively, in the above example.
+	//	Found also a strange way of specifying a font mapping :
+	//		<</f-0-0 5 0 R etc.
 	public function  AddFontMap ( $object_id, $object_data )
 	   {
 		if  ( preg_match_all ( '#/F(?P<font> \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		   {
+		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
+		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
+		    }
+		else if  ( preg_match_all ( '#/f-(?P<font> \d+ - \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;

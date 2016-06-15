@@ -192,6 +192,12 @@ The following methods are available :
 
 Associative array containing individual page contents. The array key is the page number, starting from 1.
 
+### Separator ###
+
+A string to be used for separating chunks of text. The main goal is for processing data displayed in tabular form, to ensure that column contents will not be catenated. However, this does not work in all cases.
+
+The default value is the empty string.
+
 ### Text ###
 
 A string containing the whole text extracted from the underlying pdf file. Note that pages are separated with a form feed.
