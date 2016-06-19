@@ -78,9 +78,11 @@ However, all of that will not guarantee that it will work in every situation ; s
 
 ### Constructor ###
 
-	$pdf 	=  new PdfToText ( $filename = null ) ;
+	$pdf 	=  new PdfToText ( $filename = null, $options = self::PDFOPT_NONE ) ;
 
 Instantiates a **PdfToText** object. If a filename has been specified, its text contents will be loaded and made available in the *Text* property (otherwise, you will have to call the *Load()* method for that).
+
+See the *Options* property for a description of this value.
 
 ### Load ( $filename ) ###
 
@@ -171,6 +173,12 @@ As for their PHP counterparts, these methods return the number of matched occurr
  
 This section describes the properties that are available in a **PdfTText** object. Note that they should be considered as read-only.
 
+### BlockSeparator ###
+
+A string to be used for separating chunks of text. The main goal is for processing data displayed in tabular form, to ensure that column contents will not be catenated. However, this does not work in all cases.
+
+The default value is the empty string.
+
 ### Filename ###
 
 Name of the file whose text contents have been extracted.
@@ -188,15 +196,23 @@ The following methods are available :
 
 - *SaveAs ( $output\_file, $image\_type = IMG\_JPG )* : Saves the current image to the specified output file, using the specified file format (one of the predefined PHP constants : IMG\_JPG, IMG\_GIF, IMG\_PNG, IMG\_XBMP and IMG\_XBM).
 
+
+### Options ###
+
+A combination of the following flags :
+
+- *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
+- *PDFOPT\_NONE* : Default value. No special processing flags apply.
+
 ### Pages ###
 
 Associative array containing individual page contents. The array key is the page number, starting from 1.
 
 ### Separator ###
 
-A string to be used for separating chunks of text. The main goal is for processing data displayed in tabular form, to ensure that column contents will not be catenated. However, this does not work in all cases.
+A string to be used for separating blocks when a negative offset less than -1000 thousands of characters is specified between two sequences of characters specified as an array notation. This trick is often used when a pdf file contains tabular data.
 
-The default value is the empty string.
+The default value is a space.
 
 ### Text ###
 

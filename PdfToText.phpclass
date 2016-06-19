@@ -406,6 +406,23 @@
 	. The character after an octal notation was skipped. For example, (\101 X) was rendered as "AX" instead
 	  of "A X".
 
+    [Version : 1.2.11]	[Date : 2016/06/19]     [Author : CV]
+	. Renamed the "Separator" property to "BlockSeparator"
+	. The "Separator" property is now used as a separator for notations such as :
+		[(1)-1000(2)]
+	  where "-1000" is a value that is subtracted to the current x-position. Some pdf documents presenting
+	  tabular data use this characteristic to separate text in columns. The default value is " " (white
+	  space).
+	. Added the PDFOPT_* option constants, which can either be specified to the class constructor or changed
+	  by setting the new "Options" property. The only flag available for now is PDFOPT_REPEAT_SEPARATOR, which
+	  has an interest if the offset between two text chunks is less than -2000 ; for example, the following
+	  construct :
+
+		[(1)-2000(2)]
+
+	  will give the string "1 2" if the PDF_REPEAT_SEPARATOR flag is not set, and "1  2" if set (assuming
+	  the Separator property is set to a space).
+
  **************************************************************************************************************/
 
 
@@ -758,6 +775,10 @@ abstract class  PdfObjectBase		// extends  Object
  ==============================================================================================================*/
 class  PdfToText 	extends PdfObjectBase
    {
+	// Pdf processing options
+	const		PDFOPT_NONE				=  0x0000 ;
+	const		PDFOPT_REPEAT_SEPARATOR			=  0x0001 ;
+
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
 	public static 		$DEBUG 		=  false ;
@@ -770,8 +791,15 @@ class  PdfToText 	extends PdfObjectBase
 	public		$Pages			=  [] ;
 	// Document images (array of PdfImage objects)
 	public		$Images			=  [] ;
-	// Text chunk separator
-	public		$Separator		=  '' ;
+	// Text chunk separator (used to separate blocks of text specified as an array notation)
+	public		$BlockSeparator		=  '' ;
+	// Separator used to separate text groups where the offset value is less than -1000 thousands of character units
+	// (eg : [(1)-1822(2)] will add a separator between the characters "1" and "2")
+	// Note that such values are expressed in thousands of text units and subtracted from the current position. A 
+	// negative value means adding more space between the two text units it separates.
+	public		$Separator		=  ' ' ;
+	// Pdf options
+	public		$Options		=  self::PDFOPT_NONE ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
@@ -784,7 +812,7 @@ class  PdfToText 	extends PdfObjectBase
 	/*--------------------------------------------------------------------------------------------------------------
 
 	    CONSTRUCTOR
-	        $pdf	=  new PdfToText ( $filename = null ) ;
+	        $pdf	=  new PdfToText ( $filename = null, $options = PDFOPT_NONE ) ;
 
 	    DESCRIPTION
 	        Builds a PdfToText object and optionally loads the specified file's contents.
@@ -793,10 +821,28 @@ class  PdfToText 	extends PdfObjectBase
 	        $filename (string) -
 	                Optional PDF filename whose text contents are to be extracted.
 
+		$options (integer) -
+			A combination of PDFOPT_* flags. This can be any of the following :
+
+			- PDFOPT_REPEAT_SEPARATOR :
+				Text constructs specified as an array are separated by an offset which is expressed as
+				thousands of text units ; for example :
+
+					[(1)-2000(2)]
+
+				will be rendered as the text "1  2" ("1" and "2" being separated by two spaces) if the
+				"Separator" property is set to a space (the default) and this flag is specified.
+				When not specified, the text will be rendered as "1 2".
+
+			- PDFOPT_NONE :
+				None of the above options will apply.
+
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  	__construct ( $filename = null )
+	public function  	__construct ( $filename = null, $options = self::PDFOPT_NONE )
 	   {
 		parent::__construct ( ) ;
+
+		$this -> Options	=  $options ;
 
 		if  ( $filename )
 			$this -> Load ( $filename ) ;
@@ -1588,8 +1634,8 @@ class  PdfToText 	extends PdfObjectBase
 			   	case 	'goto' :
 					// Some text is positioned using 'Tm' instructions ; however they can be immediatley followed by 'Td' instructions
 					// which give a relative positioning ; so consider that the last instruction wins
-					if  ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  ==  'goto' )
-						$last_goto_y	=  $instruction [ 'y' ]  ;
+					if  ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  ==  'goto'  &&  $instruction [ 'relative' ] )
+						$last_goto_y	+=  $instruction [ 'y' ]  ;
 
 			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y  ||  abs ( $instruction [ 'y' ] - $last_goto_y )  <  $current_font_size )
 			   		   {
@@ -1662,9 +1708,10 @@ class  PdfToText 	extends PdfObjectBase
 			   		    }
 
 					if  ( $needs_separator )
-						$result		.=  $this -> Separator ;
+						$result		.=  $this -> BlockSeparator ;
 
 					$needs_separator	=  true ;
+					$value_index		=  0 ;
 
 					// Fonts having character maps will require some special processing
 					if  ( $this -> FontTable -> IsMapped ( $current_font ) )
@@ -1738,6 +1785,24 @@ class  PdfToText 	extends PdfObjectBase
 									$result		.=  $this -> FontTable -> MapCharacter ( $current_font, ord ( $ch ) ) ;
 				   		   		    }
 							    }
+
+							// Handle offsets between blocks of characters
+							if  ( isset  ( $instruction [ 'offsets' ] [ $value_index ] )  &&
+								$instruction [ 'offsets' ] [ $value_index ]  <=  -1000 )
+							   {
+								if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
+								   {
+									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / 1000, 0 ) ) ;
+									dump ( $repeat_count ) ;
+									$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
+								    }
+								else 
+									$padding	=  $this -> Separator ;
+
+								$result		.=  utf8_encode ( $this -> Unescape ( $padding ) ) ;
+							    }
+
+							$value_index ++ ;
 			   		   	    }
 			   		    }
 					// For fonts having no associated character map, we simply encode the string in UTF8
@@ -1765,6 +1830,23 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	    }
 			   			   	else
 			   					$result 	.=  utf8_encode ( $this -> Unescape ( $text ) ) ;
+
+							// Handle offsets between blocks of characters
+							if  ( isset  ( $instruction [ 'offsets' ] [ $value_index ] )  &&
+								$instruction [ 'offsets' ] [ $value_index ]  <=  -1000 )
+							   {
+								if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
+								   {
+									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / 1000, 0 ) ) ;
+									$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
+								    }
+								else 
+									$padding	=  $this -> Separator ;
+
+								$result		.=  utf8_encode ( $this -> Unescape ( $padding ) ) ;
+							    }
+
+							$value_index ++ ;
 			   			   }
 			   		    }
 			    }
@@ -1836,15 +1918,15 @@ class  PdfToText 	extends PdfObjectBase
 				$x 	=  $number_stack [4] ;
 				$y 	=  $number_stack [5] ;
 
-				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y ] ) ;
+				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => false ] ) ;
 			    }
-			// 'Td' oe 'TD' instructions : return a goto instruction with the x and y coordinates (1st and 2nd args)
+			// 'Td' or 'TD' instructions : return a goto instruction with the x and y coordinates (1st and 2nd args)
 			else if  ( $token  ==  'Td'  ||  $token  ==  'TD' )
 			   {
 				$x 	=  $number_stack [0] ;
 				$y 	=  $number_stack [1] ;
 
-				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y ] ) ;
+				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => true ] ) ;
 			    }
 			// Output text "'" instruction, with conditional newline
 			else if  ( $token [0]  ==  "'" )
@@ -1897,7 +1979,7 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( $token [0]  ==  '[' )
 			   {
 				$values 	=  $this -> __extract_chars_from_array ( $token ) ;
-				$instruction 	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => $values ] ;
+				$instruction 	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => $values [0], 'offsets' => $values [1] ] ;
 
 				return ( $instruction ) ;
 			    }
@@ -2122,8 +2204,9 @@ class  PdfToText 	extends PdfObjectBase
 	   {
 		$length 	=  strlen ( $array ) - 1 ;
 		$result 	=  [] ;
+		$offsets	=  [] ; 
 
-		for  ( $i = 0 ; $i  <  $length ; $i ++ )
+		for  ( $i = 1 ; $i  <  $length ; $i ++ )	// Start with character right after the opening bracket
 		   {
 		   	$ch 	=  $array [$i] ;
 
@@ -2132,7 +2215,19 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( $ch  ==  '<' )
 				$endch 	=  '>' ;
 			else
+			   {
+				$value	=  '' ;
+
+				while  ( $i  <  $length  &&  ( ctype_digit ( $array [$i] )  ||  $array [$i]  ==  '-'  ||  $array [$i]  ==  '+' ) )
+					$value	.=  $array [$i++] ;
+
+				$offsets []	=  ( integer ) $value ;
+
+				if  ( $value  !==  '' )
+					$i -- ;
+
 				continue ;
+			    }
 
 			$char 	=  $ch ;
 			$i ++ ;
@@ -2153,7 +2248,7 @@ class  PdfToText 	extends PdfObjectBase
 			$result [] 	 =  $char . $endch ;
 		    }
 
-		return ( $result ) ;
+		return ( [ $result, $offsets ] ) ;
 	    }
 
 
