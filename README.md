@@ -208,6 +208,10 @@ A combination of the following flags :
 
 Associative array containing individual page contents. The array key is the page number, starting from 1.
 
+### PageSeparator ###
+
+String to be used when building the *Text* property to separate individual pages. The default value is a newline.
+
 ### Separator ###
 
 A string to be used for separating blocks when a negative offset less than -1000 thousands of characters is specified between two sequences of characters specified as an array notation. This trick is often used when a pdf file contains tabular data.

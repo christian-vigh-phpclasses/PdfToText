@@ -423,6 +423,11 @@
 	  will give the string "1 2" if the PDF_REPEAT_SEPARATOR flag is not set, and "1  2" if set (assuming
 	  the Separator property is set to a space).
 
+    [Version : 1.2.12]	[Date : 2016/06/21]     [Author : CV]
+	. Better handle relative positioning instructions so that text parts supposed to be on the same line 
+	  stay on the same line.
+	. Added the PageSeparator property
+
  **************************************************************************************************************/
 
 
@@ -798,6 +803,8 @@ class  PdfToText 	extends PdfObjectBase
 	// Note that such values are expressed in thousands of text units and subtracted from the current position. A 
 	// negative value means adding more space between the two text units it separates.
 	public		$Separator		=  ' ' ;
+	// Separator to be used between pages in the $Text property
+	public		$PageSeparator		=  "\n" ;
 	// Pdf options
 	public		$Options		=  self::PDFOPT_NONE ;
 
@@ -1046,7 +1053,7 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		// And finally, the Text property
-		$this -> Text	=  implode ( '', $this -> Pages ) ;
+		$this -> Text	=  implode ( $this -> PageSeparator, $this -> Pages ) ;
 	    }
 
 
@@ -1621,6 +1628,9 @@ class  PdfToText 	extends PdfObjectBase
 		// Set to true if a separator needs to be inserted
 		$needs_separator		=  false ;
 
+		// A flag to tell if we should "forget" the last instruction
+		$discard_last_instruction	=  false ;
+
 		// Loop through instructions
 		while  ( ( $instruction =  $this -> __next_instruction ( $data, $data_length, $data_index ) )  !==  false )
 		   {
@@ -1634,8 +1644,16 @@ class  PdfToText 	extends PdfObjectBase
 			   	case 	'goto' :
 					// Some text is positioned using 'Tm' instructions ; however they can be immediatley followed by 'Td' instructions
 					// which give a relative positioning ; so consider that the last instruction wins
-					if  ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  ==  'goto'  &&  $instruction [ 'relative' ] )
+					if  ( $instruction [ 'relative' ] )
+					   {
 						$last_goto_y	+=  $instruction [ 'y' ]  ;
+						//$result		.=  $this -> Separator ;
+
+						$discard_last_instruction	=  true ;
+						$extra_newlines			=  0 ; 
+						$use_same_line			=  ( $instruction  [ 'y' ]  <=  $current_font_size ) ;
+						break ;
+					    }
 
 			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y  ||  abs ( $instruction [ 'y' ] - $last_goto_y )  <  $current_font_size )
 			   		   {
@@ -1793,7 +1811,6 @@ class  PdfToText 	extends PdfObjectBase
 								if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
 								   {
 									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / 1000, 0 ) ) ;
-									dump ( $repeat_count ) ;
 									$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
 								    }
 								else 
@@ -1853,7 +1870,10 @@ class  PdfToText 	extends PdfObjectBase
 
 			// Remember last instruction - this will help us into determining whether we should put the next text
 			// on the current or following line
-			$last_instruction 	=  $instruction ;
+			if  ( ! $discard_last_instruction )
+				$last_instruction 	=  $instruction ;
+
+			$discard_last_instruction	=  false ;
 		    }
 
 
@@ -2686,9 +2706,6 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				   }
 			    }
 		    }
-
-		//if  ( PdfToText::$DEBUG  >  1 )
-		//	dump ($this -> Map ) ;
 	     }
 
 
