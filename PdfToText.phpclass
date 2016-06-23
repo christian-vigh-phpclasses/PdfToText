@@ -428,6 +428,17 @@
 	  stay on the same line.
 	. Added the PageSeparator property
 
+    [Version : 1.2.13]	[Date : 2016/06/23]     [Author : CV]
+	. Took into account the relative x-offset specified with Td/TD instructions
+	. Added the MinSpaceWidth property, which is to be measured in thousands of text units, to help the
+	  class determine if spaces should be inserted between two character units. The default value is 250.
+	  Although the value can be less than 1000, only a multiple of 1000 units will determine the total
+	  number of spaces to be inserted if the PDF_REPEAT_SEPARATOR flag is set in the Options property.
+	. Relaxed a little bit the cases where a newline should be inserted
+	. Don't add the BlockSeparator string if the Separator and BlockSeparator properties are the same, and
+	  the current result ends with the Separator string. When both properties are set to a space, this 
+	  avoids inserting double space between column elements.
+
  **************************************************************************************************************/
 
 
@@ -805,6 +816,8 @@ class  PdfToText 	extends PdfObjectBase
 	public		$Separator		=  ' ' ;
 	// Separator to be used between pages in the $Text property
 	public		$PageSeparator		=  "\n" ;
+	// Minimum value (in 1/1000 of text units) that separates two text chunks that can be considered as a real space
+	public		$MinSpaceWidth		=  250 ;
 	// Pdf options
 	public		$Options		=  self::PDFOPT_NONE ;
 
@@ -1053,7 +1066,7 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		// And finally, the Text property
-		$this -> Text	=  implode ( $this -> PageSeparator, $this -> Pages ) ;
+		$this -> Text	=  implode ( utf8_encode ( $this -> PageSeparator ), $this -> Pages ) ;
 	    }
 
 
@@ -1631,6 +1644,9 @@ class  PdfToText 	extends PdfObjectBase
 		// A flag to tell if we should "forget" the last instruction
 		$discard_last_instruction	=  false ;
 
+		// A flag that tells whether the Separator and BlockSeparator properties are identical
+		$same_separators		=  ( $this -> Separator  ==  $this -> BlockSeparator ) ;
+
 		// Loop through instructions
 		while  ( ( $instruction =  $this -> __next_instruction ( $data, $data_length, $data_index ) )  !==  false )
 		   {
@@ -1647,7 +1663,9 @@ class  PdfToText 	extends PdfObjectBase
 					if  ( $instruction [ 'relative' ] )
 					   {
 						$last_goto_y	+=  $instruction [ 'y' ]  ;
-						//$result		.=  $this -> Separator ;
+
+						if  ( $instruction [ 'x' ]  >  $current_font_size )
+							$result		.=  $this -> Separator ;
 
 						$discard_last_instruction	=  true ;
 						$extra_newlines			=  0 ; 
@@ -1712,7 +1730,7 @@ class  PdfToText 	extends PdfObjectBase
 				// is returned as a single instruction
 			   	case 	'text' :
 					// Check if we have to insert a newline
-			   		if ( isset ( $last_instruction [ 'instruction' ] )  &&  $last_instruction [ 'instruction' ]  !=  'text'  &&  ! $use_same_line )
+			   		if ( ! $use_same_line )
 					   {
 			   			$result 		.=  PHP_EOL ;
 						$needs_separator	 =  false ;
@@ -1725,8 +1743,19 @@ class  PdfToText 	extends PdfObjectBase
 						$needs_separator	 =  false ;
 			   		    }
 
+					// Add a separator if necessary
 					if  ( $needs_separator )
-						$result		.=  $this -> BlockSeparator ;
+					   {
+						// If the Separator and BlockSeparator properties are the same (and not empty), only add a block separator if
+						// the current result does not end with it
+						if  ( $same_separators )
+						   {
+							if  ( $this -> Separator  !=  ''  &&  substr ( $result, - strlen ( $this -> Separator ) )  !=  $this -> BlockSeparator )
+								$result		.=  $this -> BlockSeparator ;
+						    }
+						else
+							$result		.=  $this -> BlockSeparator ;
+					    }
 
 					$needs_separator	=  true ;
 					$value_index		=  0 ;
@@ -1850,12 +1879,20 @@ class  PdfToText 	extends PdfObjectBase
 
 							// Handle offsets between blocks of characters
 							if  ( isset  ( $instruction [ 'offsets' ] [ $value_index ] )  &&
-								$instruction [ 'offsets' ] [ $value_index ]  <=  -1000 )
+								$instruction [ 'offsets' ] [ $value_index ]  <=  - $this -> MinSpaceWidth )
 							   {
 								if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
 								   {
-									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / 1000, 0 ) ) ;
-									$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
+									// If the MinSpaceWidth property is less than 1000 (text units), consider it has the value 1000
+									// so that an exuberant number of spaces will not be repeated
+									$space_width	=  ( $this -> MinSpaceWidth  <  1000 ) ?  1000 :  $this -> MinSpaceWidth ;
+
+									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / $space_width, 0 ) ) ;
+
+									if  ( $repeat_count )
+										$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
+									else
+										$padding	=  $this -> Separator ;
 								    }
 								else 
 									$padding	=  $this -> Separator ;
