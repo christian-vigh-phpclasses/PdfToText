@@ -439,6 +439,10 @@
 	  the current result ends with the Separator string. When both properties are set to a space, this 
 	  avoids inserting double space between column elements.
 
+    [Version : 1.2.14]	[Date : 2016/06/24]     [Author : CV]
+	. Added the __get_character_padding() method to compute the number of spaces needed between two 
+	  chunks of characters, taking into account the MinSpaceWidth property.
+
  **************************************************************************************************************/
 
 
@@ -1834,19 +1838,8 @@ class  PdfToText 	extends PdfObjectBase
 							    }
 
 							// Handle offsets between blocks of characters
-							if  ( isset  ( $instruction [ 'offsets' ] [ $value_index ] )  &&
-								$instruction [ 'offsets' ] [ $value_index ]  <=  -1000 )
-							   {
-								if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
-								   {
-									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / 1000, 0 ) ) ;
-									$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
-								    }
-								else 
-									$padding	=  $this -> Separator ;
-
-								$result		.=  utf8_encode ( $this -> Unescape ( $padding ) ) ;
-							    }
+							if  ( isset ( $instruction [ 'offsets' ] [ $value_index ] ) )
+								$result		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
 
 							$value_index ++ ;
 			   		   	    }
@@ -1878,27 +1871,8 @@ class  PdfToText 	extends PdfObjectBase
 			   					$result 	.=  utf8_encode ( $this -> Unescape ( $text ) ) ;
 
 							// Handle offsets between blocks of characters
-							if  ( isset  ( $instruction [ 'offsets' ] [ $value_index ] )  &&
-								$instruction [ 'offsets' ] [ $value_index ]  <=  - $this -> MinSpaceWidth )
-							   {
-								if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
-								   {
-									// If the MinSpaceWidth property is less than 1000 (text units), consider it has the value 1000
-									// so that an exuberant number of spaces will not be repeated
-									$space_width	=  ( $this -> MinSpaceWidth  <  1000 ) ?  1000 :  $this -> MinSpaceWidth ;
-
-									$repeat_count	=  abs ( round ( $instruction [ 'offset' ] [ $value_index ] / $space_width, 0 ) ) ;
-
-									if  ( $repeat_count )
-										$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
-									else
-										$padding	=  $this -> Separator ;
-								    }
-								else 
-									$padding	=  $this -> Separator ;
-
-								$result		.=  utf8_encode ( $this -> Unescape ( $padding ) ) ;
-							    }
+							if  ( isset ( $instruction [ 'offsets' ] [ $value_index ] ) )
+								$result		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
 
 							$value_index ++ ;
 			   			   }
@@ -2306,6 +2280,33 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		return ( [ $result, $offsets ] ) ;
+	    }
+
+
+	private function  __get_character_padding ( $char_offset )
+	   {
+		if  ( $char_offset  <=  - $this -> MinSpaceWidth )
+		   {
+			if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
+			   {
+				// If the MinSpaceWidth property is less than 1000 (text units), consider it has the value 1000
+				// so that an exuberant number of spaces will not be repeated
+				$space_width	=  ( $this -> MinSpaceWidth  <  1000 ) ?  1000 :  $this -> MinSpaceWidth ;
+
+				$repeat_count	=  abs ( round ( $char_offset / $space_width, 0 ) ) ;
+
+				if  ( $repeat_count )
+					$padding	=  str_repeat ( $this -> Separator, $repeat_count ) ;
+				else
+					$padding	=  $this -> Separator ;
+				}
+			else 
+				$padding	=  $this -> Separator ;
+
+			return ( utf8_encode ( $this -> Unescape ( $padding ) ) ) ;
+		    }
+		else
+			return ( '' ) ;
 	    }
 
 

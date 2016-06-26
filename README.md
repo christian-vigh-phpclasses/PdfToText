@@ -196,6 +196,15 @@ The following methods are available :
 
 - *SaveAs ( $output\_file, $image\_type = IMG\_JPG )* : Saves the current image to the specified output file, using the specified file format (one of the predefined PHP constants : IMG\_JPG, IMG\_GIF, IMG\_PNG, IMG\_XBMP and IMG\_XBM).
 
+Currently, images stored in proprietary Adobe format are not processed and will not appear in this array.
+
+### MinSpaceWidth ###
+
+Sometimes, characters (or blocks of characters) are separated by an offset which is counted in 1/1000's of text units. For certain ranges of values, when displayed on a graphical device, these consecutive characters appear to be separated by one space (or more). Of course, when generating ascii output, we would like to have some equivalent of such spacing.
+
+This is what the *MinSpaceWidth* property is meant for : insert an ascii space in the generated output whenever the offset found exceeds *MinSpaceWidth* text units. 
+
+Note that if the *PDFOPT\_REPEAT\_SEPARATOR* flag is set for the *Options* property, the number of spaces inserted will always be based on a multiple of 1000, even if *MinSpaceWidth* is less than 1000. This means that if *MinSpaceWidth* is 200, and the *Options* property has the *PDFOPT\_REPEAT\_SEPARATOR* flag set, AND the offset between two chunks of characters is 1000 text units, only one space will be inserted, not 5 (which would be the result of 1000/200).
 
 ### Options ###
 
