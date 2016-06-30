@@ -443,6 +443,15 @@
 	. Added the __get_character_padding() method to compute the number of spaces needed between two 
 	  chunks of characters, taking into account the MinSpaceWidth property.
 
+    [Version : 1.2.15]	[Date : 2016/06/30]     [Author : CV]
+	. Corrected the __extract_chars_from_array() methods, which incorrectly handled escaped characters in
+	  text groups and ate up the next character following the escaped one. For example, the following group :
+		[(3)-3(4)-3(.)11(5)-3(\(f\) a)9(n)4(d)-3( 3)6(4)-3(.6\()6(g)-3(\)\()8(2)4(\), )4(t)-3(h)-3(a)8(t)]
+	  was represented as :
+		34.5(f)nd 34.6(g)2)that
+	  instead of :
+		34.5(f) and 34.6(g)(2), that		
+
  **************************************************************************************************************/
 
 
@@ -2268,10 +2277,12 @@ class  PdfToText 	extends PdfObjectBase
 			   	if  ( $array [$i]  ==  '\\' )
 			   		$char 	.=  '\\' . $array [++$i] ;
 				else
+				   {
 					$char 	.=  $array [$i] ;
 
-				if  ( $array [$i]  ==  $endch )
-					break ;
+					if  ( $array [$i]  ==  $endch )
+						break ;
+				    }
 
 				$i ++ ;
 			   }
