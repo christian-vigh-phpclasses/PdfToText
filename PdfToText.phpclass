@@ -452,6 +452,10 @@
 	  instead of :
 		34.5(f) and 34.6(g)(2), that		
 
+    [Version : 1.2.16]	[Date : 2016/07/01]     [Author : CV]
+	. No line break was inserted when relative positioning instructions (Td and TD) were encountered. This
+	  caused consecutive lines to be joined together.
+
  **************************************************************************************************************/
 
 
@@ -1677,12 +1681,14 @@ class  PdfToText 	extends PdfObjectBase
 					   {
 						$last_goto_y	+=  $instruction [ 'y' ]  ;
 
-						if  ( $instruction [ 'x' ]  >  $current_font_size )
+						// Try to put a separator if the x coordinate is non-zero
+						if  ( $instruction [ 'x' ]  >=  $current_font_size )
 							$result		.=  $this -> Separator ;
 
 						$discard_last_instruction	=  true ;
 						$extra_newlines			=  0 ; 
-						$use_same_line			=  ( $instruction  [ 'y' ]  <=  $current_font_size ) ;
+						$use_same_line			=  ( abs ( $instruction  [ 'y' ] )  <=  $current_font_size ) ;
+						
 						break ;
 					    }
 
