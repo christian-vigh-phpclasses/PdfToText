@@ -1704,7 +1704,7 @@ class  PdfToText 	extends PdfObjectBase
 					else
 						$last_relative_goto_y	=  0 ;
 
-					$y	=  $last_goto_y + $$last_relative_goto_y ;
+					$y	=  $last_goto_y + $last_relative_goto_y ;
 
 			   		if  ( $instruction [ 'y' ]  ==  $y  ||  abs ( $instruction [ 'y' ] - $y )  <  $current_font_size )
 			   		   {
