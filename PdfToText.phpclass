@@ -456,6 +456,14 @@
 	. No line break was inserted when relative positioning instructions (Td and TD) were encountered. This
 	  caused consecutive lines to be joined together.
 
+    [Version : 1.2.17]	[Date : 2016/07/02]     [Author : CV]
+	. Avoided processing of empty text blocks, which were causing extraneous line breaks in the output
+	. For debugging purposes, added a 'token' element in the associative array returned by the
+	  __next_instruction() method.
+	. Made the difference between absolute positioning instructions ("Tm") and relative ones ("Td" and "TD")
+	  which are often used in tabular data, by introducing the $last_relative_goto_y variable in the 
+	  ExtractText() method (individual cell contents were broken into separate lines).
+
  **************************************************************************************************************/
 
 
@@ -1638,7 +1646,10 @@ class  PdfToText 	extends PdfObjectBase
 		$result 		=  '' ;				// Resulting string
 
 		// Y-coordinate of the last seen "Tm" instruction
-		$last_goto_y 		=  -1 ;
+		$last_goto_y 		=  0 ;
+
+		// Y-coordinate of the last seen "Td" or "TD" relative positioning instruction
+		$last_relative_goto_y	=  0 ;
 
 		// When true, the current text should be output on the same line as the preceding one
 		$use_same_line 		=  false ;
@@ -1679,20 +1690,23 @@ class  PdfToText 	extends PdfObjectBase
 					// which give a relative positioning ; so consider that the last instruction wins
 					if  ( $instruction [ 'relative' ] )
 					   {
-						$last_goto_y	+=  $instruction [ 'y' ]  ;
-
 						// Try to put a separator if the x coordinate is non-zero
 						if  ( $instruction [ 'x' ]  >=  $current_font_size )
 							$result		.=  $this -> Separator ;
 
 						$discard_last_instruction	=  true ;
 						$extra_newlines			=  0 ; 
-						$use_same_line			=  ( abs ( $instruction  [ 'y' ] )  <=  $current_font_size ) ;
+						$use_same_line			=  ( ( $last_relative_goto_y - abs ( $instruction  [ 'y' ] ) )  <=  $current_font_size ) ;
+						$last_relative_goto_y		=  abs ( $instruction [ 'y' ] ) ;
 						
 						break ;
 					    }
+					else
+						$last_relative_goto_y	=  0 ;
 
-			   		if  ( $instruction [ 'y' ]  ==  $last_goto_y  ||  abs ( $instruction [ 'y' ] - $last_goto_y )  <  $current_font_size )
+					$y	=  $last_goto_y + $$last_relative_goto_y ;
+
+			   		if  ( $instruction [ 'y' ]  ==  $y  ||  abs ( $instruction [ 'y' ] - $y )  <  $current_font_size )
 			   		   {
 			   			$use_same_line 		=  true ;
 			   			$extra_newlines 	=  0 ;
@@ -1701,9 +1715,9 @@ class  PdfToText 	extends PdfObjectBase
 					   {
 					   	// Compute the number of newlines we have to insert between the current and the next lines
 					   	if  ( $current_font_size )
-					   		$extra_newlines =  ( integer ) ( ( $last_goto_y - $instruction [ 'y' ] - $current_font_size ) / $current_font_size ) ;
+					   		$extra_newlines =  ( integer ) ( ( $y - $instruction [ 'y' ] - $current_font_size ) / $current_font_size ) ;
 
-						$use_same_line 		=  ( $last_goto_y  ==  -1 ) ;
+						$use_same_line 		=  ( $last_goto_y  ==  0 ) ;
 					    }
 
 					$last_goto_y 		=  $instruction [ 'y' ] ;
@@ -1741,6 +1755,7 @@ class  PdfToText 	extends PdfObjectBase
 			   			$result 		.=  $extra ;
 						$needs_separator	 =  false ;
 						$last_goto_y 		-=  ( $count * $text_leading ) ;	// Approximation on y-coord change
+						$last_relative_goto_y	 =  0 ;
 			   		    }
 
 			   		break ;
@@ -1748,6 +1763,10 @@ class  PdfToText 	extends PdfObjectBase
 				// Raw text (enclosed by parentheses) or array text (enclosed within square brackets)
 				// is returned as a single instruction
 			   	case 	'text' :
+					// Empty arrays of text may be encountered - ignore them
+					if  ( ! count ( $instruction [ 'values' ] ) )
+						break ;
+
 					// Check if we have to insert a newline
 			   		if ( ! $use_same_line )
 					   {
@@ -1964,7 +1983,7 @@ class  PdfToText 	extends PdfObjectBase
 				$x 	=  $number_stack [4] ;
 				$y 	=  $number_stack [5] ;
 
-				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => false ] ) ;
+				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => false, 'token' => $token ] ) ;
 			    }
 			// 'Td' or 'TD' instructions : return a goto instruction with the x and y coordinates (1st and 2nd args)
 			else if  ( $token  ==  'Td'  ||  $token  ==  'TD' )
@@ -1972,20 +1991,20 @@ class  PdfToText 	extends PdfObjectBase
 				$x 	=  $number_stack [0] ;
 				$y 	=  $number_stack [1] ;
 
-				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => true ] ) ;
+				return ( [ 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => true, 'token' => $token ] ) ;
 			    }
 			// Output text "'" instruction, with conditional newline
 			else if  ( $token [0]  ==  "'" )
-				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false ] ) ;
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false, 'token' => $token ] ) ;
 			// Same as above
 			else if  ( $token  ==  'TJ'  ||  $token  ==  'Tj' )
-				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false ] ) ;
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false, 'token' => $token ] ) ;
 			// Set font size
 			else if  ( $token  ==  'Tf' )
-				return ( [ 'instruction' => 'fontsize', 'next' => $next_index, 'size' => $number_stack [0] ] ) ;
+				return ( [ 'instruction' => 'fontsize', 'next' => $next_index, 'size' => $number_stack [0], 'token' => $token ] ) ;
 			// Text leading (spacing used by T*)
 			else if  ( $token  ==  'TL' )
-				return ( [ 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0] ] ) ;
+				return ( [ 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0], 'token' => $token ] ) ;
 			// Position to next line
 			else if  ( $token  ==  'T*' )
 				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
@@ -1993,17 +2012,17 @@ class  PdfToText 	extends PdfObjectBase
 			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
 			// appear in the pdf file (which is likely to be different from their position on a graphic screen).
 			else if  ( $token  ==  'Do' )
-				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => false ] ) ;
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => false, 'token' => $token ] ) ;
 			// Raw text output
 			else if  ( $token [0]  ==  '(' )
 			   {
 			   	$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
-			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ] ] ;
+			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ], 'token' => $token ] ;
 
 			   	if  ( $next_part [0]  ==  "'" )
 			   	   {
 			   	   	$last_instruction  	=  $instruction ;
-			   	   	return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+			   	   	return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true, 'token' => $token ] ) ;
 			   	   }
 			   	else
 					return ( $instruction ) ;
@@ -2011,12 +2030,12 @@ class  PdfToText 	extends PdfObjectBase
 		   	else if  ( $token [0]  ==  '<'  &&  ctype_xdigit ( $token [1] ) )
 			   {
 			   	$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
-			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ] ] ;
+			   	$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ], 'token' => $token ] ;
 
 			   	if  ( $next_part [0]  ==  "'" )
 			   	   {
 			   	   	$last_instruction  	=  $instruction ;
-			   	   	return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+			   	   	return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true, 'token' => $token ] ) ;
 			   	   }
 			   	else
 					return ( $instruction ) ;
@@ -2025,7 +2044,7 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( $token [0]  ==  '[' )
 			   {
 				$values 	=  $this -> __extract_chars_from_array ( $token ) ;
-				$instruction 	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => $values [0], 'offsets' => $values [1] ] ;
+				$instruction 	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => $values [0], 'offsets' => $values [1], 'token' => $token ] ;
 
 				return ( $instruction ) ;
 			    }
@@ -2034,7 +2053,7 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				$resource 	=  ( integer ) substr ( $token, 2 ) ;
 
-				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource ] ) ;
+				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource, 'token' => $token ] ) ;
 			    }
 		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
 			else if  ( ! strncasecmp ( $token, '/F', 2 ) )
@@ -2046,7 +2065,7 @@ class  PdfToText 	extends PdfObjectBase
 
 				$id 		=  $this -> FontTable -> GetFontByMapId ( $resource ) ;
 
-				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id ] ) ;
+				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id, 'token' => $token ] ) ;
 			    }
 			    // Other instructions : we're not that much interested in them, so clear the number stack and consider
 			// that the current parameters, floating-point values, have been processed
