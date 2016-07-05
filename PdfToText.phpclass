@@ -464,6 +464,21 @@
 	  which are often used in tabular data, by introducing the $last_relative_goto_y variable in the 
 	  ExtractText() method (individual cell contents were broken into separate lines).
 
+    [Version : 1.2.18]	[Date : 2016/07/05]     [Author : CV]
+	. For debugging purposes, added the $object_id parameter to the DecodeData() method.
+	. The DecodeData() method now throws an exception if the stream object does not contain valid gzip data
+	. Handled the case of empty streams (!), such as :
+		18 0 obj
+		<<
+		/Filter /FlateDecode
+		/Length 0
+		>>
+		stream
+
+		endstream
+		endobj
+
+
  **************************************************************************************************************/
 
 
@@ -1014,6 +1029,11 @@ class  PdfToText 	extends PdfObjectBase
 				continue ;
 			    }
 
+			// Check if the stream contains data (yes, I have found a sample that had streams of length 0...)
+			// In other words : ignore empty streams
+			if  ( preg_match ( '#/Length 0#i', $object_data ) )
+				continue ;
+
 			// Isolate stream data and try to find its encoding type
 			$stream_data 		=  $stream_match [ 'stream' ] ;
 
@@ -1027,7 +1047,7 @@ class  PdfToText 	extends PdfObjectBase
 			    }
 
 			// Decode the encoded stream
-			$decoded_stream_data 	=  $this -> DecodeData ( $stream_data, $type ) ;
+			$decoded_stream_data 	=  $this -> DecodeData ( $object_number, $stream_data, $type ) ;
 
 			// Check for character maps
 			if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
@@ -1361,13 +1381,16 @@ class  PdfToText 	extends PdfObjectBase
 	        DecodeData - Decodes stream data.
 
 	    PROTOTYPE
-	        $data	=  $this -> DecodeData ( $stream_data, $type ) ;
+	        $data	=  $this -> DecodeData ( $object_id, $stream_data, $type ) ;
 
 	    DESCRIPTION
 	        Decodes stream data (binary data located between the "stream" and "enstream" directives) according to the
 		specified encoding type, given in the surrounding object parameters.
 
 	    PARAMETERS
+		$object_id (integer) -
+			Id of the object containing the data.
+
 	        $stream_data (string) -
 	                Contents of the binary stream.
 
@@ -1378,14 +1401,18 @@ class  PdfToText 	extends PdfObjectBase
 	        Returns the decoded stream data.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  DecodeData ( $stream_data, $type )
+	protected function  DecodeData ( $object_id, $stream_data, $type )
 	   {
 		$decoded_stream_data 	=  '' ;
 
 		switch  ( $type )
 		   {
 		   	case 	self::PDF_FLATE_ENCODING :
-		   		$decoded_stream_data 	=  gzuncompress ( $stream_data ) ;
+		   		$decoded_stream_data 	=  @gzuncompress ( $stream_data ) ;
+
+				if  ( $decoded_stream_data  ===  false )
+					error ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
+
 		   		break ;
 
 		   	case 	self::PDF_ASCIIHEX_ENCODING :
@@ -1809,6 +1836,8 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	$text 		=  substr ( $text, 1, $length ) ;
 
 			   			   	// Characters are encoded within angle brackets ( "<>" ).
+							// Note that several characters can be specified within the same angle brackets, so we have to take
+							// into account the width we detected in the begincodespancerange construct 
 			   			   	if  ( $is_hex )
 			   			   	   {
 								$width 	=  $this -> FontTable -> GetMapWidth ( $current_font ) ;

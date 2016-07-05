@@ -26,6 +26,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 -  Steve Majors, from CashFlowProducts.com, who gave me several samples to work on and even provided me with an access to his bug-tracking system
 - Antonio Jùnior, who gave me a sample using text images encoded in a format I did not handle yet ; still under work...
 - Tom Perro and the user named *srizoophari*, because they gave me the idea of implementing some features which allow for searching text page by page (and handle page contents separately, instead of a single block of text)
+- Shishant Todi, who gave me pdf samples built in a very strange way. I'm still working on them !
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
 
