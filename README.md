@@ -244,3 +244,18 @@ The default value is a space.
 ### Text ###
 
 A string containing the whole text extracted from the underlying pdf file. Note that pages are separated with a form feed.
+
+
+## CONSTANTS ##
+
+### PDFOPT\_\* ###
+
+The PDFOPT\_\* constants are a set of flags which can be combined when either instantiating the class or setting the *Options* property before calling the **Load** method. It can be a combination of any of the following flags :
+- *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
+- *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
+- *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
+- *PDFOPT\_NONE* : Default value. No special processing flags apply.
+
+### VERSION ###
+
+Current version of the **PdfToText** class, as a string containing a major, minor and release version numbers. For example : "1.2.19".

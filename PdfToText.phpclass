@@ -850,6 +850,9 @@ abstract class  PdfObjectBase		// extends  Object
  ==============================================================================================================*/
 class  PdfToText 	extends PdfObjectBase
    {
+	// Current version of the class
+	const		VERSION					=  "1.2.19" ;
+
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
 	const		PDFOPT_REPEAT_SEPARATOR			=  0x0001 ;		// Repeats the Separator property if the offset between two text blocks (in array notation)
@@ -1429,7 +1432,6 @@ class  PdfToText 	extends PdfObjectBase
 	   {
 		if  ( $this -> Options  &  self::PDFOPT_GET_IMAGE_DATA )
 		    {
-			
 			switch  ( $type )  
 			   {
 				case	self::PDF_DCT_ENCODING :
