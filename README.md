@@ -198,6 +198,18 @@ The following methods are available :
 
 Currently, images stored in proprietary Adobe format are not processed and will not appear in this array.
 
+Note that images will be extracted only if the PDFOPT\_DECODE\_IMAGE\_DATA is enabled. 
+
+### ImageData ###
+
+An array of associative arrays that contain the following entries :
+
+- 'type' : Image type. Can be one of the following :
+	- 'jpeg' : Jpeg image type.	Note that in the current version, only jpeg images are processed.
+- 'data' : Raw image data.
+
+Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is enabled. 
+
 ### MinSpaceWidth ###
 
 Sometimes, characters (or blocks of characters) are separated by an offset which is counted in 1/1000's of text units. For certain ranges of values, when displayed on a graphical device, these consecutive characters appear to be separated by one space (or more). Of course, when generating ascii output, we would like to have some equivalent of such spacing.
@@ -211,6 +223,8 @@ Note that if the *PDFOPT\_REPEAT\_SEPARATOR* flag is set for the *Options* prope
 A combination of the following flags :
 
 - *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
+- *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
+- *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### Pages ###
