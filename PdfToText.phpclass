@@ -477,7 +477,26 @@
 
 		endstream
 		endobj
+	  which was causing warnings from the gzuncompress() function.
 
+    [Version : 1.2.19]	[Date : 2016/07/19]     [Author : CV]
+	. The class do not process any more image contents by default. The following flags can now be specified
+	  to the constructor if image data is to be retrieved :
+		. PDFOPT_GET_IMAGE_DATA :
+			Will put raw (undecoded) image data in the new $ImageData[] array property.
+		. PDFOPT_DECODE_IMAGE_DATA :
+			Will use the graphics glib library to create a jpeg resource from the raw data
+			encountered in the PDF stream. Specifying this flag automatically enables the
+			PDFOPT_GET_IMAGE_DATA flag.
+	. The new $ImageData property is an array of associative arrays that contains the following entries :
+		. 'type' -
+			Image type. Can be one of the following :
+			. 'jpeg' -
+				Jpeg image type.
+			Note that in the current version, only jpeg images are processed, until I find the 
+			method to decode other proprietary Adobe formats.
+		. 'data' -
+			Raw image data.
 
  **************************************************************************************************************/
 
@@ -832,8 +851,11 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Pdf processing options
-	const		PDFOPT_NONE				=  0x0000 ;
-	const		PDFOPT_REPEAT_SEPARATOR			=  0x0001 ;
+	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
+	const		PDFOPT_REPEAT_SEPARATOR			=  0x0001 ;		// Repeats the Separator property if the offset between two text blocks (in array notation)
+											// is greater than $this -> MinSpaceWidth
+	const		PDFOPT_GET_IMAGE_DATA			=  0x0002 ;		// Retrieve raw image data in the $ths -> ImageData array
+	const		PDFOPT_DECODE_IMAGE_DATA		=  0x0004 ;		// Creates a jpeg resource for each image
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -847,6 +869,8 @@ class  PdfToText 	extends PdfObjectBase
 	public		$Pages			=  [] ;
 	// Document images (array of PdfImage objects)
 	public		$Images			=  [] ;
+	// Raw data for document images
+	public		$ImageData		=  [] ;
 	// Text chunk separator (used to separate blocks of text specified as an array notation)
 	public		$BlockSeparator		=  '' ;
 	// Separator used to separate text groups where the offset value is less than -1000 thousands of character units
@@ -963,8 +987,13 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> Filename 	=  $filename ;
 		$this -> Pages		=  [] ;
 		$this -> Images		=  [] ;
+		$this -> ImageData	=  [] ;
 		$this -> PageMap	=  new PdfTexterPageMap ( ) ;
 		$this -> PageLocations	=  [] ;
+
+		// Systematically set the GET_IMAGE_DATA flag if DECODE_IMAGE_DATA is specified
+		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
+			$this -> Options	|=  self::PDFOPT_GET_IMAGE_DATA ;
 
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
 		if  ( ! preg_match_all ( '/(?P<num> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $object_matches ) )
@@ -1021,11 +1050,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Extract image data, if any
 			else if  ( $this -> IsImage ( $object_data ) )
 			   {
-				$image	=  $this -> DecodeImage ( $object_number, $stream_match [ 'stream' ], $type ) ;
-
-				if  ( $image  !==  false )
-					$this -> Images []	=  $image ;
-					
+				$this -> AddImage ( $object_number, $stream_match [ 'stream' ], $type ) ;
 				continue ;
 			    }
 
@@ -1374,6 +1399,55 @@ class  PdfToText 	extends PdfObjectBase
 	 **************************************************************************************************************
 	 **************************************************************************************************************
 	 **************************************************************************************************************/
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        AddImage - Adds an image from the PDF stream to the current object.
+	
+	    PROTOTYPE
+	        $this -> AddImage ( $object_id, $stream_data, $type ) ;
+	
+	    DESCRIPTION
+	        Adds an image from the PDF stream to the current object.
+		If the PDFOPT_GET_IMAGE_DATA flag is enabled, image data will be added to the ImageData property.
+		If the PDFOPT_DECODE_IMAGE_DATA flag is enabled, a jpeg resource will be created and added into the
+		Images array property.
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Pdf object id.
+
+		$stream_data (string) -
+			Contents of the unprocessed stream data containing the image.
+
+		$type (integer) -
+			One of the PdfToText::PDF_*_ENCODING constants.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  AddImage ( $object_id, $stream_data, $type )
+	   {
+		if  ( $this -> Options  &  self::PDFOPT_GET_IMAGE_DATA )
+		    {
+			
+			switch  ( $type )  
+			   {
+				case	self::PDF_DCT_ENCODING :
+					$this -> ImageData	=  [ 'type' => 'jpeg', 'data' => $stream_data ] ;
+					break ;
+			    }
+
+		     }
+
+		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
+		   {
+			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type ) ;
+
+			if  ( $image  !==  false )
+				$this -> Images []	=  $image ;
+		    }
+	    }
+
 
 	/*--------------------------------------------------------------------------------------------------------------
 
