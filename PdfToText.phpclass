@@ -1487,7 +1487,10 @@ class  PdfToText 	extends PdfObjectBase
 		   		$decoded_stream_data 	=  @gzuncompress ( $stream_data ) ;
 
 				if  ( $decoded_stream_data  ===  false )
-					error ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
+				   {
+					if  ( self::$DEBUG )
+						error ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
+				    }
 
 		   		break ;
 
