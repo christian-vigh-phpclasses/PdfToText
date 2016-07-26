@@ -498,6 +498,15 @@
 		. 'data' -
 			Raw image data.
 
+    [Version : 1.2.20]	[Date : 2016/07/24]     [Author : CV]
+	. When encountering an unrecognized FlateDecode stream, throws an exception only if the $DEBUG global
+	  variable is non-false, otherwise ignores the stream data.
+	  This is a temporary measure until I find out how to properly decode such encoded streams correctly.
+
+    [Version : 1.2.21]	[Date : 2016/07/26]     [Author : CV]
+	. Changed the Unescape() method which did not handle at all character specifications using the octal
+	  notation.
+
  **************************************************************************************************************/
 
 
@@ -2495,7 +2504,25 @@ class  PdfToText 	extends PdfObjectBase
 				   	case 	'f' 	:  $result .=  "\f" ; break ;
 				   	case 	'r' 	:  $result .=  "\r" ; break ;
 				   	case 	'n' 	:  $result .=  "\n" ; break ;
-				   	default 	:  $result .=  $nch ;
+				   	default 	:  
+						// Octal escape notation 
+						if  ( $nch  >=  '0'  &&  $nch  <=  '7' )
+						   {
+							$ord	=  ord ( $nch ) - ord ( '0' ) ;
+							$i ++ ;
+
+							while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+							   {
+								$ord	=  ( $ord * 8 ) + ord ( $text [$i] ) - ord ( '0' ) ;
+								$i ++ ;
+							    }
+
+							$i -- ;		// Count one character less since $i will be incremented at the end of the for() loop
+
+							$result .= chr ( $ord ) ;
+						    }
+						else
+							$result .=  $nch ;
 				    }
 			    }
 			else
