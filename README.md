@@ -173,11 +173,23 @@ As for their PHP counterparts, these methods return the number of matched occurr
  
 This section describes the properties that are available in a **PdfTText** object. Note that they should be considered as read-only.
 
+### Author ###
+
+Author name, as inscribed in the PDF file.
+
 ### BlockSeparator ###
 
 A string to be used for separating chunks of text. The main goal is for processing data displayed in tabular form, to ensure that column contents will not be catenated. However, this does not work in all cases.
 
 The default value is the empty string.
+
+### CreationDate ###
+
+A string containing the document creation date, in UTC format. The value can be used as a parameter to the *strtotime()* PHP function.
+
+### CreatorApplication ###
+
+Application used to create the original document.
 
 ### Filename ###
 
@@ -218,6 +230,10 @@ This is what the *MinSpaceWidth* property is meant for : insert an ascii space i
 
 Note that if the *PDFOPT\_REPEAT\_SEPARATOR* flag is set for the *Options* property, the number of spaces inserted will always be based on a multiple of 1000, even if *MinSpaceWidth* is less than 1000. This means that if *MinSpaceWidth* is 200, and the *Options* property has the *PDFOPT\_REPEAT\_SEPARATOR* flag set, AND the offset between two chunks of characters is 1000 text units, only one space will be inserted, not 5 (which would be the result of 1000/200).
 
+### ModificationDate ###
+
+A string containing the last document modification date, in UTC format. The value can be used as a parameter to the *strtotime()* PHP function.
+
 ### Options ###
 
 A combination of the following flags :
@@ -234,6 +250,10 @@ Associative array containing individual page contents. The array key is the page
 ### PageSeparator ###
 
 String to be used when building the *Text* property to separate individual pages. The default value is a newline.
+
+### ProducerApplication ###
+
+Application used to generate the PDF file contents.
 
 ### Separator ###
 
