@@ -507,6 +507,10 @@
 	. Changed the Unescape() method which did not handle at all character specifications using the octal
 	  notation.
 
+    [Version : 1.2.22]	[Date : 2016/07/26]     [Author : CV]
+	. The BlockSeparator property was not used is some cases, which caused certain data presented in a 
+	  certain format by certain Pdf generators to appear catenated.
+
  **************************************************************************************************************/
 
 
@@ -1895,6 +1899,8 @@ class  PdfToText 	extends PdfObjectBase
 			   			$extra_newlines		 =  0 ;
 						$needs_separator	 =  false ;
 			   		    }
+					else 
+						$needs_separator	=  true ;
 
 					// Add a separator if necessary
 					if  ( $needs_separator )
