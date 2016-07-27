@@ -511,6 +511,15 @@
 	. The BlockSeparator property was not used is some cases, which caused certain data presented in a 
 	  certain format by certain Pdf generators to appear catenated.
 
+    [Version : 1.2.23]	[Date : 2016/07/27]     [Author : CV]
+	. Added the following properties : Author, CreatorApplication, ProducerApplication, CreationDate and
+	  ModificationDate
+	. Added the PeekAuthorInformation() internal method to retrieve the values of the above properties, if
+	  present.
+	. Added the GetUTCDate() method to the PdfObjectBase class to reformat dates from Adobe UTC format to
+	  an UTC format that can be understood by the strtotime() function (some dates may for example be 
+	  specified in the following format : 20160707182114+02'00', where the '00' string is not recognized)
+
  **************************************************************************************************************/
 
 
@@ -584,6 +593,31 @@ abstract class  PdfObjectBase		// extends  Object
 	public function  __construct ( )
 	   { 
 		// parent::__construct ( ) ; 
+	    }
+
+
+
+ 	/*--------------------------------------------------------------------------------------------------------------
+
+	    GetUTCDate -
+	        Reformats an Adobe UTC date to a format that can be understood by the strtotime() function.
+		Dates are specified in the following format :
+			D:20150521154000Z
+			D:20160707182114+02
+		with are both recognized by strtotime(). However, another format can be specified :
+			D:20160707182114+02'00'
+		which is not recognized by strtotime() so we have to get rid from the '00' part.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetUTCDate ( $date )
+	   {
+		if  ( ! strncasecmp ( $date, 'D:', 2 ) )
+			$date	=  substr ( $date, 2 ) ;
+
+		if  ( ( $index  =  strpos ( $date, "'" ) )  !==  false )
+			$date	=  substr ( $date, 0, $index ) ;
+
+		return ( $date ) ;
 	    }
 
 
@@ -900,6 +934,12 @@ class  PdfToText 	extends PdfObjectBase
 	public		$MinSpaceWidth		=  250 ;
 	// Pdf options
 	public		$Options		=  self::PDFOPT_NONE ;
+	// Author information 
+	public		$Author			=  '' ;
+	public		$CreatorApplication	=  '' ;
+	public		$ProducerApplication	=  '' ;
+	public		$CreationDate		=  '' ;
+	public		$ModificationDate	=  '' ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
@@ -982,7 +1022,7 @@ class  PdfToText 	extends PdfObjectBase
 	                Optional PDF filename whose text contents are to be extracted.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	function  Load ( $filename )
+	public function  Load ( $filename )
 	   {
 		// Check if the file exists
 		if  ( ! file_exists ( $filename ) )
@@ -995,17 +1035,22 @@ class  PdfToText 	extends PdfObjectBase
 		if  ( ! preg_match ( '/^ %PDF- (?P<version> \d+ (\. \d+)*) /ix', $contents, $match ) )
 			error ( new PdfToTextException ( "File \"$filename\" is not a valid PDF file." ) ) ;
 
-		$this -> PdfVersion 	=  $match [ 'version' ] ;
+		$this -> PdfVersion 		=  $match [ 'version' ] ;
 
 		// Initializations
-		$this -> Text 		=  '' ;
-		$this -> FontTable 	=  new PdfTexterFontTable ( ) ;
-		$this -> Filename 	=  $filename ;
-		$this -> Pages		=  [] ;
-		$this -> Images		=  [] ;
-		$this -> ImageData	=  [] ;
-		$this -> PageMap	=  new PdfTexterPageMap ( ) ;
-		$this -> PageLocations	=  [] ;
+		$this -> Text 			=  '' ;
+		$this -> FontTable 		=  new PdfTexterFontTable ( ) ;
+		$this -> Filename 		=  $filename ;
+		$this -> Pages			=  [] ;
+		$this -> Images			=  [] ;
+		$this -> ImageData		=  [] ;
+		$this -> PageMap		=  new PdfTexterPageMap ( ) ;
+		$this -> PageLocations		=  [] ;
+		$this -> Author			=  '' ;
+		$this -> CreatorApplication	=  '' ;
+		$this -> ProducerApplication	=  '' ;
+		$this -> CreationDate		=  '' ;
+		$this -> ModificationDate	=  '' ;
 
 		// Systematically set the GET_IMAGE_DATA flag if DECODE_IMAGE_DATA is specified
 		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
@@ -1026,7 +1071,13 @@ class  PdfToText 	extends PdfObjectBase
 		   	$object_data 	=  $object_matches [ 'object' ] [$i] ;
 		   	$object_number 	=  ( integer ) $object_matches [ 'num' ] [$i] ;
 
+			// Try to catch information related to page mapping - but don't discard the object since it can contain additional information
 			$this -> PageMap -> Peek ( $object_number, $object_data ) ;
+
+			// Check if the object contais authoring information - it can appear encoded or unencoded
+			$this -> PeekAuthorInformation ( $object_number, $object_data ) ;
+
+			// Also catch the object encoding type
 			$type 		=  $this -> GetEncodingType ( $object_number, $object_data ) ;
 
 			if  ( strpos ( $object_data, 'stream' )  ===  false  ||  ! preg_match ( '#[^/] stream ( (\r? \n) | \r ) (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
@@ -1089,6 +1140,9 @@ class  PdfToText 	extends PdfObjectBase
 
 			// Decode the encoded stream
 			$decoded_stream_data 	=  $this -> DecodeData ( $object_number, $stream_data, $type ) ;
+
+			// Second chance to peek author information, this time on a decoded stream data
+			$this -> PeekAuthorInformation ( $object_number, $decoded_stream_data ) ;
 
 			// Check for character maps
 			if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
@@ -2468,6 +2522,55 @@ class  PdfToText 	extends PdfObjectBase
 			return ( '' ) ;
 	    }
 
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        PeekAuthorInformation - Gets author information from the specified object data.
+	
+	    PROTOTYPE
+	        $this -> PeekAuthorInformation ( $object_id, $object_data ) ;
+	
+	    DESCRIPTION
+	        Try to check if the specified object data contains author information (ie, the /Author, /Creator, 
+		/Producer, /ModDate, /CreationDate keywords) and sets the corresponding properties accordingly.
+	
+	    PARAMETERS
+	    	$object_id (integer) -
+	    		Object id of this text block.
+
+	    	$object_data (string) -
+	    		Stream contents.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  PeekAuthorInformation ( $object_id, $object_data )
+	   {
+		static		$re	=  '#
+						/
+						(?P<keyword> [^ (]+)
+						\(
+						(?P<value> [^)]+)
+					    #imsx' ;
+
+		// To execute faster, run the regular expression only if the object data contains a /Author keyword
+		if  ( strpos  ( $object_data, '/Author' )  !==  false  &&  preg_match_all ( $re, $object_data, $matches ) )
+		   {
+			for  ( $i = 0, $count = count ( $matches [ 'keyword' ] ) ; $i  <  $count ; $i ++ )
+			   {
+				$keyword	=  $matches [ 'keyword' ] [$i] ;
+				$value		=  $matches [ 'value'   ] [$i] ;
+
+				switch ( strtolower ( $keyword ) ) 
+				   {
+					case  'author'		:  $this -> Author			=  $value ; break ;
+					case  'creator'		:  $this -> CreatorApplication		=  $value ; break ;
+					case  'producer'	:  $this -> ProducerApplication		=  $value ; break ;
+					case  'creationdate'	:  $this -> CreationDate		=  $this -> GetUTCDate ( $value ) ; break ;
+					case  'moddate'		:  $this -> ModificationDate		=  $this -> GetUTCDate ( $value ) ; break ;
+				    }
+			    }
+		    }
+	    }
 
 	/*--------------------------------------------------------------------------------------------------------------
 
