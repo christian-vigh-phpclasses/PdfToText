@@ -527,6 +527,11 @@
 	  discrepancy has been disabled when not in debug mode, but the PdfTexterPageMap class will need to be
 	  reviewed to handle this new situation.
 
+    [Version : 1.2.25]	[Date : 2016/07/28]     [Author : CV]
+	. Handled yet another way to specify a font resource : /C0_0, /C0_1, etc. It behaves like the /Fx and
+	  /fx-y notations, in the sense they are a way to associate a font resource object with some kind of
+	  alias (although the pdf specification only talks about /Fx).
+
  **************************************************************************************************************/
 
 
@@ -666,7 +671,7 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFontMap ( $object_data )
 	   {
-		if  ( preg_match ( '#<< \s* (/F \d+) | (/f-\d+-\d+) \s+ .* >>#msx', $object_data ) )
+		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/f-\d+-\d+) | (/C\d+_\d+) ) \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -2240,7 +2245,7 @@ class  PdfToText 	extends PdfObjectBase
 				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource, 'token' => $token ] ) ;
 			    }
 		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
-			else if  ( ! strncasecmp ( $token, '/F', 2 ) )
+			else if  ( ! strncasecmp ( $token, '/F', 2 )  ||  ! strncasecmp ( $token, '/C', 2 ) )
 			   {
 				$resource 	=  substr ( $token, 2 ) ;
 
@@ -2430,7 +2435,8 @@ class  PdfToText 	extends PdfObjectBase
 		   		    }
 		   		else if  ( ctype_alpha ( $ch )  ||  $ch  ==  '/' )
 		   		   {
-					while  ( $index  <  $data_length  &&  ( ctype_alnum ( $data [ $index ] )  ||  $data [ $index ]  ==  '*'  ||  $data [ $index ]  ==  '-' ) )
+					while  ( $index  <  $data_length  &&  ( ctype_alnum ( $data [ $index ] )  ||  $data [ $index ]  ==  '*'  ||  $data [ $index ]  ==  '-' )  ||
+						 $data [ $index ]  ==  '_' )
 						$value 	.=  $data [ $index ++ ] ;
 		   		    }
 
@@ -2721,6 +2727,8 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//	2 to object 22 and 3 to object 18, respectively, in the above example.
 	//	Found also a strange way of specifying a font mapping :
 	//		<</f-0-0 5 0 R etc.
+	//	And yet another one :
+	//		<</C0_0 5 0 R
 	public function  AddFontMap ( $object_id, $object_data )
 	   {
 		if  ( preg_match_all ( '#/F(?P<font> \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
@@ -2729,6 +2737,11 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
 		    }
 		else if  ( preg_match_all ( '#/f-(?P<font> \d+ - \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		   {
+		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
+		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
+		    }
+		else if  ( preg_match_all ( '#/C(?P<font> \d+ _ \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
