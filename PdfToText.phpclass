@@ -520,6 +520,13 @@
 	  an UTC format that can be understood by the strtotime() function (some dates may for example be 
 	  specified in the following format : 20160707182114+02'00', where the '00' string is not recognized)
 
+    [Version : 1.2.24]	[Date : 2016/07/28]     [Author : CV]
+	. Decimal numbers not having a leading zero were not recognized as decimal numbers in text coordinates.
+	. Page maps using the /Kids and /Count flags can be nested ; the top-level /Kids page map contains the
+	  sum of all the pages in its /Kids descendents for its /Count parameter. The warning signalling this
+	  discrepancy has been disabled when not in debug mode, but the PdfTexterPageMap class will need to be
+	  reviewed to handle this new situation.
+
  **************************************************************************************************************/
 
 
@@ -2152,7 +2159,7 @@ class  PdfToText 	extends PdfObjectBase
 			    }
 
 			// Floating-point number : push it onto the stack
-			if  ( ctype_digit ( $token [0] )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+' )
+			if  ( ctype_digit ( $token [0] )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+'  ||  $token [0]  ==  '.' )
 				$number_stack []	=  $token ;
 			// 'Tm' instruction : return a "goto" instruction with the x and y coordinates
 			else if  ( $token  ==  'Tm' )
@@ -3528,7 +3535,7 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 				$page_count		=  ( isset ( $match [ 'count' ] ) ) ?  ( integer ) $match [ 'count' ] : false ;
 				$reference_count	=  count ( $references ) ;
 
-				if  ( $page_count  !==  false  &&  $reference_count  !=  $page_count )
+				if  ( $page_count  !==  false  &&  $reference_count  !=  $page_count  &&  PdfToText::$DEBUG )
 				   {
 					warning ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
 						  "referenced by the /Kids parameter ($reference_count)." ) ;
