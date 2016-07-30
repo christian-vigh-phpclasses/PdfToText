@@ -29,6 +29,8 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Shishant Todi, who gave me pdf samples built in a very strange way. I'm still working on them !
 - Menny Grossmann, for yet another way to write pdf files in tabular format
 - Carin Pretorius, who sent me samples with the biggest character maps I've ever seen
+- Rolf Mast, who sent me samples that (finally) did not use character maps and allowed me to solve more easily a few bugs in the way I was parsing text drawing instructions
+- Rajnish Tatiwala who, among other things, sent me my first sample containing objects encoded with the CCITT FAX standard.
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
 
