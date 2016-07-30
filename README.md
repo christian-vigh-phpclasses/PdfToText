@@ -191,10 +191,13 @@ A string containing the document creation date, in UTC format. The value can be 
 
 Application used to create the original document.
 
+### EOL ###
+
+The string to be used for line breaks. The default is PHP\_EOL.
+
 ### Filename ###
 
 Name of the file whose text contents have been extracted.
-
 
 ### Images ###
 
