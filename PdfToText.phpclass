@@ -532,6 +532,15 @@
 	  /fx-y notations, in the sense they are a way to associate a font resource object with some kind of
 	  alias (although the pdf specification only talks about /Fx).
 
+    [Version : 1.2.26]	[Date : 2016/07/30]     [Author : CV]
+	. Throw an exception when an unsupported encoding format or when bad flate decoding data is encountered
+	  only if self::$DEBUG is greater than 1.
+	. Added the EOL property, which is used for line breaks in the extracted text. Default is PHP_EOL.
+	. Some text constructs can contain a continuation line, such as :
+		(this is a sentence \
+		 split over two lines)
+	  Removed the continuation line sequence, which caused unnecessary line break.
+
  **************************************************************************************************************/
 
 
@@ -827,7 +836,8 @@ abstract class  PdfObjectBase		// extends  Object
 			case	'ccittfaxdecode'	:
 			case	'jbig2decode'		: 
 			case	'jpxdecode'		:
-				error ( "Encoding type \"{$match [ 'encoding' ]}\" not yet implemented for pdf object #$object_id." ) ;
+				if  ( self::$DEBUG  >  1 )
+					error ( "Encoding type \"{$match [ 'encoding' ]}\" not yet implemented for pdf object #$object_id." ) ;
 
 			default				:  return ( self::PDF_UNKNOWN_ENCODING  ) ;
 		     }
@@ -952,6 +962,8 @@ class  PdfToText 	extends PdfObjectBase
 	public		$ProducerApplication	=  '' ;
 	public		$CreationDate		=  '' ;
 	public		$ModificationDate	=  '' ;
+	// End of line string
+	public		$EOL			=  PHP_EOL ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
@@ -1567,8 +1579,8 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( $decoded_stream_data  ===  false )
 				   {
-					if  ( self::$DEBUG )
-						error ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
+					if  ( self::$DEBUG  >  1 )
+						throw ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
 				    }
 
 		   		break ;
@@ -1825,22 +1837,22 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		// Index into the specified block of text-drawing instructions
-		$data_index 		=  0 ;
+		$data_index 			=  0 ;
 
-		$data_length 		=  strlen ( $data ) ;		// Data length
-		$result 		=  '' ;				// Resulting string
+		$data_length 			=  strlen ( $data ) ;		// Data length
+		$result 			=  '' ;				// Resulting string
 
 		// Y-coordinate of the last seen "Tm" instruction
-		$last_goto_y 		=  0 ;
+		$last_goto_y 			=  0 ;
 
 		// Y-coordinate of the last seen "Td" or "TD" relative positioning instruction
-		$last_relative_goto_y	=  0 ;
+		$last_relative_goto_y		=  0 ;
 
 		// When true, the current text should be output on the same line as the preceding one
-		$use_same_line 		=  false ;
+		$use_same_line 			=  false ;
 
 		// Instruction preceding the current one
-		$last_instruction 	=  true ;
+		$last_instruction 		=  true ;
 
 		// Current font size
 		$current_font_size 		=  0 ;
@@ -1955,13 +1967,13 @@ class  PdfToText 	extends PdfObjectBase
 					// Check if we have to insert a newline
 			   		if ( ! $use_same_line )
 					   {
-			   			$result 		.=  PHP_EOL ;
+			   			$result 		.=  $this -> EOL ;
 						$needs_separator	 =  false ;
 					    }
 			   		// Roughly simulate spacing between lines by inserting newline characters
 			   		else if  ( $extra_newlines  > 0 )
 			   		   {
-			   			$result 		.=  str_repeat ( PHP_EOL, $extra_newlines ) ;
+			   			$result 		.=  str_repeat ( $this -> EOL, $extra_newlines ) ;
 			   			$extra_newlines		 =  0 ;
 						$needs_separator	 =  false ;
 			   		    }
@@ -2077,6 +2089,13 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	$is_hex 	=  ( $text [0]  ==  '<' ) ;
 			   			   	$length 	=  strlen ( $text ) - 2 ;
 			   			   	$text 		=  substr ( $text, 1, $length ) ;
+
+							// Some text within parentheses may have a backslash followed by a newline, to indicate some continuation line.
+							// Example :
+							//	(this is a sentence \
+							//	 continued on the next line)
+							// Funny isn't it ? so remove such constructs because we don't care
+							$text		=  preg_replace ( '#\\\\ (\r | \n | \r\n )#x', '', $text ) ;
 
 			   			   	// Characters are encoded within angle brackets ( "<>" )
 			   			   	if  ( $is_hex )
