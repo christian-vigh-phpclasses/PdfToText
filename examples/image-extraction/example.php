@@ -12,7 +12,7 @@
 	    }
 
 	$file		=  'sample' ;
-	$pdf		=  new PdfToText ( "$file.pdf" ) ;
+	$pdf		=  new PdfToText ( "$file.pdf", PdfToText::PDFOPT_DECODE_IMAGE_DATA ) ;
 	$image_count 	=  count ( $pdf -> Images ) ;
 	
 	if  ( $image_count )
@@ -40,4 +40,4 @@
 		    }
 	    }
 	else
-		echo "No image was found in sample file \"$sample.pdf\"" ;
+		echo "No image was found in sample file \"$file.pdf\"" ;
