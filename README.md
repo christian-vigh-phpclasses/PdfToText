@@ -269,6 +269,11 @@ The default value is a space.
 
 A string containing the whole text extracted from the underlying pdf file. Note that pages are separated with a form feed.
 
+### Utf8Placeholder ###
+
+When a Unicode character cannot be correctly recognized, the Utf8Placeholder property will be used as a substitution.
+
+The default value is the empty string.
 
 ## CONSTANTS ##
 
