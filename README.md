@@ -243,7 +243,8 @@ A combination of the following flags :
 
 - *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
 - *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
-- *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
+- *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property.
+- *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### Pages ###
@@ -277,6 +278,7 @@ The PDFOPT\_\* constants are a set of flags which can be combined when either in
 - *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
 - *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
 - *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
+- *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### VERSION ###
