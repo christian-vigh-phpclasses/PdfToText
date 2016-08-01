@@ -548,6 +548,15 @@
 	  unnecessary amount of empty lines are inserted between two text elements. This is the symptom that
 	  the pdf file contains only relative positioning instructions combined with big values of text leading
 	  instructions.
+	. For text fonts not having character maps, take into account the encoding specified in the font 
+	  attributes, such as WinAnsi or MacOsRoman, where some characters codes cannot be directly mapped to
+	  Unicode characters (this was causing characters such as the Euro or (TM) signs to be incorrectly
+	  translated).
+
+    [Version : 1.2.28]	[Date : 2016/08/01]     [Author : CV]
+	. Better handle Unicode translations. Added the CodePointToUtf8() method.
+	. Added the static PdfToText::$Utf8Placeholder property, which is used when a Unicode character could
+	  not be converted to an UTF8 string.
 
  **************************************************************************************************************/
 
@@ -916,7 +925,51 @@ abstract class  PdfObjectBase		// extends  Object
 		return ( $status ) ;
 	    }
 
-   }
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        CodePointToUtf8 - Encodes a Unicode codepoint to UTF8.
+	
+	    PROTOTYPE
+	        $char	=  $this -> CodePointToUtf8 ( $code ) ;
+	
+	    DESCRIPTION
+	        Encodes a Unicode codepoint to UTF8, trying to handle all possible cases.
+	
+	    PARAMETERS
+	        $code (integer) -
+	                Unicode code point to be translated.
+	
+	    RETURN VALUE
+	        A string that contains the UTF8 bytes representing the Unicode code point.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  CodePointToUtf8 ( $code )
+	   {
+		// For simple case ($code <= 0xFFFF), use the mb_convert_encoding function which works well
+		if  ( $code  <=  0xFFFF )
+		   {
+	   		$entity 	 =  '&#' . sprintf ( "%d", $code ) .  ';' ;
+
+	   		return ( mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ) ;
+		    }
+		// For more complex cases, use a homemade solution
+		// (source : http://stackoverflow.com/questions/1805802/php-convert-unicode-codepoint-to-utf-8)
+		else if  ( $code  <  0x1FFFFF )
+		   {
+			$result		=  chr ( ( $code  >>  18 ) + 240 ) .
+					   chr ( ( ( $code >> 12 ) & 63 ) + 128 ) .
+					   chr ( ( ( $code  >>  6 ) & 63 ) + 128 ) .
+					   chr ( ( ( $code & 63 ) + 128 ) ) ;
+
+			return ( $result ) ;
+		    }
+		// No translation is apparently possible : use a placeholder to signal this situation
+		else
+			return ( PdfToText::$Utf8Placeholder ) ;
+	    }
+    }
 
 
 /*==============================================================================================================
@@ -928,7 +981,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.26" ;
+	const		VERSION					=  "1.2.28" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -973,6 +1026,8 @@ class  PdfToText 	extends PdfObjectBase
 	public		$ModificationDate	=  '' ;
 	// End of line string
 	public		$EOL			=  PHP_EOL ;
+	// String to be used when no Unicode translation is possible
+	public static	$Utf8Placeholder	=  '' ;
 
 	// Font mappings
 	protected 	$FontTable		=  false ;
@@ -2116,8 +2171,7 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	   	   	$value 	=  str_pad ( substr ( $text, $i, 4 ), 4, '0', STR_PAD_LEFT ) ;
 			   			   	   	   	$ch 	=  hexdec ( $value ) ;
 
-			   			   			$result .= mb_convert_encoding ( '&#' . sprintf ( '%d', $ch ) . ';',
-			   			   					'UTF-8', 'HTML-ENTITIES' ) ;
+			   			   			$result .=  $this -> CodePointToUtf8 ( $ch ) ;
 			   			   	   	    }
 			   			   	    }
 							// Characters are plain text
@@ -2886,10 +2940,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
 			return ( $this -> Fonts [ $font ] -> MapCharacter ( $ch ) ) ;
 		else
-		{
-		throw new PdfToTextException ( "Should not arrive here" ) ;
-			return ( utf8_encode ( chr ( $ch ) ) ) ;
-		}
+			return ( $this -> CodePointToUtf8 ( $ch ) ) ;
 	    }
     }
 
@@ -3112,19 +3163,17 @@ class  PdfTexterFont		extends PdfObjectBase
 			$ord	=  ord ( $ch ) ;
 
 			if  ( isset ( self::$WinAnsiCharacterMap [ $ord ] ) )
-				return ( mb_convert_encoding ( '&#' . sprintf ( '%d', self::$WinAnsiCharacterMap [ $ord ] ) . ';',
-						'UTF-8', 'HTML-ENTITIES' ) ) ;
+				return ( $this -> CodePointToUtf8 ( self::$WinAnsiCharacterMap [ $ord ] ) ) ;
 		    }  
 		else if  ( $this -> FontType  ==  self::FONT_ENCODING_MAC_ROMAN )
 		   {
 			$ord	=  ord ( $ch ) ;
 
 			if  ( isset ( self::$MacRomanCharacterMap [ $ord ] ) )
-				return ( mb_convert_encoding ( '&#' . sprintf ( '%d', self::$MacRomanCharacterMap [ $ord ] ) . ';',
-						'UTF-8', 'HTML-ENTITIES' ) ) ;
+				return ( $this -> CodePointToUtf8 ( self::$MacRomanCharacterMap [ $ord ] ) ) ;
 		    }  
 
-		return ( utf8_encode ( $ch ) ) ;
+		return ( $this -> CodePointToUtf8 ( ord ( $ch ) ) ) ;
 	    }
     }
 
@@ -3242,10 +3291,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				   {
 					   $src		=  hexdec ( $code_matches [ 'char' ] [ $i ] ) ;
 					   $chunks	=  str_split ( $code_matches [ 'char' ] [ $i + 1 ], $this -> HexCharWidth ) ;
-					   $dst		=  [] ;
-
-					   foreach  ( $chunks  as  $chunk )
-						$dst []		=  hexdec ( $chunk ) ;
+					   $dst		=  hexdec ( $code_matches [ 'char' ] [ $i + 1 ] ) ;
 
 					   $this -> Map [ $src ]	=  $dst ;
 				    }
@@ -3273,7 +3319,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						$subst 		=  hexdec ( $range_match [ 'subst' ] ) ;
 
 						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> Map [$i] 	=  [ $subst + $count ] ;
+							$this -> Map [$i] 	=  $subst + $count ;
 					    }
 					// Array form :
 					//	<from><to>[ value1, value2, ... valuen ]
@@ -3287,7 +3333,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						$subst 		=  preg_split ( '/\s+/',  trim ( $range_match [ 'subst' ] ) ) ;
 
 						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> Map [$i] 	=  [ hexdec ( $subst [ $count ] ) ] ;
+							$this -> Map [$i] 	=  hexdec ( $subst [ $count ] ) ;
 					    }
 				   }
 			    }
@@ -3311,27 +3357,11 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 	public function  offsetGet ( $offset )
 	   {
 		if  ( isset ( $this -> Map [ $offset ] ) )
-		   {
-			$result		=  '' ;
-
-			foreach  ( $this -> Map [ $offset ]  as  $code )
-			   {
-				// This is the horrible kludge to fix the issue about character maps of size x having substitutions
-				// of size x+2, as described in the history entry for version 1.2.6
-				if  ( $this -> HexCharWidth  ==  2  &&  ! $code )
-					continue ;
-
-		   		$entity 	 =  '&#' . sprintf ( "%d", $code ) .  ';' ;
-		   		$result 	.=  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ;
-			    }
-
-			return ( $result ) ;
-		    }
+			return ( $this -> CodePointToUtf8 ( $this -> Map [ $offset ] ) ) ;
 		else
-			return ( chr ( $offset ) ) ;
+			return ( $this -> CodePointToUtf8 ( $offset ) ) ;
 	    }
     }
-
 
 
 /*==============================================================================================================
