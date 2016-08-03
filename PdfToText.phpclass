@@ -558,6 +558,12 @@
 	. Added the static PdfToText::$Utf8Placeholder property, which is used when a Unicode character could
 	  not be converted to an UTF8 string.
 
+    [Version : 1.2.29]	[Date : 2016/08/02]     [Author : CV]
+	. Changed the way the PdfTexterUnicodeCharacterMap class handles character ranges to reduce memory usage
+	  for PDF files defining numerous ranges in character maps. A sample that needed more than 128Mb of
+	  memory now runs correctly with a memory limit of 32Mb.
+	. Corrected an incorrect reference to self::$DEBUG in PdfObjectBase class.
+
  **************************************************************************************************************/
 
 
@@ -697,7 +703,7 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFontMap ( $object_data )
 	   {
-		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/f-\d+-\d+) | (/C\d+_\d+) ) \s+ .* >>#msx', $object_data ) )
+		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) ) \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -714,6 +720,22 @@ abstract class  PdfObjectBase		// extends  Object
 	protected function  IsImage ( $object_data )
 	   {
 		if  ( preg_match ( '#/Subtype \s* /Image#msx', $object_data ) )
+			return ( true ) ;
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    IsObjectStream -
+		Checks if the code contains an object stream (/Type/ObjStm)
+			/Subtype/Image
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsObjectStream ( $object_data ) 
+	   {
+		if  ( preg_match ( '#/Type \s* /ObjStm#isx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -853,7 +875,7 @@ abstract class  PdfObjectBase		// extends  Object
 			case	'ccittfaxdecode'	:
 			case	'jbig2decode'		: 
 			case	'jpxdecode'		:
-				if  ( self::$DEBUG  >  1 )
+				if  ( PdfToText::$DEBUG  >  1 )
 					error ( "Encoding type \"{$match [ 'encoding' ]}\" not yet implemented for pdf object #$object_id." ) ;
 
 			default				:  return ( self::PDF_UNKNOWN_ENCODING  ) ;
@@ -981,7 +1003,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.28" ;
+	const		VERSION					=  "1.2.29" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2336,7 +2358,7 @@ class  PdfToText 	extends PdfObjectBase
 				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource, 'token' => $token ] ) ;
 			    }
 		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
-			else if  ( ! strncasecmp ( $token, '/F', 2 )  ||  ! strncasecmp ( $token, '/C', 2 ) )
+			else if  ( ! strncasecmp ( $token, '/F', 2 )  ||  ! strncasecmp ( $token, '/C', 2 )  ||  ! strncasecmp ( $token, '/T', 2 ) )
 			   {
 				$resource 	=  substr ( $token, 2 ) ;
 
@@ -3252,8 +3274,45 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
     {
 	// Id of the character map (specified by the /Rx flag)
 	public		$Id	;
-	// Character substitution table
-	protected	$Map			=  [] ;
+	// Character substitution table, using the beginbfrange/endbfrange notation
+	// Only constructs of the form :
+	//	<low> <high> <start>
+	// are stored in this table. Constructs of the form :
+	//	<x> <y> [ <subst_x> <subst_x+1> ... <subst_y> ]
+	// are stored in the $DirectMap array, because it is conceptually the same thing in the end as a character substitution being
+	// defined with the beginbfchar/endbfchar construct.
+	// Note that a dichotomic search in $RangeMap will be performed for each character reference not yet seen in the pdf flow.
+	// Once the substitution character has been found, it will be added to the $DirectMap array for later faster access.
+	// The reason for this optimization is that some pdf files can contain beginbfrange/endbfrange constructs that may seem useless,
+	// except for validation purposes (ie, validating the fact that a character reference really belongs to the character map).
+	// However, such constructs can lead to thousands of character substitutions ; consider the following example, that comes
+	// from a sample I received :
+	//	beginbfrange
+	//	<1000> <1FFFF> <1000>
+	//	<2000> <2FFFF> <2000>
+	//	...
+	//	<A000> <AFFFF> <A0000>
+	//	...
+	//	endbfrange
+	// By naively storing a one-to-one character relationship in an associative array, such as :
+	//	$array [ 0x1000 ] = 0x1000 ;
+	//	$array [ 0x1001 ] = 0x1001 ;
+	//	..
+	//	$array [ 0x1FFF ] = 0x1FFF ;
+	//	etc.
+	// you may arrive to a situation where the array becomes so big that it exhausts all of the available memory.
+	// This is why the ranges are stored as is and a dichotomic search is performed to go faster.
+	// Since it is useless to use this method to search the same character twice, when it has been found once, the
+	// substitution pair will be put in the $DirectMap array for subsequent accesses (there is little probability that a PDF
+	// file contains so much different characters, unless you are processing the whole Unicode table itself ! - but in this
+	// case, you will simply have to adjust the value of the memory_limit setting in your php.ini file. Consider that I am
+	// not a magician...).
+	protected	$RangeMap		=  [] ;
+	private		$RangeCount		=  0 ;				// Avoid unnecessary calls to the count() function
+	private		$RangeMin		=  PHP_INT_MAX,			// Min and max values of the character ranges
+			$RangeMax		=  -PHP_INT_MAX ;
+	// Character substitution table for tables using the beginbfchar notation
+	protected	$DirectMap		=  [] ;
 
 
 	// Constructor -
@@ -3290,10 +3349,9 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				for  ( $i = 0, $count = count ( $code_matches [ 'char' ] ) ; $i  <  $count ; $i += 2 )
 				   {
 					   $src		=  hexdec ( $code_matches [ 'char' ] [ $i ] ) ;
-					   $chunks	=  str_split ( $code_matches [ 'char' ] [ $i + 1 ], $this -> HexCharWidth ) ;
 					   $dst		=  hexdec ( $code_matches [ 'char' ] [ $i + 1 ] ) ;
 
-					   $this -> Map [ $src ]	=  $dst ;
+					   $this -> DirectMap [ $src ]	=  $this -> CodePointToUtf8 ( $dst ) ;
 				    }
 		    	    }
 		     }
@@ -3303,6 +3361,8 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		   {
 			foreach  ( $range_matches [ 'ranges' ]  as  $range_list )
 			   {
+				// One day I think that I will find a pdf sample where the definitions are put on the same line...
+				// Until that, consider everything is separated by a newline 
 			   	$ranges 	=  explode ( "\n", trim ( $range_list ) ) ;
 
 				// Loop through each range definition
@@ -3318,13 +3378,25 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						$to 		=  hexdec ( $range_match [ 'to'    ] ) ;
 						$subst 		=  hexdec ( $range_match [ 'subst' ] ) ;
 
-						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> Map [$i] 	=  $subst + $count ;
+						if  ( $from  !=  $to )
+						   {
+							$this -> RangeMap []	=  [ $from, $to, $subst ] ;
+
+							// Adjust min and max values for the ranges stored in this character map - to avoid unnecessary testing
+							if  ( $from  <  $this -> RangeMin )
+								$this -> RangeMin	=  $from ;
+
+							if  ( $to  >  $this -> RangeMax )
+								$this -> RangeMax	=  $to ;
+						    }
+						else
+							$this -> DirectMap [ $from ]	=  $this -> CodePointToUtf8 ( $subst ) ;
 					    }
 					// Array form :
 					//	<from><to>[ value1, value2, ... valuen ]
 					//	Generates mapping from "from" to "to" using the specified values. The value count
 					//	between square brackets must be the same as to - from + 1.
+					// We put them in the DirectMap array, since there is only a one to one correspondance
 				   	else if  ( preg_match ( '/ < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* \[(?P<subst> .*?)\] /imx',
 									$range, $range_match ) )
 					   {
@@ -3333,9 +3405,22 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						$subst 		=  preg_split ( '/\s+/',  trim ( $range_match [ 'subst' ] ) ) ;
 
 						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> Map [$i] 	=  hexdec ( $subst [ $count ] ) ;
+							$this -> DirectMap [$i] 	=  $this -> CodePointToUtf8 ( hexdec ( $subst [ $count ] ) ) ;
 					    }
 				   }
+			    }
+
+			// Sort the ranges by their starting offsets 
+			$this -> RangeCount	=  count ( $this -> RangeMap ) ;
+
+			if  ( $this -> RangeCount  >  1 )
+			   {
+				usort
+				   (
+					$this -> RangeMap,
+					function  ( $a, $b )
+					   { return ( $a [0] - $b [0] ) ; }
+				    ) ;
 			    }
 		    }
 	     }
@@ -3356,10 +3441,48 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 
 	public function  offsetGet ( $offset )
 	   {
-		if  ( isset ( $this -> Map [ $offset ] ) )
-			return ( $this -> CodePointToUtf8 ( $this -> Map [ $offset ] ) ) ;
-		else
-			return ( $this -> CodePointToUtf8 ( $offset ) ) ;
+		// Character already has an entry (character reference => subtituted character)
+		if  ( isset ( $this -> DirectMap [ $offset ] ) )
+			return ( $this -> DirectMap [ $offset ] ) ;
+		// Character does not has a direct entry ; have a look in the character ranges defined for this map
+		else if  ( $this -> RangeCount  &&  $offset  >=  $this -> RangeMin  &&  $offset  <=  $this -> RangeMax )
+		   {
+			$low		=  0 ;
+			$high		=  count ( $this -> RangeMap ) - 1 ;
+			$result		=  false ;
+
+			// Use a dichotomic search through character ranges
+			while  ( $low  <=  $high )
+			   {
+				$middle		=  ( $low + $high )  >>  1 ;
+
+				if  ( $offset  <  $this -> RangeMap [ $middle ] [0] )
+					$high	=  $middle - 1 ;
+				else if  ( $offset  >  $this -> RangeMap [ $middle ] [1] )
+					$low	=  $middle + 1 ;
+				else
+				   {
+					$result	=  $this -> RangeMap [ $middle ] [2] + $offset - $this -> RangeMap [ $middle ] [0] ;
+					break ;
+				    }
+			    }
+
+			// Once a character has been found in the ranges defined by this character map, store it in the DirectMap property
+			// so that it will be directly retrieved during subsequent accesses
+			if  ( $result  !==  false )
+			   {
+				$code				=  $this -> CodePointToUtf8 ( $result ) ;
+				$this -> DirectMap [ $offset ]	=  $code ;
+
+				return ( $code ) ;
+			    }
+		    }
+			
+		// None of the above : return the converted code as a last resort (store it in the direct map before)
+		$code				=  $this -> CodePointToUtf8 ( $offset ) ;
+		$this -> DirectMap [ $offset ]	=  $code ;
+
+		return ( $code ) ;
 	    }
     }
 
