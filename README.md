@@ -273,7 +273,11 @@ A string containing the whole text extracted from the underlying pdf file. Note 
 
 When a Unicode character cannot be correctly recognized, the Utf8Placeholder property will be used as a substitution.
 
-The default value is the empty string.
+The string can contain format specifiers recognized by the sprintf() function. The parameter passed to sprintf() is the Unicode codepoint that could not be recognized (an integer value).
+
+The default value is the empty string, or the string '[Unknown character 0x%08X]' when debug mode is enabled.
+
+Note that if you change the *PdfToText::$DEBUG** variable **after** the first instantiation of the class, then you will need to manually set the value of the *PdfToText::Utf8PlaceHolder* static property.
 
 ## CONSTANTS ##
 
