@@ -584,6 +584,11 @@
 	. Character translation results are now buffered, to avoid unnecessary calls to the MapCharacter()
 	  method of the PdfTexterFontTable class.
 
+    [Version : 1.2.32]	[Date : 2016/08/05]     [Author : CV]
+	. Optimized regular expressions that remove useless Adobe Postscript instructions and added new ones.
+	. Rewrote the CodePointToUtf8() method.
+	. Handled a new way to specify font aliases : /TTx.
+
  **************************************************************************************************************/
 
 
@@ -723,7 +728,7 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFontMap ( $object_data )
 	   {
-		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) ) \s+ .* >>#msx', $object_data ) )
+		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) ) \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -989,21 +994,16 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  CodePointToUtf8 ( $code )
 	   {
-		// For simple case ($code <= 0xFFFF), use the mb_convert_encoding function which works well
-		if  ( $code  <=  0xFFFF )
+		if  ( $code )
 		   {
-	   		$entity 	 =  '&#' . sprintf ( "%d", $code ) .  ';' ;
+			$result		=  '' ;
 
-	   		return ( mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) ) ;
-		    }
-		// For more complex cases, use a homemade solution
-		// (source : http://stackoverflow.com/questions/1805802/php-convert-unicode-codepoint-to-utf-8)
-		else if  ( $code  <  0x1FFFFF )
-		   {
-			$result		=  chr ( ( $code  >>  18 ) + 240 ) .
-					   chr ( ( ( $code >> 12 ) & 63 ) + 128 ) .
-					   chr ( ( ( $code  >>  6 ) & 63 ) + 128 ) .
-					   chr ( ( ( $code & 63 ) + 128 ) ) ;
+			while  ( $code )
+			   {
+				$entity		  =  '&#x' . sprintf ( '%x', ( $code & 0xFFFF ) ) . ';' ;
+				$result		  =  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) . $result ;
+				$code		>>=  16 ;
+			    }
 
 			return ( $result ) ;
 		    }
@@ -1030,7 +1030,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.29" ;
+	const		VERSION					=  "1.2.32" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1097,22 +1097,15 @@ class  PdfToText 	extends PdfObjectBase
 	// %n - Will be replaced with a regex matching a decimal number.
 	private static  $IgnoredInstructionsTemplates	=
 	   [
-		'%n{6} c \s+',
-		'%n{6} cm \s+',
-		'%n{4} re \s+',
-		'%n{2} m \s+',
-		'%n{2} l \s+',
-		'%n{4} y \s+',
-		'%n{4} v \s+',
-		'%n{3} scn \s+',
-		'%n{3} SCN \s+',
-		'%n w \s+',
-		'%n M \s+',
-		'\b BT \s+',
-		'\b ET \s+',
-		'\b EMC \s+',
-		'\b \/CS \d+ \s+ \w+',
-		'\b \/GS \d+ \s+ \w+',
+		'%n{6} ( (c) | (cm) ) \s+',
+		'%n{4} ( (re) | (y) | (v) ) \s+',
+		'%n{3} ( (scn) | (SCN) | (r) | (rg) ) \s+',
+		'%n{2} ( (m) | (l) ) \s+',
+		'%n ( (w) | (M) | (g) | (G) | (J) ) \s+',
+		'\b ( (BDC) | (BT) | (ET) | (EMC) ) \s+',
+		'\/( (CS \d+) | (GS \d+) | (Fm \d+) | (Im \d+) | (PlacedGraphic) ) \s+ \w+ \s*',
+		'\s+ [fhnqQSW] \s+',
+		'\/Span \s* << .*? >> [ \t\r\n>]*'
 	    ] ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs	=
@@ -2162,7 +2155,7 @@ class  PdfToText 	extends PdfObjectBase
 		   {
 			echo "\n----------------------------------- TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
 			echo $data ;
-			echo "\n----------------------------------- NEWTEXT #$object_id\n" ;
+			echo "\n----------------------------------- OPTIMIZED TEXT #$object_id\n" ;
 			echo $new_data ;
 		    }
 
@@ -2631,7 +2624,13 @@ class  PdfToText 	extends PdfObjectBase
 		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
 			else if  ( ! strncasecmp ( $token, '/F', 2 )  ||  ! strncasecmp ( $token, '/C', 2 )  ||  ! strncasecmp ( $token, '/T', 2 ) )
 			   {
-				$resource 	=  substr ( $token, 2 ) ;
+				// Special case for /TTx font specifications
+				if  ( $token [2]  ==  'T' )
+					$length		=  3 ;
+				else
+					$length		=  2 ;
+
+				$resource 	=  substr ( $token, $length ) ;
 
 				if  ( $resource [0]  ==  '-' )
 					$resource	=  substr ( $resource, 1 ) ;
@@ -3170,7 +3169,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//		<</C0_0 5 0 R
 	public function  AddFontMap ( $object_id, $object_data )
 	   {
-		if  ( preg_match_all ( '#/F(?P<font> \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		if  ( preg_match_all ( '#/ ( (F) || (TT) ) (?P<font> \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
@@ -3180,7 +3179,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
 		    }
-		else if  ( preg_match_all ( '#/C(?P<font> \d+ _ \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		else if  ( preg_match_all ( '#/[CT] (?P<font> \d+ _ \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
