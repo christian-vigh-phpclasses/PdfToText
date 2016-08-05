@@ -576,6 +576,14 @@
 		'[unknown character 0x%08X]'  
 	  Note that the $DEBUG static variable must be set BEFORE the first instantiation of a PdfToText object.
 
+    [Version : 1.2.31]	[Date : 2016/08/04]     [Author : CV]
+	. Removed irrelevant Postscript instructions from text streams (such as graphical drawing instructions), 
+	  to reduce the work of the tokenizer (the __next_token() method), which is written in PHP and not as
+	  efficient as a tokenizer written in C.
+	  Removal is done using the preg_replace() function.
+	. Character translation results are now buffered, to avoid unnecessary calls to the MapCharacter()
+	  method of the PdfTexterFontTable class.
+
  **************************************************************************************************************/
 
 
@@ -1081,6 +1089,48 @@ class  PdfToText 	extends PdfObjectBase
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
 	private static	$StaticInitialized	=  false ;
 
+	// Drawing instructions that are to be ignored and removed from a text stream before processing, for performance 
+	// reasons (it is faster to call preg_replace() once to remove them than calling the __next_instruction() and 
+	// __next_token() methods to process an input stream containing such useless instructions)
+	// This is an array of regular expressions where the following constructs are replaced at runtime during static
+	// initialization :
+	// %n - Will be replaced with a regex matching a decimal number.
+	private static  $IgnoredInstructionsTemplates	=
+	   [
+		'%n{6} c \s+',
+		'%n{6} cm \s+',
+		'%n{4} re \s+',
+		'%n{2} m \s+',
+		'%n{2} l \s+',
+		'%n{4} y \s+',
+		'%n{4} v \s+',
+		'%n{3} scn \s+',
+		'%n{3} SCN \s+',
+		'%n w \s+',
+		'%n M \s+',
+		'\b BT \s+',
+		'\b ET \s+',
+		'\b EMC \s+',
+		'\b \/CS \d+ \s+ \w+',
+		'\b \/GS \d+ \s+ \w+',
+	    ] ;
+	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
+	private static	$ReplacementConstructs	=
+	    [
+		'%n'	=>  '( [+\-]? ( ( [0-9]+ ( \. [0-9]* )? ) | ( \. [0-9]+ ) ) \s+ )'
+	     ] ;
+	// The final regexes that are built during static initialization by the __build_ignored_instructions() method
+	private static  $IgnoredInstructions	=  [] ;
+
+	// A character map buffer is used to store results from previous calls to the MapCharacter() method of the 
+	// FontTable object. It dramatically reduces the number of calls needed, from one call for each character
+	// defined in the pdf stream, to one call on each DISTINCT character defined in the PDF stream.
+	// As an example, imagine a PDF file that contains 200K characters, but only 150 distinct ones. The
+	// MapCharacter method will be called 150 times, instead of 200 000...
+	private		$CharacterMapBuffer	=  [] ;
+
+
+
 	/*--------------------------------------------------------------------------------------------------------------
 
 	    CONSTRUCTOR
@@ -1119,8 +1169,11 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				// In debug mode, initialize the utf8 placeholder only if it still set to its default value, the empty string
 				if  ( self::$Utf8Placeholder  ==  '' )
-					self::$Utf8Placeholder	=  '[Unknown character : 0x%X]' ;
+					self::$Utf8Placeholder	=  '[Unknown character : 0x%08X]' ;
 			    }
+
+			// Build the list of regular expressions from the list of ignored instruction templates
+			self::__build_ignored_instructions (  ) ;
 
 			self::$StaticInitialized	=  true ;
 		    }
@@ -2103,11 +2156,17 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	private function  ExtractText ( $object_id, $data, &$current_font )
 	   {
+		$new_data	=  $this -> __strip_useless_instructions ( $data ) ;
+
 		if  ( self::$DEBUG )
 		   {
-			echo "\n----------------------------------- TEXT #$object_id\n" ;
+			echo "\n----------------------------------- TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
 			echo $data ;
+			echo "\n----------------------------------- NEWTEXT #$object_id\n" ;
+			echo $new_data ;
 		    }
+
+		$data		=  $new_data ;
 
 		// Index into the specified block of text-drawing instructions
 		$data_index 			=  0 ;
@@ -2294,7 +2353,15 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	   	   	$value 	=  str_pad ( substr ( $text, $i, $width ), $width, '0', STR_PAD_LEFT ) ;
 			   			   	   	   	$ch 	=  hexdec ( $value ) ;
 
-			   			   			$result .= $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+									if  ( isset  ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else
+									   {
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]	=  $newchar ;
+									    }
+
+			   			   			$result		.=  $newchar ;
 			   			   	   	    }
 			   			   	    }
 							// Character strings within parentheses.
@@ -2343,7 +2410,15 @@ class  PdfToText 	extends PdfObjectBase
 				   		   			    }
 
 									// Add substituted character to the output result
-									$result		.=  $this -> FontTable -> MapCharacter ( $current_font, ord ( $ch ) ) ;
+									if  ( isset  ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else
+									   {
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, ord ( $ch ) ) ;
+										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]	=  $newchar ;
+									    }
+
+									$result		.=  $newchar ;
 				   		   		    }
 							    }
 
@@ -2377,8 +2452,7 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	   {
 			   			   	   	for  ( $i = 0 ; $i  <  $length ; $i += 4 )
 			   			   	   	   {
-			   			   	   	   	$value 	=  str_pad ( substr ( $text, $i, 4 ), 4, '0', STR_PAD_LEFT ) ;
-			   			   	   	   	$ch 	=  hexdec ( $value ) ;
+			   			   	   	   	$ch 	=  hexdec ( substr ( $text, $i, 4 ) ) ;
 
 			   			   			$result .=  $this -> CodePointToUtf8 ( $ch ) ;
 			   			   	   	    }
@@ -2386,11 +2460,22 @@ class  PdfToText 	extends PdfObjectBase
 							// Characters are plain text
 			   			   	else
 							   {
-			   					//$result 	.=  utf8_encode ( $this -> Unescape ( $text ) ) ;
 								$text	=  $this -> Unescape ( $text ) ;
 
 								for  ( $i = 0, $length = strlen ( $text ) ; $i  <  $length ; $i ++ )
-									$result		.=  $this -> FontTable -> MapCharacter ( $current_font, $text [$i] ) ;
+								   {
+									$ch	=  $text [$i] ;
+
+									if  ( isset  ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else
+									   {
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]	=  $newchar ;
+									    }
+
+									$result		.=  $newchar ;
+								    }
 							    }
 
 							// Handle offsets between blocks of characters
@@ -2409,7 +2494,6 @@ class  PdfToText 	extends PdfObjectBase
 
 			$discard_last_instruction	=  false ;
 		    }
-
 
 		return ( $result ) ;
 	    }
@@ -2810,6 +2894,9 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
+	// __get_character_padding :
+	//	If the offset specified between two character groups in an array notation for displaying text is less
+	//	than -MinSpaceWidth thousands of text units, 
 	private function  __get_character_padding ( $char_offset )
 	   {
 		if  ( $char_offset  <=  - $this -> MinSpaceWidth )
@@ -2834,6 +2921,34 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 		else
 			return ( '' ) ;
+	    }
+
+
+	// __build_ignored_instructions :
+	//	Takes the template regular expressions from the self::$IgnoredInstructionsTemplates, replace each string with the contents
+	//	of the self::$ReplacementConstructs array, and sets the self::$IgnoredInstructions to a regular expression that is able to
+	//	match the Postscript instructions to be removed from any text stream.
+	private function  __build_ignored_instructions ( )
+	   {
+		foreach  ( self::$IgnoredInstructionsTemplates  as  $template )
+		   {
+			$template	=  '/' .
+						str_replace ( array_keys ( self::$ReplacementConstructs ), array_values ( self::$ReplacementConstructs ), $template ) .
+					   '/msx' ;
+
+			self::$IgnoredInstructions []	=  $template ;
+		    }
+	    }
+
+
+	// __strip_useless_instructions :
+	//	Removes from a text stream all the Postscript instructions that are not meaningful for text extraction
+	//	(these are mainly shape drawing instructions).
+	private function  __strip_useless_instructions ( $data )
+	   {
+		$result		=  preg_replace ( self::$IgnoredInstructions, '', $data ) ;
+
+		return ( $result ) ;
 	    }
 
 
@@ -2971,6 +3086,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
    {
 	// Font table
 	private		$Fonts		=  [] ;
+	private		$DefaultFont	=  false ;
 	// Font mapping between a font number and an object number
 	private 	$FontMap 	=  [] ;
 
@@ -3033,6 +3149,13 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			$font_type	=  PdfTexterFont::FONT_ENCODING_WINANSI ;
 	
 		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type ) ;
+
+		// Arbitrarily set the default font to the first font encountered in the pdf file
+		if  ( $this -> DefaultFont  ===  false )
+		   {
+			reset ( $this -> Fonts ) ;
+			$this -> DefaultFont	=  key ( $this -> Fonts ) ;
+		    }
 	    }
 
 
@@ -3117,10 +3240,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		// For text contents that did not specify a font using the /Rx instruction,
 		// use the first declared font as the default font
 		if  ( $font  ==  -1 )
-		   {
-			reset ( $this -> Fonts ) ;
-			$font 	=  key ( $this -> Fonts ) ;
-		    }
+			$font	=  $this -> DefaultFont ;
 
 		if  ( isset ( $this -> Fonts [ $font ] )  &&  $this -> Fonts [ $font ] -> CharacterMap )
 		   {
@@ -3141,10 +3261,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		// For text contents that did not specify a font using the /Rx instruction,
 		// use the first declared font as the default font
 		if  ( $font  ==  -1 )
-		   {
-			reset ( $this -> Fonts ) ;
-			$font 	=  key ( $this -> Fonts ) ;
-		    }
+			$font	=  $this -> DefaultFont ;
 
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
 			return ( $this -> Fonts [ $font ] -> MapCharacter ( $ch ) ) ;
