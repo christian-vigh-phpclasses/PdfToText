@@ -595,6 +595,15 @@
 	. Removed a regular expression for reducing drawing contents size which was a little bit too greedy
 	  and caused some characters to be removed from plain text.
 
+    [Version : 1.2.34]	[Date : 2016/08/05]     [Author : CV]
+	. Reduced the number of calls to certain built-in functions (ctype_* functions)
+	. Font maps were stored using only the number part of their specification (eg, "1_0" for "/C1_0"). This
+	  led to override existing fonts using different notations (ie, "/C1_0" will override an existing font
+	  map that was declared using "/T1_0"). The consequence is that sometimes, the charater map used to
+	  translate text was not the appropriate one, hence some badly displayed characters.
+	. Fixed an "uninitialized string offset" PHP notice in the __next_token() method.
+	. Fixed some cases where too many line breaks were inserted between two lines.
+
  **************************************************************************************************************/
 
 
@@ -1036,7 +1045,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.33" ;
+	const		VERSION					=  "1.2.34" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1105,7 +1114,7 @@ class  PdfToText 	extends PdfObjectBase
 	   [
 		'%n{6} ( (c) | (cm) ) \s+',
 		'%n{4} ( (re) | (y) | (v) ) \s+',
-		'%n{3} ( (scn) | (SCN) | (r) | (rg) ) \s+',
+		'%n{3} ( (scn) | (SCN) | (r) | (rg) | (RG) ) \s+',
 		'%n{2} ( (m) | (l) ) \s+',
 		'%n ( (w) | (M) | (g) | (G) | (J) ) \s+',
 		'\b ( (BDC) | (BT) | (ET) | (EMC) ) \s+',
@@ -2596,7 +2605,7 @@ class  PdfToText 	extends PdfObjectBase
 			    }
 
 			// Floating-point number : push it onto the stack
-			if  ( ctype_digit ( $token [0] )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+'  ||  $token [0]  ==  '.' )
+			if  ( ( $token [0]  >=  '0'  &&  $token [0]  <=  '9' )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+'  ||  $token [0]  ==  '.' )
 				$number_stack []	=  $token ;
 			// 'Tm' instruction : return a "goto" instruction with the x and y coordinates
 			else if  ( $token  ==  'Tm' )
@@ -2628,7 +2637,7 @@ class  PdfToText 	extends PdfObjectBase
 				return ( [ 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0], 'token' => $token ] ) ;
 			// Position to next line
 			else if  ( $token  ==  'T*' )
-				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => false ] ) ;
 			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return a "newline" instruction
 			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
 			// appear in the pdf file (which is likely to be different from their position on a graphic screen).
@@ -2672,31 +2681,18 @@ class  PdfToText 	extends PdfObjectBase
 			// "/R" : Specifies the font to be used for the next text output(s)
 			else if  ( ! strncasecmp ( $token, '/R', 2 ) )
 			   {
-				$resource 	=  ( integer ) substr ( $token, 2 ) ;
-
-				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $resource, 'token' => $token ] ) ;
+				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $token, 'token' => $token ] ) ;
 			    }
 		   	// "/F" : Specifies the font to be used for the next text output(s), using an indirect id
-			else if  ( ! strncasecmp ( $token, '/F', 2 )  ||  ! strncasecmp ( $token, '/C', 2 )  ||  ! strncasecmp ( $token, '/T', 2 ) )
+			else if  ( ! strncasecmp ( $token, '/F', 2 )  ||  ! strncasecmp ( $token, '/C', 2 )  ||  ! strncasecmp ( $token, '/TT', 2 )  ||  ! strncasecmp ( $token, '/T', 2 ) )
 			   {
-				// Special case for /TTx font specifications
-				if  ( $token [2]  ==  'T' )
-					$length		=  3 ;
-				else
-					$length		=  2 ;
-
-				$resource 	=  substr ( $token, $length ) ;
-
-				if  ( $resource [0]  ==  '-' )
-					$resource	=  substr ( $resource, 1 ) ;
-
-				if  ( isset ( $this -> MapIdBuffer [ $resource ] ) )
-					$id	=   $this -> MapIdBuffer [ $resource ] ;
+				if  ( isset ( $this -> MapIdBuffer [ $token ] ) )
+					$id	=   $this -> MapIdBuffer [ $token ] ;
 				else
 				   {
-					$id 	=  $this -> FontTable -> GetFontByMapId ( $resource ) ;
+					$id 	=  $this -> FontTable -> GetFontByMapId ( $token ) ;
 
-					$this -> MapIdBuffer [ $resource ]	=  $id ;
+					$this -> MapIdBuffer [ $token ]	=  $id ;
 				    }
 
 				return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id, 'token' => $token ] ) ;
@@ -2719,7 +2715,7 @@ class  PdfToText 	extends PdfObjectBase
 	function  __next_token ( $data, $data_length, $index )
 	   {
 		// Skip spaces
-		while  ( $index  <  $data_length  &&  ctype_space ( $data [ $index ] ) )
+		while  ( $index  <  $data_length  &&  ( $data [ $index ]  ==  ' '  ||  $data [ $index ]  ==  "\t"  ||  $data [ $index ]  ==  "\r"  ||  $data [ $index ]  ==  "\n" ) )
 			$index ++ ;
 
 		// End of input
@@ -2872,19 +2868,30 @@ class  PdfToText 	extends PdfObjectBase
 		   		$index ++ ;
 		   		$value 	=  $ch ;
 
-		   		if ( ctype_digit ( $ch )  ||  $ch  ==  '-'  ||  $ch  ==  '+' )
-		   		   {
-		   			while  ( $index  <  $data_length  &&
-		   					( ctype_digit ( $data [ $index ] )  ||  $data [ $index ]  ==  '.' ) )
-		   				$value 	.=  $data [ $index ++ ] ;
-		   		    }
-		   		else if  ( ctype_alpha ( $ch )  ||  $ch  ==  '/' )
-		   		   {
-					while  ( $index  <  $data_length  &&  
-						( ctype_alnum ( $data [ $index ] )  ||  
-							$data [ $index ]  ==  '*'  ||  $data [ $index ]  ==  '-'  ||  $data [ $index ]  ==  '_' ) )
-						$value 	.=  $data [ $index ++ ] ;
-		   		    }
+				if  ( isset ( $data [ $index ] ) )
+				   {
+		   			if ( ( $ch  >=  '0'  &&  $ch  <=  '9' )  ||  $ch  ==  '-'  ||  $ch  ==  '+' )
+		   			   {
+		   				while  ( $index  <  $data_length  &&
+		   						( ( $data [ $index ]  >=  '0'  &&  $data [ $index ]  <=  '9' )  ||  $data [ $index ]  ==  '.' ) )
+		   					$value 	.=  $data [ $index ++ ] ;
+		   			    }
+		   			else if  ( ( ( $ch  >=  'A'  &&  $ch  <=  'Z' )  ||  ( $ch  >=  'a'  &&  $ch  <=  'z' ) )  ||  $ch  ==  '/' )
+		   			   {
+						$ch	=  $data [ $index ] ;
+
+						while  ( $index  <  $data_length  &&  
+							( ( ( $ch  >=  'A'  &&  $ch  <=  'Z' )  ||  ( $ch  >=  'a'  &&  $ch  <=  'z' )  ||  ( $ch  >=  '0'  &&  $ch  <=  '9' ) )  ||  
+								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_' ) )
+						   {
+							$value 	.=  $ch ;
+							$index ++ ;
+
+							if  ( isset ( $data [ $index ] ) )
+								$ch	=  $data [ $index ] ;
+						    }
+		   			    }
+				    }
 
 		   		return ( [ $value, $index ] ) ;
 		    }
@@ -2919,7 +2926,7 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				$value	=  '' ;
 
-				while  ( $i  <  $length  &&  ( ctype_digit ( $array [$i] )  ||  $array [$i]  ==  '-'  ||  $array [$i]  ==  '+' ) )
+				while  ( $i  <  $length  &&  ( ( $array [$i]  >=  '0'  &&  $array [$i]  <=  '9' )  ||  $array [$i]  ==  '-'  ||  $array [$i]  ==  '+' ) )
 					$value	.=  $array [$i++] ;
 
 				$offsets []	=  ( integer ) $value ;
@@ -3231,17 +3238,20 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//		<</C0_0 5 0 R
 	public function  AddFontMap ( $object_id, $object_data )
 	   {
-		if  ( preg_match_all ( '#/ ( (F) || (TT) ) (?P<font> \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		// The same object can hold different notations for font associations
+		if  ( preg_match_all ( '# (?P<font> / ( (F) || (TT) ) \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
 		    }
-		else if  ( preg_match_all ( '#/f-(?P<font> \d+ - \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+
+		if  ( preg_match_all ( '# (?P<font> /f- \d+ - \d+ ) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
 		    }
-		else if  ( preg_match_all ( '#/[CT] (?P<font> \d+ _ \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+
+		if  ( preg_match_all ( '# (?P<font> /[CT] \d+ _ \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
