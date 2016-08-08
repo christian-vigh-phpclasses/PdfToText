@@ -617,6 +617,20 @@
 	. Bug fix : the __next_token() function was also returning the next character after character codes
 	  specified within angle brackets ("<>"), which caused extra NUL values to be displayed in the output.
 
+    [Version : 1.2.37]	[Date : 2016/08/08]     [Author : CV]
+	. (optimization) Checking against header or footer data is now made in the ExtractText() method, instead
+	  of __next_instruction(), which caused too many calls to the preg_match() function.
+	. Added the IsPageHeaderOrFooter() method.
+	. Bug fix : Positive offsets between two text groups were unduly taken into account for the number of 
+	  spaces to be inserted between those groups (negative offsets add spacing, while positive ones are 
+	  subtracted from the current x-position).
+	. Bug fix : Space insertion for relative x-positioning did not take into account the last x position.
+
+http://www.fpdf.org/en/script/script37.php
+https://pear.php.net/package/Crypt_RC4/docs/latest/__filesource/fsource_Crypt__Crypt_RC4-1.0.3CryptRc4.php.html
+http://www.phpclasses.org/package/4957-PHP-Encrypt-and-decrypt-data-with-RC4-algorithm.html#view_files/files/25139
+
+
  **************************************************************************************************************/
 
 
@@ -789,6 +803,31 @@ abstract class  PdfObjectBase		// extends  Object
 	protected function  IsObjectStream ( $object_data ) 
 	   {
 		if  ( preg_match ( '#/Type \s* /ObjStm#isx', $object_data ) )
+			return ( true ) ;
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        IsPageHeaderOrFooter - Check if the specified object contents denote a text stream.
+
+	    PROTOTYPE
+	        $status		=  $this -> IsText ( $object_data, $decoded_stream_data ) ;
+
+	    DESCRIPTION
+	        Checks if the specified decoded stream contents denotes header or footer data.
+
+	    PARAMETERS
+	        $stream_data (string) -
+	                Decoded stream contents.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsPageHeaderOrFooter ( $stream_data )
+	   {
+		if  ( preg_match ( '#/Type/Pagination/Subtype/((Header)|(Footer))#ix', $stream_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -1058,7 +1097,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.36" ;
+	const		VERSION					=  "1.2.37" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1474,7 +1513,9 @@ class  PdfToText 	extends PdfObjectBase
 				// Plain text (well, in fact PDF drawing instructions)
 				else if  ( $this -> IsText ( $object_data, $decoded_stream_data ) )
 				   {
-					$text [ $object_number ]	=  $decoded_stream_data ;
+					// We currently ignore page headers and footers
+					if  ( ! $this -> IsPageHeaderOrFooter ( $decoded_stream_data ) )
+						$text [ $object_number ]	=  $decoded_stream_data ;
 				    }
 				else if  ( self::$DEBUG  >  1 )
 					echo "\n----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
@@ -2258,6 +2299,7 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Y-coordinate of the last seen "Tm" instruction
 		$last_goto_y 			=  0 ;
+		$last_goto_x			=  0 ;
 
 		// Y-coordinate of the last seen "Td" or "TD" relative positioning instruction
 		$last_relative_goto_y		=  0 ;
@@ -2270,6 +2312,9 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Current font size
 		$current_font_size 		=  0 ;
+
+		// Various pre-computed variables
+		$separator_length		=  strlen ( $this -> Separator ) ;
 
 		// Current font map width, in bytes, plus a flag saying whether the current font is mapped or not
 		if  ( isset ( $this -> FontInformationBuffer [ $current_font ] ) )
@@ -2320,13 +2365,14 @@ class  PdfToText 	extends PdfObjectBase
 					if  ( $instruction [ 'relative' ] )
 					   {
 						// Try to put a separator if the x coordinate is non-zero
-						if  ( $instruction [ 'x' ]  >=  $current_font_size )
+						if  ( $instruction [ 'x' ] - $last_goto_x  >=  $current_font_size )
 							$result		.=  $this -> Separator ;
 
 						$discard_last_instruction	=  true ;
 						$extra_newlines			=  0 ; 
 						$use_same_line			=  ( ( $last_relative_goto_y - abs ( $instruction  [ 'y' ] ) )  <=  $current_font_size ) ;
 						$last_relative_goto_y		=  abs ( $instruction [ 'y' ] ) ;
+						$last_goto_x			=  $instruction [ 'x' ] ;
 						
 						break ;
 					    }
@@ -2439,7 +2485,7 @@ class  PdfToText 	extends PdfObjectBase
 						// the current result does not end with it
 						if  ( $same_separators )
 						   {
-							if  ( $this -> Separator  !=  ''  &&  substr ( $result, - strlen ( $this -> Separator ) )  !=  $this -> BlockSeparator )
+							if  ( $this -> Separator  !=  ''  &&  substr ( $result, - $separator_length )  !=  $this -> BlockSeparator )
 								$result		.=  $this -> BlockSeparator ;
 						    }
 						else
@@ -2539,7 +2585,7 @@ class  PdfToText 	extends PdfObjectBase
 
 							// Handle offsets between blocks of characters
 							if  ( isset ( $instruction [ 'offsets' ] [ $value_index ] )  &&
-									abs ( $instruction [ 'offsets' ] [ $value_index ] )  >  $this -> MinSpaceWidth )
+									- ( $instruction [ 'offsets' ] [ $value_index ] )  >  $this -> MinSpaceWidth )
 								$result		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
 
 							$value_index ++ ;
@@ -2635,35 +2681,11 @@ class  PdfToText 	extends PdfObjectBase
 		// Holds the floating-point values encountered so far
 		$number_stack 	=  [] ;
 
-		// Used to ignore everything until the last "ET" token (for page headers and footers)
-		$ignore		=  false ;
-
 		// Loop through the stream of tokens
 		while  ( ( $part = $this -> __next_token ( $data, $data_length, $index ) )  !==  false )
 		   {
 			$token 		=  $part [0] ;
 			$next_index 	=  $part [1] ;
-
-			// If we are in a page header or footer definition, ignore everything
-			if  ( $ignore )  
-			   {
-				if  ( $token  ==  'ET' )
-					$ignore		=  false ;
-
-				$index		=  $next_index ;
-				continue ;
-			    }
-			// Otherwise, try to see if we're in a page header or footer description, something like :
-			//	<</Attached [/Top]/Type/Pagination/Subtype/Header>>
-			// or :
-			//	<</Attached [/Bottom]/Type/Pagination/Subtype/Footer>>
-			else if  ( preg_match ( '#/Type/Pagination/Subtype/((Header)|(Footer))#ix', $token ) )
-			   {
-				$ignore		=  true ;
-				$index		=  $next_index ;
-
-				continue ;
-			    }
 
 			// Floating-point number : push it onto the stack
 			if  ( ( $token [0]  >=  '0'  &&  $token [0]  <=  '9' )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+'  ||  $token [0]  ==  '.' )
@@ -2920,9 +2942,7 @@ class  PdfToText 	extends PdfObjectBase
 		   			if  ( $pos  ===  false )
 		   				return ( false ) ;
 
-		   			$token 	=  substr ( $data, $index, $pos - $index + 2 ) ;
-
-		   			return ( [ $token, $pos + 2 ] ) ;
+		   			return ( [ substr ( $data, $index, $pos - $index + 2 ), $pos + 2 ] ) ;
 		   		    }
 		   		else
 		   		   {
@@ -2931,9 +2951,7 @@ class  PdfToText 	extends PdfObjectBase
 		   			if  ( $pos  ===  false )
 		   				return ( false ) ;
 
-		   			$token 	=  substr ( $data, $index, $pos - $index + 1 ) ;
-
-		   			return ( [ $token, $pos + 1 ] ) ;
+		   			return ( [ substr ( $data, $index, $pos - $index + 1 ), $pos + 1 ] ) ;
 		   		   }
 
 			// Tick character : consider it as a keyword, in the same way as the "TJ" or "Tj" keywords
