@@ -609,6 +609,14 @@
 	. (optimization) Removed useless calls to str_pad(), strcasecmp() and substr().
 	. Optimized the __next_token() method
 
+    [Version : 1.2.36]	[Date : 2016/08/07]     [Author : CV]
+	. Added the PDFOPT_NO_HYPHENATED_WORDS option to remove hyphens that break words on two lines.
+	. (optimization) Introduced a static array giving the character class for some characters 
+	  (alpha, digit, etc.)
+	. Bug fix : characters present in plain text were translated to Ascii NUL
+	. Bug fix : the __next_token() function was also returning the next character after character codes
+	  specified within angle brackets ("<>"), which caused extra NUL values to be displayed in the output.
+
  **************************************************************************************************************/
 
 
@@ -1050,7 +1058,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.35" ;
+	const		VERSION					=  "1.2.36" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1059,6 +1067,7 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_GET_IMAGE_DATA			=  0x0002 ;		// Retrieve raw image data in the $ths -> ImageData array
 	const		PDFOPT_DECODE_IMAGE_DATA		=  0x0004 ;		// Creates a jpeg resource for each image
 	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x0008 ;		// Ignore text leading values
+	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x0010 ;		// Join hyphenated words that are split on two lines
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -1150,6 +1159,47 @@ class  PdfToText 	extends PdfObjectBase
 	// Map id buffer - for avoiding unneccesar calls to GetFontByMapId
 	private		$MapIdBuffer		=  [] ;
 
+	// Regex used for removing hyphens - we have to take care of different line endings : "\n" for Unix, "\r\n"
+	// for Windows, and "\r" for pure Mac files.
+	// Note that we replace an hyphen followed by an end-of-line then by non-space characters with the non-space
+	// characters, so the word gets joined on the same line. Spaces after the end of the word (on the next line)
+	// are removed, in order for the next word to appear at the beginning of the second line.
+	private static $RemoveHyphensRegex	=  '#
+							( 
+								  -
+								  [ \t]* ( (\r\n) | \n | \r )+ [ \t\r\n]*
+							 )
+							([^ \t\r\n]+)
+							\s*
+						    #msx' ;
+
+	// A subset of a character classification array that avoids to many calls to the ctype_* functions or too many
+	// character comparisons.
+	// This array is used only for highly sollicited parts of code
+	const	CTYPE_ALPHA		=  0x01 ;
+	const	CTYPE_DIGIT		=  0x02 ;
+	const	CTYPE_ALNUM		=  0x03 ;
+	const	CTYPE_XDIGIT		=  0x04 ;
+
+	private static  $CharacterClass		=  
+	   [
+		'a' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'b' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'c' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
+		'd' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'e' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'f' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
+		'g' => self::CTYPE_ALNUM, 'h' => self::CTYPE_ALNUM, 'i' => self::CTYPE_ALNUM, 'j' => self::CTYPE_ALNUM, 'k' => self::CTYPE_ALNUM, 'l' => self::CTYPE_ALNUM, 
+		'm' => self::CTYPE_ALNUM, 'n' => self::CTYPE_ALNUM, 'o' => self::CTYPE_ALNUM, 'p' => self::CTYPE_ALNUM, 'q' => self::CTYPE_ALNUM, 'r' => self::CTYPE_ALNUM, 
+		's' => self::CTYPE_ALNUM, 't' => self::CTYPE_ALNUM, 'u' => self::CTYPE_ALNUM, 'v' => self::CTYPE_ALNUM, 'w' => self::CTYPE_ALNUM, 'x' => self::CTYPE_ALNUM, 
+		'y' => self::CTYPE_ALNUM, 'z' => self::CTYPE_ALNUM, 
+		'A' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'B' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'C' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
+		'D' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'E' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'F' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
+		'G' => self::CTYPE_ALNUM, 'H' => self::CTYPE_ALNUM, 'I' => self::CTYPE_ALNUM, 'J' => self::CTYPE_ALNUM, 'K' => self::CTYPE_ALNUM, 'L' => self::CTYPE_ALNUM, 
+		'M' => self::CTYPE_ALNUM, 'N' => self::CTYPE_ALNUM, 'O' => self::CTYPE_ALNUM, 'P' => self::CTYPE_ALNUM, 'Q' => self::CTYPE_ALNUM, 'R' => self::CTYPE_ALNUM, 
+		'S' => self::CTYPE_ALNUM, 'T' => self::CTYPE_ALNUM, 'U' => self::CTYPE_ALNUM, 'V' => self::CTYPE_ALNUM, 'W' => self::CTYPE_ALNUM, 'X' => self::CTYPE_ALNUM, 
+		'Y' => self::CTYPE_ALNUM, 'Z' => self::CTYPE_ALNUM, 
+		'0' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '1' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '2' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
+		'3' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '4' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '5' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
+		'6' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '7' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '8' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
+		'9' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
+	    ] ;
 
 	/*--------------------------------------------------------------------------------------------------------------
 
@@ -1466,8 +1516,12 @@ class  PdfToText 	extends PdfObjectBase
 		// Build the page locations (ie, starting and ending offsets)
 		$offset		=  0 ;
 
-		foreach  ( $this -> Pages  as  $page )
+		foreach  ( $this -> Pages  as  &$page )
 		   {
+			// If hyphenated words are unwanted, then remove them
+			if  ( $this -> Options &  self::PDFOPT_NO_HYPHENATED_WORDS )
+				$page	=  preg_replace ( self::$RemoveHyphensRegex, '$4$2', $page ) ;
+
 			$length				 =  strlen ( $page ) ;
 			$this -> PageLocations []	 =  [ 'start' => $offset, 'end' => $offset + $length - 1 ] ;
 			$offset				+=  $length ;
@@ -2531,7 +2585,7 @@ class  PdfToText 	extends PdfObjectBase
 										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
 									else
 									   {
-										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, ord ( $ch ) ) ;
 										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]	=  $newchar ;
 									    }
 
@@ -2668,7 +2722,7 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				$ch	=  $token [1] ;
 
-				if  ( ( $ch  >=  '0'  &&  $ch  <=  '9' )  ||  ( $ch  >=  'A'  &&  $ch  <=  'F' )  ||  ( $ch  >=  'a'  &&  $ch  <=  'f' ) )
+				if  ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass & self::CTYPE_ALNUM ) )
 				   {
 			   		$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
 			   		$instruction	=  [ 'instruction' => 'text', 'next' => $next_index, 'values' => [ $token ], 'token' => $token ] ;
@@ -2699,10 +2753,16 @@ class  PdfToText 	extends PdfObjectBase
 				   {
 					// "/R" : specifies directly a font object describing the font
 					case	'R' : case 'r' :
-						if  ( $ch  ==  'R'  ||  $ch  ==  'r' )
-							return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $token, 'token' => $token ] ) ;
+						if  ( isset ( $this -> MapIdBuffer [ $token ] ) )
+							$id	=   $this -> MapIdBuffer [ $token ] ;
+						else
+						   {
+							$id 	=  $this -> FontTable -> GetFontByMapId ( $token ) ;
 
-						break ;
+							$this -> MapIdBuffer [ $token ]	=  $id ;
+						    }
+
+						return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id, 'token' => $token ] ) ;
 
 					// Other indirect references : "/Fx", "/fx-y", "/TTx", "/Tx"
 					case	'T' :  case  't' :
@@ -2851,7 +2911,7 @@ class  PdfToText 	extends PdfObjectBase
 			// A construction of the form : "<< something >>", or a unicode character
 		   	case 	'<' :
 				if  ( ! isset ( $data [ $index + 1 ] ) )
-					$ch2	=  $data [ $index + 1 ] ;
+					return ( false ) ;
 
 		   		if (  $data [ $index + 1 ]  ==  '<' )
 		   		   {
@@ -2871,7 +2931,7 @@ class  PdfToText 	extends PdfObjectBase
 		   			if  ( $pos  ===  false )
 		   				return ( false ) ;
 
-		   			$token 	=  substr ( $data, $index, $pos - $index + 2 ) ;
+		   			$token 	=  substr ( $data, $index, $pos - $index + 1 ) ;
 
 		   			return ( [ $token, $pos + 1 ] ) ;
 		   		   }
@@ -2887,18 +2947,21 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( isset ( $data [ $index ] ) )
 				   {
-		   			if ( ( $ch  >=  '0'  &&  $ch  <=  '9' )  ||  $ch  ==  '-'  ||  $ch  ==  '+' )
+		   			if ( ( isset ( self::$CharacterClass [ $ch ]  ) &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_DIGIT ) )  ||  
+							$ch  ==  '-'  ||  $ch  ==  '+' )
 		   			   {
 		   				while  ( $index  <  $data_length  &&
-		   						( ( $data [ $index ]  >=  '0'  &&  $data [ $index ]  <=  '9' )  ||  $data [ $index ]  ==  '.' ) )
+		   						( ( isset ( self::$CharacterClass [ $data [ $index ] ]  ) &&  ( self::$CharacterClass [ $data [ $index ] ] & self::CTYPE_DIGIT )  ||  
+									$data [ $index ]  ==  '.' ) ) )
 		   					$value 	.=  $data [ $index ++ ] ;
 		   			    }
-		   			else if  ( ( ( $ch  >=  'A'  &&  $ch  <=  'Z' )  ||  ( $ch  >=  'a'  &&  $ch  <=  'z' ) )  ||  $ch  ==  '/' )
+		   			else if  ( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALPHA ) )  ||  
+							$ch  ==  '/' )
 		   			   {
 						$ch	=  $data [ $index ] ;
 
 						while  ( $index  <  $data_length  &&  
-							( ( ( $ch  >=  'A'  &&  $ch  <=  'Z' )  ||  ( $ch  >=  'a'  &&  $ch  <=  'z' )  ||  ( $ch  >=  '0'  &&  $ch  <=  '9' ) )  ||  
+							( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALNUM ) )  ||  
 								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_' ) )
 						   {
 							$value 	.=  $ch ;
@@ -3114,6 +3177,7 @@ class  PdfToText 	extends PdfObjectBase
 	   {
 		$length 	=  strlen ( $text ) ;
 		$result 	=  '' ;
+		$ord0		=  ord ( 0 ) ;
 
 		for  ( $i = 0 ; $i  <  $length ; $i ++ )
 		   {
@@ -3134,12 +3198,12 @@ class  PdfToText 	extends PdfObjectBase
 						// Octal escape notation 
 						if  ( $nch  >=  '0'  &&  $nch  <=  '7' )
 						   {
-							$ord	=  ord ( $nch ) - ord ( '0' ) ;
+							$ord	=  ord ( $nch ) - $ord0 ;
 							$i ++ ;
 
 							while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
 							   {
-								$ord	=  ( $ord * 8 ) + ord ( $text [$i] ) - ord ( '0' ) ;
+								$ord	=  ( $ord * 8 ) + ord ( $text [$i] ) - $ord0 ;
 								$i ++ ;
 							    }
 
