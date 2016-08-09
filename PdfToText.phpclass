@@ -626,6 +626,12 @@
 	  subtracted from the current x-position).
 	. Bug fix : Space insertion for relative x-positioning did not take into account the last x position.
 
+    [Version : 1.2.38]	[Date : 2016/08/09]     [Author : CV]
+	. Bug fix : The PdfTexterFont::MapCharacter() method was not modified after the transition to a better
+	  Unicode-to-UTF8 translation ; it was still accepting characters, while it should have been accepting 
+	  integer values (character codes).
+	. Bug fix : unwanted headers and footers were not recognized appropriately in some cases.
+
 http://www.fpdf.org/en/script/script37.php
 https://pear.php.net/package/Crypt_RC4/docs/latest/__filesource/fsource_Crypt__Crypt_RC4-1.0.3CryptRc4.php.html
 http://www.phpclasses.org/package/4957-PHP-Encrypt-and-decrypt-data-with-RC4-algorithm.html#view_files/files/25139
@@ -827,7 +833,9 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsPageHeaderOrFooter ( $stream_data )
 	   {
-		if  ( preg_match ( '#/Type/Pagination/Subtype/((Header)|(Footer))#ix', $stream_data ) )
+		if  ( preg_match ( '#/Type \s* /Pagination \s* /Subtype \s*/((Header)|(Footer))#ix', $stream_data ) )
+			return ( true ) ;
+		else if  ( preg_match ( '#/Attached \s* \[ .*? /Top [^]]#ix', $stream_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -1097,7 +1105,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.37" ;
+	const		VERSION					=  "1.2.38" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2627,7 +2635,9 @@ class  PdfToText 	extends PdfObjectBase
 								   {
 									$ch	=  $text [$i] ;
 
-									if  ( isset  ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+									if  ( ord ( $ch )  <  127 )
+										$newchar	=  $ch ;
+									else if  ( isset  ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
 										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
 									else
 									   {
@@ -3659,20 +3669,16 @@ class  PdfTexterFont		extends PdfObjectBase
 			return ( $this -> CharacterMap [ $ch ] ) ;
 		else if  ( $this -> FontType  ==  self::FONT_ENCODING_WINANSI )
 		   {
-			$ord	=  ord ( $ch ) ;
-
-			if  ( isset ( self::$WinAnsiCharacterMap [ $ord ] ) )
-				return ( $this -> CodePointToUtf8 ( self::$WinAnsiCharacterMap [ $ord ] ) ) ;
+			if  ( isset ( self::$WinAnsiCharacterMap [ $ch ] ) )
+				return ( $this -> CodePointToUtf8 ( self::$WinAnsiCharacterMap [ $ch ] ) ) ;
 		    }  
 		else if  ( $this -> FontType  ==  self::FONT_ENCODING_MAC_ROMAN )
 		   {
-			$ord	=  ord ( $ch ) ;
-
-			if  ( isset ( self::$MacRomanCharacterMap [ $ord ] ) )
-				return ( $this -> CodePointToUtf8 ( self::$MacRomanCharacterMap [ $ord ] ) ) ;
+			if  ( isset ( self::$MacRomanCharacterMap [ $ch ] ) )
+				return ( $this -> CodePointToUtf8 ( self::$MacRomanCharacterMap [ $ch ] ) ) ;
 		    }  
 
-		return ( $this -> CodePointToUtf8 ( ord ( $ch ) ) ) ;
+		return ( $this -> CodePointToUtf8 ( $ch ) ) ;
 	    }
     }
 
