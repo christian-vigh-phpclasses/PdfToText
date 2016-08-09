@@ -639,6 +639,10 @@
 	  page numbers (defined in the PageMap object property) and use the associated text object ids to 
 	  extract their contents.
 
+    [Version : 1.2.40]	[Date : 2016/08/09]     [Author : CV]
+	. Changed the way the PdfToText::$CharacterClass array is initialized. It was using constructs such as :
+		[ 'a' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, ... ]
+	  which is authorized only for PHP versions >= 5.6.
 
  **************************************************************************************************************/
 
@@ -1226,30 +1230,29 @@ class  PdfToText 	extends PdfObjectBase
 	// A subset of a character classification array that avoids to many calls to the ctype_* functions or too many
 	// character comparisons.
 	// This array is used only for highly sollicited parts of code
-	const	CTYPE_ALPHA		=  0x01 ;
-	const	CTYPE_DIGIT		=  0x02 ;
-	const	CTYPE_ALNUM		=  0x03 ;
-	const	CTYPE_XDIGIT		=  0x04 ;
+	const	CTYPE_ALPHA		=  0x01 ;		// Letter
+	const	CTYPE_DIGIT		=  0x02 ;		// Digit
+	const	CTYPE_ALNUM		=  0x03 ;		// Letter or digit
+	const	CTYPE_XDIGIT		=  0x04 ;		// Hex digit
+	const	CTYPE_XALNUM		=  0x07 ;		// A synonym for CTYPE_ALPHA | CTYPE_DIGIT | CTYPE_XDIGIT
+	const	CTYPE_XNUM		=  0x06 ;		// A synonym for CTYPE_DIGIT | CTYPE_XDIGIT
 
 	private static  $CharacterClass		=  
 	   [
-		'a' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'b' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'c' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
-		'd' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'e' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'f' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
-		'g' => self::CTYPE_ALNUM, 'h' => self::CTYPE_ALNUM, 'i' => self::CTYPE_ALNUM, 'j' => self::CTYPE_ALNUM, 'k' => self::CTYPE_ALNUM, 'l' => self::CTYPE_ALNUM, 
-		'm' => self::CTYPE_ALNUM, 'n' => self::CTYPE_ALNUM, 'o' => self::CTYPE_ALNUM, 'p' => self::CTYPE_ALNUM, 'q' => self::CTYPE_ALNUM, 'r' => self::CTYPE_ALNUM, 
-		's' => self::CTYPE_ALNUM, 't' => self::CTYPE_ALNUM, 'u' => self::CTYPE_ALNUM, 'v' => self::CTYPE_ALNUM, 'w' => self::CTYPE_ALNUM, 'x' => self::CTYPE_ALNUM, 
-		'y' => self::CTYPE_ALNUM, 'z' => self::CTYPE_ALNUM, 
-		'A' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'B' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'C' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
-		'D' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'E' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 'F' => self::CTYPE_ALNUM | self::CTYPE_XDIGIT, 
-		'G' => self::CTYPE_ALNUM, 'H' => self::CTYPE_ALNUM, 'I' => self::CTYPE_ALNUM, 'J' => self::CTYPE_ALNUM, 'K' => self::CTYPE_ALNUM, 'L' => self::CTYPE_ALNUM, 
-		'M' => self::CTYPE_ALNUM, 'N' => self::CTYPE_ALNUM, 'O' => self::CTYPE_ALNUM, 'P' => self::CTYPE_ALNUM, 'Q' => self::CTYPE_ALNUM, 'R' => self::CTYPE_ALNUM, 
-		'S' => self::CTYPE_ALNUM, 'T' => self::CTYPE_ALNUM, 'U' => self::CTYPE_ALNUM, 'V' => self::CTYPE_ALNUM, 'W' => self::CTYPE_ALNUM, 'X' => self::CTYPE_ALNUM, 
-		'Y' => self::CTYPE_ALNUM, 'Z' => self::CTYPE_ALNUM, 
-		'0' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '1' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '2' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
-		'3' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '4' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '5' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
-		'6' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '7' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, '8' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
-		'9' => self::CTYPE_DIGIT | self::CTYPE_XDIGIT, 
+		'a' => self::CTYPE_XALNUM, 'b' => self::CTYPE_XALNUM, 'c' => self::CTYPE_XALNUM, 'd' => self::CTYPE_XALNUM, 'e' => self::CTYPE_XALNUM, 'f' => self::CTYPE_XALNUM, 
+		'g' => self::CTYPE_ALNUM , 'h' => self::CTYPE_ALNUM , 'i' => self::CTYPE_ALNUM , 'j' => self::CTYPE_ALNUM , 'k' => self::CTYPE_ALNUM , 'l' => self::CTYPE_ALNUM , 
+		'm' => self::CTYPE_ALNUM , 'n' => self::CTYPE_ALNUM , 'o' => self::CTYPE_ALNUM , 'p' => self::CTYPE_ALNUM , 'q' => self::CTYPE_ALNUM , 'r' => self::CTYPE_ALNUM , 
+		's' => self::CTYPE_ALNUM , 't' => self::CTYPE_ALNUM , 'u' => self::CTYPE_ALNUM , 'v' => self::CTYPE_ALNUM , 'w' => self::CTYPE_ALNUM , 'x' => self::CTYPE_ALNUM , 
+		'y' => self::CTYPE_ALNUM , 'z' => self::CTYPE_ALNUM , 
+		'A' => self::CTYPE_XALNUM, 'B' => self::CTYPE_XALNUM, 'C' => self::CTYPE_XALNUM, 'D' => self::CTYPE_XALNUM, 'E' => self::CTYPE_XALNUM, 'F' => self::CTYPE_XALNUM, 
+		'G' => self::CTYPE_ALNUM , 'H' => self::CTYPE_ALNUM , 'I' => self::CTYPE_ALNUM , 'J' => self::CTYPE_ALNUM , 'K' => self::CTYPE_ALNUM , 'L' => self::CTYPE_ALNUM , 
+		'M' => self::CTYPE_ALNUM , 'N' => self::CTYPE_ALNUM , 'O' => self::CTYPE_ALNUM , 'P' => self::CTYPE_ALNUM , 'Q' => self::CTYPE_ALNUM , 'R' => self::CTYPE_ALNUM , 
+		'S' => self::CTYPE_ALNUM , 'T' => self::CTYPE_ALNUM , 'U' => self::CTYPE_ALNUM , 'V' => self::CTYPE_ALNUM , 'W' => self::CTYPE_ALNUM , 'X' => self::CTYPE_ALNUM , 
+		'Y' => self::CTYPE_ALNUM , 'Z' => self::CTYPE_ALNUM , 
+		'0' => self::CTYPE_XNUM  , '1' => self::CTYPE_XNUM  , '2' => self::CTYPE_XNUM  , '3' => self::CTYPE_XNUM  , '4' => self::CTYPE_XNUM  , '5' => self::CTYPE_XNUM  , 
+		'6' => self::CTYPE_XNUM  , '7' => self::CTYPE_XNUM  , '8' => self::CTYPE_XNUM  , '9' => self::CTYPE_XNUM
 	    ] ;
+
 
 	/*--------------------------------------------------------------------------------------------------------------
 
