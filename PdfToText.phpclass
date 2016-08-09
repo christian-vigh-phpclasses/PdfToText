@@ -632,9 +632,12 @@
 	  integer values (character codes).
 	. Bug fix : unwanted headers and footers were not recognized appropriately in some cases.
 
-http://www.fpdf.org/en/script/script37.php
-https://pear.php.net/package/Crypt_RC4/docs/latest/__filesource/fsource_Crypt__Crypt_RC4-1.0.3CryptRc4.php.html
-http://www.phpclasses.org/package/4957-PHP-Encrypt-and-decrypt-data-with-RC4-algorithm.html#view_files/files/25139
+    [Version : 1.2.39]	[Date : 2016/08/09]     [Author : CV]
+	. Entirely rewrote the PdfTexterPageMap class, which was incorrectly handling nested page descriptions.
+	. In the Load() method, changed the way text is extracted from objects : instead of starting from the
+	  list of available text objects and trying to retrieve their page number, the method now loops through
+	  page numbers (defined in the PageMap object property) and use the associated text object ids to 
+	  extract their contents.
 
 
  **************************************************************************************************************/
@@ -1105,7 +1108,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.38" ;
+	const		VERSION					=  "1.2.39" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1541,25 +1544,25 @@ class  PdfToText 	extends PdfObjectBase
 		// Sometimes it may happen that text drawing instructions do not set a font at all (PdfPro for example)
 		$current_font	=  -1 ;
 
+		// Build the page catalog
 		$this -> Pages	=  [] ;
-		$this -> PageMap -> MapObjects ( ) ;
+		$this -> PageMap -> MapObjects ( $text ) ;
 
-		// Extract text from the collected TEXT elements
-		foreach  ( $text  as  $id => $str )
+		// Extract text from the collected text elements
+		foreach ( $this -> PageMap -> Pages as  $page_number => $page_objects )
 		   {
-			$page_number	=  $this -> PageMap [ $id ] ;
+			$this -> Pages [ $page_number ]		=  '' ;
 
-			if  ( $page_number  !==  false )
+			foreach  ( $page_objects  as  $page_object ) 
 			   {
-				$object_text	=  $this -> ExtractText ( $id, $str, $current_font ) ;
-
-				if  ( isset ( $this -> Pages [ $page_number ] ) )
-					$this -> Pages [ $page_number ]	.=  $object_text ;
-				else
-					$this -> Pages [ $page_number ]	 =  $object_text ;
+				if  ( isset ( $text [ $page_object ] ) )
+				   {
+					$object_text				 =  $this -> ExtractText ( $page_object, $text [ $page_object ], $current_font ) ;
+					$this -> Pages [ $page_number ]		.=  $object_text ;
+				    }
+				else if  ( self::$DEBUG  >  1 )
+					echo "\n----------------------------------- MISSING OBJECT #page_object for page #$page_number\n" ;
 			    }
-			else if  ( self::$DEBUG  >  1 )
-				echo "\n----------------------------------- OBJECT WITHOUT PAGE #$id :\n$str\n" ;
 		    }
 
 		// Build the page locations (ie, starting and ending offsets)
@@ -4371,17 +4374,21 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	One mystery is that the PDF 1.7 Reference file contains 1310 pages but only 1309 are recognized here...
 
   ==============================================================================================================*/
-class  PdfTexterPageMap		extends		PdfObjectBase	
-				implements	\ArrayAccess, \Countable
+class  PdfTexterPageMap		extends  PdfObjectBase
    {
-	// Page catalog, ie the id(s) of object(s) giving the list of objects describing pages (/Type/Catalog together with /Pages referencing an object)
-	protected	$PageCatalog		=  [] ;
-	// List of object listing the objects grouped per page (/Count and /Kids parameters)
-	protected	$PageObjects		=  [] ;
-	// List of objects grouped into one page (/Type/Page parameter, with /Contents)
-	protected 	$PageContentObjects	=  [] ;
-	// Once everything has been collected in the pdf file, the MapPages() method must be called to map object ids to page numbers
-	protected	$PageNumbers		=  [] ;
+	// Page contents are (normally) first described by a catalog
+	// Although there should be only one entry for that, this property is defined as an array, as you need to really
+	// become paranoid when handling pdf contents...
+	protected	$PageCatalogs		=  [] ;
+	// Entries that describe which page contains which text objects. Of course, these can be nested otherwise it would not be funny !
+	protected	$PageKids		=  [] ;
+	// Terminal entries : they directly give the ids of the objects belonging to a page
+	protected	$PageContents		=  [] ;
+	// Note that all the above arrays are indexed by object id and filled with the data collected by calling the Peek() Method...
+
+	// Once the Peek() method has collected page contents & object information, the MapCatalog() method is called to create this array
+	// which contains page numbers as keys, and the list of objects contained in this page as values
+	public		$Pages			=  [] ;
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -4420,25 +4427,27 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 	   {
 		// Page catalog (/Type/Catalog and /Pages x 0 R)
 		if  ( preg_match ( '#/Type \s* /Catalog#ix', $object_data )  &&  $this -> GetObjectReferences ( $object_id, $object_data, '/Pages', $references ) )
-		   {
-			$this -> PageCatalog	=  array_merge ( $this -> PageCatalog, $references ) ;
-		    }
+			$this -> PageCatalogs	=  array_merge ( $this -> PageCatalogs, $references ) ;
 		// Object listing the object numbers that give the list of objects contained in a single page (/Types/Pages and /Count x /Kids[x1 0 R ... xn 0 R]
 		else if  ( preg_match ( '#/Type \s* /Pages#ix', $object_data ) )
 		   {
 			if  ( $this -> GetObjectReferences ( $object_id, $object_data, '/Kids', $references ) )
 			   {
+				// Get kid count (knowing that sometimes, it is missing...)
 				preg_match ( '#/Count \s+ (?P<count> \d+)#ix', $object_data, $match ) ;
-				$page_count		=  ( isset ( $match [ 'count' ] ) ) ?  ( integer ) $match [ 'count' ] : false ;
-				$reference_count	=  count ( $references ) ;
+				$page_count				=  ( isset ( $match [ 'count' ] ) ) ?  ( integer ) $match [ 'count' ] : false ;
+				
+				// Get parent object id
+				preg_match ( '#/Parent \s+ (?P<parent> \d+)#ix', $object_data, $match ) ;
+				$parent					=  ( isset ( $match [ 'parent' ] ) ) ?  ( integer ) $match [ 'parent' ] : false ;
 
-				if  ( $page_count  !==  false  &&  $reference_count  !=  $page_count  &&  PdfToText::$DEBUG )
-				   {
-					warning ( "Object #$object_id : Page count given by the /Count parameter ($page_count) differs from the actual number of objects " .
-						  "referenced by the /Kids parameter ($reference_count)." ) ;
-				    }
-
-				$this -> PageObjects [ $object_id ]	=  $references ;
+				$this -> PageKids [ $object_id ]	=  
+				   [
+					'object'	=>  $object_id,
+					'parent'	=>  $parent,
+					'count'		=>  $page_count,
+					'kids'		=>  $references 
+				    ] ;
 			    }
 		    }
 		// Object listing the other objects that are contained in this page (/Type/Page and /Contents[x1 0 R ... xn 0 R]
@@ -4447,13 +4456,14 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 			if  ( $this -> GetObjectReferences ( $object_id, $object_data, '/Contents', $references ) )
 			   {
 				preg_match ( '#/Parent \s+ (?P<parent> \d+)#ix', $object_data, $match ) ;
+				$parent					=  ( isset ( $match [ 'parent' ] ) ) ?  (integer) $match [ 'parent' ] : false ;
 
-				if  ( ! isset ( $match [ 'parent' ] ) )
-				   {
-					warning ( "Object #$object_id : No parent object given (/Parent)." ) ;
-				    }
-				else 
-					$this -> PageContentObjects [ $object_id ]	=  [ 'parent' => ( integer ) $match [ 'parent' ], 'objects' => $references ] ;
+				$this -> PageContents [ $object_id ]	=
+				   [
+					'object'	=>  $object_id,
+					'parent'	=>  $parent,
+					'contents'	=>  $references
+				    ] ;
 			    }
 		    }
 	    }
@@ -4472,72 +4482,61 @@ class  PdfTexterPageMap		extends		PdfObjectBase
 		will after that be available using the array notation.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  MapObjects ( )
+	public function  MapObjects ( $objects )
 	   {
-		if  ( count ( $this -> PageObjects ) )
-		    {
-			foreach  ( $this -> PageContentObjects  as  $kids_id => $page_contents )
+		$kid_count	=  count ( $this -> PageKids ) ;
+
+		// PDF files created short after the birth of Earth may have neither a page catalog nor page contents descriptions
+		if  ( ! $this -> PageCatalogs  )
+		   {
+			// Later, during Pleistocen, references to page kids started to appear...
+			if  ( $kid_count )
 			   {
-				foreach  ( $page_contents [ 'objects' ]  as  $id )
-				   {
-					$index	=  1 ;
-
-				
-					foreach  ( $this -> PageObjects [ $page_contents [ 'parent' ] ]  as  $parent_id )
-					   {
-						if  ( $parent_id  ==  $kids_id )
-							$this -> PageNumbers [ $id ]	=  $index ;
-
-						$index ++ ;
-					    }
-				    }
+				foreach  ( array_keys ( $this -> PageKids )  as  $catalog )
+					$this -> MapKeys ( $catalog, $current_page ) ;
 			    }
-		     }
+			else
+				$this -> Pages [1]	=  array_keys ( $objects ) ;
+		    }
+		// This is the ideal situation : there is a catalog that allows us to gather indirectly all page data
 		else
-		    {
-			$index	=  1 ;
+		   {
+			$current_page		=  1 ;
 
-			foreach  ( $this -> PageContentObjects  as  $kids_id => $page_contents )
+			foreach  ( $this -> PageCatalogs  as  $catalog )
 			   {
-				foreach  ( $page_contents [ 'objects' ]  as  $id )
-				   {
-					$this -> PageNumbers [ $id ]	=  $index ;
-				    }
-
-				$index ++ ;
+				if  ( isset ( $this -> PageKids [ $catalog ] ) )
+					$this -> MapKids ( $catalog, $current_page ) ;
 			    }
-		     }
-
-		return ( 0 ) ;
+		    }
 	    }
 
 
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    Interfaces implementation.
-	
-	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  count ( )
-	   { return ( count ( $this -> PageNumbers ) ) ; }
+	// MapKids -
+	//	Tries to assign a page number to all page description objects that have been collected by the Peek() method.
+	//	Also creates the Pages associative array, whose keys are page numbers and whose values are the ids of the objects
+	//	that the page contains.
+	protected function  MapKids ( $catalog, &$page ) 
+	   {
+		$entry		=  $this -> PageKids [ $catalog ] ;
 
-	public function  offsetExists ( $object_id )
-	   { return ( isset ( $this -> PageNumbers [ $object_id ] ) ) ; }
-
-	public function  offsetGet ( $object_id ) 
-	   { 
-		if ( isset ( $this -> PageNumbers [ $object_id ] ) )
-			return ( $this -> PageNumbers [ $object_id ] ) ;
-		else 
-			return ( false ) ;
+		if  ( isset ( $this -> PageContents [ $entry [ 'kids' ] [0] ] ) )
+		   {
+			foreach  ( $entry [ 'kids' ]  as  $item )
+			   {
+				$this -> PageContents [ $item ]	[ 'page' ]	=  $page ;
+				$this -> Pages [ $page ]			=  $this -> PageContents [ $item ] [ 'contents' ] ;
+				$page ++ ;
+			    }
+		    }
+		else
+		   {
+			foreach  ( $entry [ 'kids' ]  as  $kid )
+				$this -> MapKids ( $kid, $page ) ;
+		    }
 	    }
-
-	public function  offsetSet ( $offset, $value )
-	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
-
-	public function  offsetUnset ( $offset )
-	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
     }
-
+    
 
 /*==============================================================================================================
 
