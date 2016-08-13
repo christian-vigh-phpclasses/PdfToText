@@ -649,6 +649,18 @@
 	  MacRoman encoding scheme where inappropriately split into chunks of 4 digits instead of 2. This 
 	  caused in some occasions normal characters to be interpreted as far-east languages, such as Chinese.
 
+    [Version : 1.2.42]	[Date : 2016/08/12]     [Author : CV]
+	. The /R font alias was no more recognized, which caused bad character translations.
+	. Some characters were not properly encoded into UTF8, for blocks of text using the internal Adobe
+	  Windows Ansi and Mac Roman character sets.
+	. Rearranged some property initialization values that caused syntax errors for PHP versions < 5.6.
+	. Fixed some y-positioning issues when relative "Td" instructions are used. This prevented line breaks
+	  to be inserted when necessary.
+	. Temporarily commented out lines of code which were trying to interpret x-position : they were 
+	  unnecessarily inserting spaces inside words written in multiple chunks
+	. Fix : 2-bytes codes can not only specified as hex digits, but also as ascii characters. Eg : "bh" 
+	  means : 0x6268.
+
  **************************************************************************************************************/
 
 
@@ -788,7 +800,7 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFontMap ( $object_data )
 	   {
-		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) ) \s+ .* >>#msx', $object_data ) )
+		if  ( preg_match ( '#<< \s* ( (/F \d+) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) ) \s+ .* >>#msx', $object_data ) )
 			return ( true ) ;
 		else
 			return ( false ) ;
@@ -1117,7 +1129,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.41" ;
+	const		VERSION					=  "1.2.42" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2384,8 +2396,8 @@ class  PdfToText 	extends PdfObjectBase
 					if  ( $instruction [ 'relative' ] )
 					   {
 						// Try to put a separator if the x coordinate is non-zero
-						if  ( $instruction [ 'x' ] - $last_goto_x  >=  $current_font_size )
-							$result		.=  $this -> Separator ;
+						//if  ( $instruction [ 'x' ] - $last_goto_x  >=  $current_font_size )
+						//	$result		.=  $this -> Separator ;
 
 						$discard_last_instruction	=  true ;
 						$extra_newlines			=  0 ; 
@@ -2393,6 +2405,17 @@ class  PdfToText 	extends PdfObjectBase
 						$last_relative_goto_y		=  abs ( $instruction [ 'y' ] ) ;
 						$last_goto_x			=  $instruction [ 'x' ] ;
 						
+						if  ( - $instruction [ 'y' ]  >  $current_font_size ) 
+						   {
+							$use_same_line		=  false ;
+							$extra_newlines		=  ( integer ) ( $current_font_size / $last_relative_goto_y ) ;
+						    }
+						else if  ( ! $instruction [ 'y' ] ) 
+						   {
+							$use_same_line		=  true ;
+							$extra_newlines		=  0 ;
+						    }
+							
 						break ;
 					    }
 					else
@@ -2544,6 +2567,25 @@ class  PdfToText 	extends PdfObjectBase
 			   			   			$result		.=  $newchar ;
 			   			   	   	    }
 			   			   	    }
+							// Yes ! double-byte codes can also be specified as plain text !
+							else if  ( $current_font_map_width  ==  4 )
+							   {
+								for  ( $i = 1 ; $i  <  $length ; $i += 2 )
+								   {
+									$ch	=  ( ord ( $text [$i] )  <<  8 )  |  ord ( $text [ $i + 1 ] ) ;
+
+									// Add substituted character to the output result
+									if  ( isset  ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else
+									   {
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]	=  $newchar ;
+									    }
+
+									$result		.=  $newchar ;
+								    }
+							    }
 							// Character strings within parentheses.
 							// For every text value, use the character map table for substitutions
 							else
@@ -2741,7 +2783,7 @@ class  PdfToText 	extends PdfObjectBase
 				return ( [ 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0], 'token' => $token ] ) ;
 			// Position to next line
 			else if  ( $token  ==  'T*' )
-				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => false ] ) ;
+				return ( [ 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ] ) ;
 			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return a "newline" instruction
 			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
 			// appear in the pdf file (which is likely to be different from their position on a graphic screen).
@@ -2794,20 +2836,8 @@ class  PdfToText 	extends PdfObjectBase
 
 				switch  ( $ch )
 				   {
-					// "/R" : specifies directly a font object describing the font
-					case	'R' : case 'r' :
-						if  ( isset ( $this -> MapIdBuffer [ $token ] ) )
-							$id	=   $this -> MapIdBuffer [ $token ] ;
-						else
-						   {
-							$id 	=  $this -> FontTable -> GetFontByMapId ( $token ) ;
-
-							$this -> MapIdBuffer [ $token ]	=  $id ;
-						    }
-
-						return ( [ 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id, 'token' => $token ] ) ;
-
-					// Other indirect references : "/Fx", "/fx-y", "/TTx", "/Tx"
+					// Font reference : "/Fx", "/fx-y", "/TTx", "/Tx", "/R"
+					case	'R' :  case  'r' :
 					case	'T' :  case  't' :
 					case	'F' :  case  'f' :
 					case    'C' :  case  'c' :
@@ -3362,7 +3392,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	public function  AddFontMap ( $object_id, $object_data )
 	   {
 		// The same object can hold different notations for font associations
-		if  ( preg_match_all ( '# (?P<font> / ( (F) || (TT) ) \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
+		if  ( preg_match_all ( '# (?P<font> / ( (F) || (TT) || (R) ) \d+) \s+ (?P<object> \d+)#x', $object_data, $matches ) )
 		   {
 		   	for ( $i = 0, $count = count ( $matches [ 'font' ] ) ; $i  <  $count ; $i ++ )
 		   		$this -> FontMap [ $matches [ 'font' ] [$i] ] 	=  $matches [ 'object' ] [$i] ;
@@ -3487,7 +3517,7 @@ class  PdfTexterFont		extends PdfObjectBase
 	// Windows Ansi mapping to Unicode. Only substitutions that have no direct equivalent are listed here
 	// Source : https://msdn.microsoft.com/en-us/goglobal/cc305145.aspx
 	// Only characters from 0x80 to 0x9F has no direct translation
-	protected static	$WinAnsiCharacterMap	=
+	public static	$WinAnsiCharacterMap	=
 	   [
 		0x80	=>  0x20AC,
 		0x82	=>  0x201A,
@@ -3519,7 +3549,7 @@ class  PdfTexterFont		extends PdfObjectBase
 	    ] ;
 	// Mac roman to Unicode encoding
 	// Source : ftp://ftp.unicode.org/Public/MAPPINGS/VENDORS/APPLE/ROMAN.TXT
-	protected static	$MacRomanCharacterMap	=
+	public static	$MacRomanCharacterMap	=
 	   [
 		0x80	=>  0x00C4,	# LATIN CAPITAL LETTER A WITH DIAERESIS
 		0x81	=>  0x00C5,	# LATIN CAPITAL LETTER A WITH RING ABOVE
@@ -3804,7 +3834,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 	protected	$RangeMap		=  [] ;
 	private		$RangeCount		=  0 ;				// Avoid unnecessary calls to the count() function
 	private		$RangeMin		=  PHP_INT_MAX,			// Min and max values of the character ranges
-			$RangeMax		=  -PHP_INT_MAX ;
+			$RangeMax		=  -1 ;
 	// Character substitution table for tables using the beginbfchar notation
 	protected	$DirectMap		=  [] ;
 
@@ -3994,7 +4024,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	// Note that the values of these constants are direct indices to the second dimension of the $Encodings table
 	const 	PDF_STANDARD_ENCODING 		=  0 ;
 	const 	PDF_MAC_ROMAN_ENCODING 		=  1 ;
-	const 	PDF_WIN_ANSII_ENCODING 		=  2 ;
+	const 	PDF_WIN_ANSI_ENCODING 		=  2 ;
 	const 	PDF_DOC_ENCODING 		=  3 ;
 
 	// Correspondance between an encoding name and its corresponding character in the
@@ -4267,7 +4297,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		   	case 	'macromanencoding' 	:  $this -> Encoding 	=  self::PDF_MAC_ROMAN_ENCODING ; break ;
 		   	case 	'standardencoding' 	:  $this -> Encoding 	=  self::PDF_STANDARD_ENCODING 	; break ;
 		   	case 	'winansiencoding' 	:
-		   	default 		 	:  $this -> Encoding 	=  self::PDF_WIN_ANSII_ENCODING	;
+		   	default 		 	:  $this -> Encoding 	=  self::PDF_WIN_ANSI_ENCODING	;
 		    }
 
 		// Build a virgin character map using the detected encoding
@@ -4324,11 +4354,16 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	public function  offsetGet ( $offset )
 	   {
 		if  ( isset ( $this -> Map [ $offset ] ) )
-		   {
-			return ( chr ( $this -> Map [ $offset ] ) ) ;
-		    }
+			$ord		=  $this -> Map [ $offset ] ;
 		else
-			return ( chr ( $offset ) ) ;
+			$ord		=  $offset ;
+
+		if  ( $this -> Encoding  ==  self::PDF_WIN_ANSI_ENCODING  &&  isset ( PdfTexterFont::$WinAnsiCharacterMap [ $ord ] ) )
+			$ord	=  PdfTexterFont::$WinAnsiCharacterMap [ $ord ] ;
+		else if  ( $this -> Encoding  ==  self::PDF_MAC_ROMAN_ENCODING  &&  isset ( PdfTexterFont::$MacRomanCharacterMap [ $ord ] ) )
+			$ord	=  PdfTexterFont::$MacRomanCharacterMap [ $ord ] ;
+		
+		return ( $this -> CodePointToUtf8 ( $ord ) ) ;
 	    }
     }
 
