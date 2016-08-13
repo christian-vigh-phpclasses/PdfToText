@@ -31,6 +31,8 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Carin Pretorius, who sent me samples with the biggest character maps I've ever seen
 - Rolf Mast, who sent me samples that (finally) did not use character maps and allowed me to solve more easily a few bugs in the way I was parsing text drawing instructions
 - Rajnish Tatiwala who, among other things, sent me my first sample containing objects encoded with the CCITT FAX standard.
+- Jocemar Varela, who sent me samples that were generated using OCR software
+- And more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
 
