@@ -321,6 +321,10 @@ will be rendered as :
 
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
+### OwnerPassword ###
+
+Owner password to be specified if the PDF file is password-protected.
+
 ### Pages ###
 
 Associative array containing individual page contents. The array key is the page number, starting from 1.
@@ -342,6 +346,10 @@ The default value is a space.
 ### Text ###
 
 A string containing the whole text extracted from the underlying pdf file. Note that pages are separated with a form feed.
+
+### UserPassword ###
+
+User password to be specified if the PDF file is password-protected.
 
 ### Utf8Placeholder ###
 
