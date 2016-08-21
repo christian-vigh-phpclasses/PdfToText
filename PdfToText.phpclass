@@ -663,6 +663,9 @@
 	  generated from OpenOffice to PrimoPdf.
 
     [Version : 1.2.43]	[Date : 2016/08/15]     [Author : CV]
+	. Enhanced handling of fonts not using Unicode character maps :
+	  - Added support for the "/gxx" notation for the /Differences tag, where "xx" is a character number.
+	  - Characters not listed in the /Differences tag were not using the standard Adobe encoding maps
 	. Added support for password-protected files (note that the current version is not able to decrypt 
 	  files yet) :
 	  - Added the $user_password and $owner_password parameters to the class constructor and the Load() 

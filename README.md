@@ -78,16 +78,23 @@ However, all of that will not guarantee that it will work in every situation ; s
 
 ### Constructor ###
 
-	$pdf 	=  new PdfToText ( $filename = null, $options = self::PDFOPT_NONE ) ;
+	$pdf 	=  new PdfToText ( $filename = null, $options = self::PDFOPT_NONE, $user\_password = false, $owner\_password = false ) ;
 
 Instantiates a **PdfToText** object. If a filename has been specified, its text contents will be loaded and made available in the *Text* property (otherwise, you will have to call the *Load()* method for that).
 
-See the *Options* property for a description of this value.
+See the *Options* property for a description of the *$options* parameter.
 
-### Load ( $filename ) ###
+The *$user\_password* and *$owner\_password* parameters specify the user/owner password to be used for decrypting a password-protected file (note that this class is not a password cracker !).
+
+In the current version (1.2.43), decryption of password-protected files is not yet supported.
+
+### Load ( $filename, $user\_password = false, $owner\_password = false ) ###
 
 Loads the text contents of the specified filename.
 
+The *$user\_password* and *$owner\_password* parameters specify the user/owner password to be used for decrypting a password-protected file (note that this class is not a password cracker !).
+
+In the current version (1.2.43), decryption of password-protected files is not yet supported.
 
 ### GetPageFromOffset ( $offset ) ###
 
@@ -191,6 +198,40 @@ A string containing the document creation date, in UTC format. The value can be 
 
 Application used to create the original document.
 
+### EncryptionAlgorithm ###
+
+Algorithm used for password-protected files.
+
+The Adobe documentation states :
+
+A code specifying the algorithm to be used in encrypting and decrypting the document :
+
+- 0 : An alternate algorithm that is undocumented and no longer supported, and whose use is strongly discouraged.
+- 1 : Algorithm 3.1.
+- 2 [PDF 1.4] : Algorithm 3.1, but allowing key lengths greater than 40 bits.
+- 3 [PDF 1.4] : An unpublished algorithm allowing key lengths up to 128 bits. This algorithm is unpublished as an export requirement of the U.S. Department of Commerce.
+
+### EncryptionAlgorithmRevision ###
+
+The revision number of the Standard security handler that is required to interpret this dictionary. The revision number is :
+
+- 2 : for documents that do not require the new encryption features of PDF 1.4, meaning documents encrypted with an *EncryptionAlgorithm* value of 1 and using *EncryptionFlags* bits 1– 6
+- 3 : for documents requiring the new encryption features of PDF 1.4, meaning documents encrypted with an *EncryptionAlgorithm* value of 2 or greater or that use the extended *EncryptionFlags* bits 17–21.
+
+### EncryptionFlags ###
+
+A set of *PDFPERM\_** constants describing which operations are authorized on a password-protected PDF file.
+
+### EncryptionKeyLength ###
+
+Defined only when *EncryptionAlgorithm* is 2 or 3. Length of key, in bits, used for encryption and decryption. The size is a multiple of 8, with a minimum value of 40 and maximum value of 128.
+
+### EncryptionMode ###
+
+One of the *PDFCRYPT\_\** constants.
+
+This value is set to *PDFCRYPT\_NONE if the PDF file is not password-protected.
+
 ### EOL ###
 
 The string to be used for line breaks. The default is PHP\_EOL.
@@ -198,6 +239,20 @@ The string to be used for line breaks. The default is PHP\_EOL.
 ### Filename ###
 
 Name of the file whose text contents have been extracted.
+
+### HashedOwnerPassword ###
+
+A 32-byte string used in determining whether a valid owner password was specified.
+
+### HashedUserPassword ###
+
+A 32-byte string used in determining whether a valid user password was specified.
+
+### ID, ID2 ###
+
+A pair of unique ids generated for the document. The value of **ID** is used for decrypting password-protected documents.
+
+The second id is not clearly described in the Pdf specifications.
 
 ### Images ###
 
@@ -224,6 +279,10 @@ An array of associative arrays that contain the following entries :
 - 'data' : Raw image data.
 
 Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is enabled. 
+
+### IsPasswordProtected ###
+
+This property is set to *true* if the Pdf file is password-protected.
 
 ### MinSpaceWidth ###
 
@@ -296,14 +355,35 @@ Note that if you change the *PdfToText::$DEBUG** variable **after** the first in
 
 ## CONSTANTS ##
 
+### PDFCRYPT\_\* ###
+
+Indicates whether the PDF file is password protected and the encryption mechanism used in this case :
+
+- *PDFCRYPT\_NONE* : file is not password-protected.
+- *PDFCRYPT\_STANDARD* : file is password-protected using the standard security handler. 
+
 ### PDFOPT\_\* ###
 
 The PDFOPT\_\* constants are a set of flags which can be combined when either instantiating the class or setting the *Options* property before calling the **Load** method. It can be a combination of any of the following flags :
+
 - *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
 - *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
 - *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
 - *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
+
+### PDFPERM\_\* ###
+
+A set of flags that indicates which operations are authorized on the PDF file. All the descriptions below come from the PDF specification :
+
+- PDFPERM\_PRINT *(bit 3)* : *(Revision 2)* Print the document. *(Revision 3 or greater)* Print the document (possibly not at the highest quality level, depending on whether bit 12 is also set).
+- PDFPERM\_MODIFY *(bit 4)* : Modify the contents of the document by operations other than those controlled by bits 6, 9, and 11.
+- PDFPERM\_COPY *(bit 5)* : *(Revision 2)* Copy or otherwise extract text and graphics from the document, including extracting text and graphics (in support of accessibility to users with disabilities or for other purposes). *(Revision 3 or greater)* Copy or otherwise extract text and graphics from the document by operations other than that controlled by bit 10.
+- PDFPERM\_MODIFY\_EXTRA *(bit 6)* : Add or modify text annotations, fill in interactive form fields, and, if bit 4 is also set, create or modify interactive form fields (including signature fields).
+- PDFPERM\_FILL\_FORM *(bit 9)* : *(Revision 3 or greater)* Fill in existing interactive form fields (including signature fields), even if bit 6 is clear.
+- PDFPERM\_EXTRACT *(bit 10)* : *(Revision 3 or greater)* Fill in existing interactive form fields (including signature fields), even if bit 6 is clear.
+- PDFPERM\_ASSEMBLE *(bit 11)* : *(Revision 3 or greater)* Assemble the document (insert, rotate, or delete pages and create bookmarks or thumbnail images), even if bit 4 is clear.
+- PDFPERM\_HIGH\_QUALITY\_PRINT *(bit 12)* : *(Revision 3 or greater)* Print the document to a representation from which a faithful digital copy of the PDF content could be generated. When this bit is clear (and bit 3 is set), printing is limited to a low-level representation of the appearance, possibly of degraded quality. 
 
 ### VERSION ###
 
