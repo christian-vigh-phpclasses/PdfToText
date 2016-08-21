@@ -662,7 +662,7 @@
 	  means : 0x6268.Ths caused for example Chinese characters to be wrongly interpreted on a document
 	  generated from OpenOffice to PrimoPdf.
 
-    [Version : 1.2.43]	[Date : 2016/08/15]     [Author : CV]
+    [Version : 1.2.43]	[Date : 2016/08/21]     [Author : CV]
 	. Enhanced handling of fonts not using Unicode character maps :
 	  - Added support for the "/gxx" notation for the /Differences tag, where "xx" is a character number.
 	  - Characters not listed in the /Differences tag were not using the standard Adobe encoding maps
@@ -675,7 +675,11 @@
 	  - Added the UserPassword, OwnerPassword and IsPasswordProtected properties.
 	  - Added the GetTrailerInformation() and Decrypt() methods
 	  - Added the Encryption* properties
-	. Added support for the "/gxx" notation for the /Differences tag, where "xx" is a character number.
+
+    [Version : 1.2.44]	[Date : 2016/08/21]     [Author : CV]
+	. Temporarily disabled processing of far-east characters specified as plain text ( "(xy)" ) instead of
+	  hex string ( "<abcd>" ). This was causing problems with PDF files that really use plain-text (mostly
+	  causing Chinese characters to be displayed instead of strings using the European alphabet).
 
  **************************************************************************************************************/
 
@@ -1145,7 +1149,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.43" ;
+	const		VERSION					=  "1.2.44" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2704,6 +2708,7 @@ class  PdfToText 	extends PdfObjectBase
 			   			   {
 			   		   		$is_hex 	=  ( $text [0]  ==  '<' ) ;
 			   			   	$length 	=  strlen ( $text ) - 1 ;
+							$handled	=  false ;
 
 			   			   	// Characters are encoded within angle brackets ( "<>" ).
 							// Note that several characters can be specified within the same angle brackets, so we have to take
@@ -2725,10 +2730,15 @@ class  PdfToText 	extends PdfObjectBase
 
 			   			   			$result		.=  $newchar ;
 			   			   	   	    }
+
+								$handled	 =  true ;
 			   			   	    }
-							// Yes ! double-byte codes can also be specified as plain text !
-							else if  ( $current_font_map_width  ==  4 )
+							// Yes ! double-byte codes can also be specified as plain text within parentheses !
+							// FIX: Temporarily disabled (use dummy2.pdf and 150701-DSE-Katalog.pdf to compare results)
+							else if  ( 0 && $current_font_map_width  ==  4  )
 							   {
+								$found_bad_character	=  false ;
+
 								for  ( $i = 1 ; $i  <  $length ; $i += 2 )
 								   {
 									$ch	=  ( ord ( $text [$i] )  <<  8 )  |  ord ( $text [ $i + 1 ] ) ;
@@ -2738,16 +2748,36 @@ class  PdfToText 	extends PdfObjectBase
 										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
 									else
 									   {
-										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch, true ) ;
+
+										if  ( $newchar  ===  false )
+										   {
+										   echo "BADCHAR " . sprintf ( "%X", $ch ) . "\n" ;
+											if  ( $ch  >  0xFF )
+											   {
+												$newchar	=  $this -> CodePointToUtf8 ( $ch ) ;
+												echo "HERE $newchar\n" ;
+											    }
+											else
+											   {
+												$found_bad_character	=  true ;
+												break ;
+											    }
+										    }
+
 										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]	=  $newchar ;
 									    }
 
 									$result		.=  $newchar ;
 								    }
+
+								if  ( ! $found_bad_character )
+									$handled	=  true ;
 							    }
+
 							// Character strings within parentheses.
 							// For every text value, use the character map table for substitutions
-							else
+							if  ( ! $handled )
 							   {
 				   		   		for  ( $i = 1 ; $i  <  $length ; $i ++ )
 				   		   		   {
@@ -3791,7 +3821,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 
 	// MapCharacter -
 	//	Returns the character associated to the specified one.
-	public function  MapCharacter ( $font, $ch )
+	public function  MapCharacter ( $font, $ch, $return_false_on_failure = false )
 	   {
 		// For text contents that did not specify a font using the /Rx instruction,
 		// use the first declared font as the default font
@@ -3799,7 +3829,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			$font	=  $this -> DefaultFont ;
 
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
-			return ( $this -> Fonts [ $font ] -> MapCharacter ( $ch ) ) ;
+			return ( $this -> Fonts [ $font ] -> MapCharacter ( $ch, $return_false_on_failure ) ) ;
 		else
 			return ( $this -> CodePointToUtf8 ( $ch ) ) ;
 	    }
@@ -4015,10 +4045,13 @@ class  PdfTexterFont		extends PdfObjectBase
 	// MapCharacter -
 	//	Returns the substitution string value for the specified character, if the current font has an
 	//	associated character map, or the original character encoded in utf8, if not.
-	public function  MapCharacter ( $ch )
+	public function  MapCharacter ( $ch, $return_false_on_failure = false )
 	   {
 		if  ( $this -> CharacterMap )
-			return ( $this -> CharacterMap [ $ch ] ) ;
+		   {
+			if  ( isset ( $this -> CharacterMap [ $ch ] ) )
+				return ( $this -> CharacterMap [ $ch ] ) ;
+		    }
 		else if  ( $this -> FontType  ==  self::FONT_ENCODING_WINANSI )
 		   {
 			if  ( isset ( self::$WinAnsiCharacterMap [ $ch ] ) )
@@ -4029,6 +4062,9 @@ class  PdfTexterFont		extends PdfObjectBase
 			if  ( isset ( self::$MacRomanCharacterMap [ $ch ] ) )
 				return ( $this -> CodePointToUtf8 ( self::$MacRomanCharacterMap [ $ch ] ) ) ;
 		    }  
+
+		if  ( $return_false_on_failure )
+			return ( false ) ;
 
 		return ( $this -> CodePointToUtf8 ( $ch ) ) ;
 	    }
@@ -4267,14 +4303,14 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  count ( )
-	   { return ( count ( $this -> Map ) ) ; }
+	   { return ( count ( $this -> DirectMap ) ) ; }
 
 
 	public function  offsetExists ( $offset )
-	   { return  ( isset ( $this -> Map [ $offset ] ) ) ; }
+	   { return  ( $this -> offsetGetSafe ( $offset )  !==  false ) ; }
 
 
-	public function  offsetGet ( $offset )
+	public function  offsetGetSafe ( $offset )
 	   {
 		// Character already has an entry (character reference => subtituted character)
 		if  ( isset ( $this -> DirectMap [ $offset ] ) )
@@ -4312,7 +4348,18 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				return ( $code ) ;
 			    }
 		    }
-			
+
+		return ( false ) ;
+	    }
+
+
+	public function  offsetGet ( $offset )
+	   {
+		$code	=  $this -> offsetGetSafe ( $offset ) ;
+
+		if  ( $code  === false )
+			$code	=  $offset ;
+
 		// None of the above : return the converted code as a last resort (store it in the direct map before)
 		$code				=  $this -> CodePointToUtf8 ( $offset ) ;
 		$this -> DirectMap [ $offset ]	=  $code ;
