@@ -659,7 +659,20 @@
 	. Temporarily commented out lines of code which were trying to interpret x-position : they were 
 	  unnecessarily inserting spaces inside words written in multiple chunks
 	. Fix : 2-bytes codes can not only specified as hex digits, but also as ascii characters. Eg : "bh" 
-	  means : 0x6268.
+	  means : 0x6268.Ths caused for example Chinese characters to be wrongly interpreted on a document
+	  generated from OpenOffice to PrimoPdf.
+
+    [Version : 1.2.43]	[Date : 2016/08/15]     [Author : CV]
+	. Added support for password-protected files (note that the current version is not able to decrypt 
+	  files yet) :
+	  - Added the $user_password and $owner_password parameters to the class constructor and the Load() 
+	    method.
+	  - Added the ID/ID2 readonly property, which comes from the unique file identifier extracted 
+	    from the file contents.
+	  - Added the UserPassword, OwnerPassword and IsPasswordProtected properties.
+	  - Added the GetTrailerInformation() and Decrypt() methods
+	  - Added the Encryption* properties
+	. Added support for the "/gxx" notation for the /Differences tag, where "xx" is a character number.
 
  **************************************************************************************************************/
 
@@ -1129,7 +1142,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.42" ;
+	const		VERSION					=  "1.2.43" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1140,47 +1153,91 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x0008 ;		// Ignore text leading values
 	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x0010 ;		// Join hyphenated words that are split on two lines
 
+	// Encryption standards (to be completed, as more crazy PDF samples arise...)
+	const		PDFCRYPT_NONE				=  0 ;			// PDF file is not encrypted 
+	const		PDFCRYPT_STANDARD			=  1 ;			// Standard security handler
+
+	// A 32-bytes hardcoded padding used when computing encryption keys
+	const		PDF_ENCRYPTION_PADDING			=  "\x28\xBF\x4E\x5E\x4E\x75\x8A\x41\x64\x00\x4E\x56\xFF\xFA\x01\x08\x2E\x2E\x00\xB6\xD0\x68\x3E\x80\x2F\x0C\xA9\xFE\x64\x53\x69\x7A" ;
+
+	// Permission bits for encrypted files. Comments come from the PDF specification
+	const		PDFPERM_PRINT				=  0x0004 ;		// bit 3 :
+											//	(Revision 2) Print the document.
+											//	(Revision 3 or greater) Print the document (possibly not at the highest quality level, 
+											//	depending on whether bit 12 is also set).
+	const		PDFPERM_MODIFY				=  0x0008 ;		// bit 4 :
+											//	Modify the contents of the document by operations other than those controlled by bits 6, 9, and 11.
+	const		PDFPERM_COPY				=  0x0010 ;		// bit 5 :
+											//	(Revision 2) Copy or otherwise extract text and graphics from the document, including extracting text 
+											//	and graphics (in support of accessibility to users with disabilities or for other purposes).
+											//	(Revision 3 or greater) Copy or otherwise extract text and graphics from the document by operations  
+											//	other than that controlled by bit 10.
+	const		PDFPERM_MODIFY_EXTRA			=  0x0020 ;		// bit 6 :
+											//	Add or modify text annotations, fill in interactive form fields, and, if bit 4 is also set, 
+											//	create or modify interactive form fields (including signature fields).
+	const		PDFPERM_FILL_FORM			=  0x0100 ;		// bit 9 :
+											//	(Revision 3 or greater) Fill in existing interactive form fields (including signature fields), 
+											//	even if bit 6 is clear.
+	const		PDFPERM_EXTRACT				=  0x0200 ;		// bit 10 :
+											//	(Revision 3 or greater) Fill in existing interactive form fields (including signature fields), 
+											//	even if bit 6 is clear.
+	const		PDFPERM_ASSEMBLE			=  0x0400 ;		// bit 11 :
+											//	(Revision 3 or greater) Assemble the document (insert, rotate, or delete pages and create bookmarks 
+											//	or thumbnail images), even if bit 4 is clear.
+	const		PDFPERM_HIGH_QUALITY_PRINT		=  0x0800 ;		// bit 12 :
+											//	(Revision 3 or greater) Print the document to a representation from which a faithful digital copy of 
+											//	the PDF content could be generated. When this bit is clear (and bit 3 is set), printing is limited to 
+											//	a low-level representation of the appearance, possibly of degraded quality. 
+
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
-	public static 		$DEBUG 		=  false ;
+	public static 		$DEBUG 			=  false ;
 
 	// Current filename
-	public 		$Filename 		=  false ;
+	public 		$Filename 			=  false ;
 	// Extracted text
-	public		$Text			=  '' ;
+	public		$Text				=  '' ;
 	// Document pages (array of strings)
-	public		$Pages			=  [] ;
+	public		$Pages				=  [] ;
 	// Document images (array of PdfImage objects)
-	public		$Images			=  [] ;
+	public		$Images				=  [] ;
 	// Raw data for document images
-	public		$ImageData		=  [] ;
+	public		$ImageData			=  [] ;
 	// Text chunk separator (used to separate blocks of text specified as an array notation)
-	public		$BlockSeparator		=  '' ;
+	public		$BlockSeparator			=  '' ;
 	// Separator used to separate text groups where the offset value is less than -1000 thousands of character units
 	// (eg : [(1)-1822(2)] will add a separator between the characters "1" and "2")
 	// Note that such values are expressed in thousands of text units and subtracted from the current position. A 
 	// negative value means adding more space between the two text units it separates.
-	public		$Separator		=  ' ' ;
+	public		$Separator			=  ' ' ;
 	// Separator to be used between pages in the $Text property
-	public		$PageSeparator		=  "\n" ;
+	public		$PageSeparator			=  "\n" ;
 	// Minimum value (in 1/1000 of text units) that separates two text chunks that can be considered as a real space
-	public		$MinSpaceWidth		=  250 ;
+	public		$MinSpaceWidth			=  250 ;
 	// Pdf options
-	public		$Options		=  self::PDFOPT_NONE ;
+	public		$Options			=  self::PDFOPT_NONE ;
 	// Author information 
-	public		$Author			=  '' ;
-	public		$CreatorApplication	=  '' ;
-	public		$ProducerApplication	=  '' ;
-	public		$CreationDate		=  '' ;
-	public		$ModificationDate	=  '' ;
-	private		$GotAuthorInformation	=  false ;
+	public		$Author				=  '' ;
+	public		$CreatorApplication		=  '' ;
+	public		$ProducerApplication		=  '' ;
+	public		$CreationDate			=  '' ;
+	public		$ModificationDate		=  '' ;
+	private		$GotAuthorInformation		=  false ;
+	// Unique and arbitrary file identifier, as specified in the PDF file
+	// Well, in fact, there are two IDs, but the PDF specification does not mention the goal of the second one
+	public		$ID				=  '' ;
+	public		$ID2				=  '' ; 
+	//Encryption-related properties 
+	public		$UserPassword			=  false ;
+	public		$OwnerPassword			=  false ;
+	public		$IsPasswordProtected		=  false ;
 	// End of line string
-	public		$EOL			=  PHP_EOL ;
+	public		$EOL				=  PHP_EOL ;
 	// String to be used when no Unicode translation is possible
-	public static	$Utf8Placeholder	=  '' ;
+	public static	$Utf8Placeholder		=  '' ;
 
 	// Font mappings
-	protected 	$FontTable		=  false ;
+	protected 	$FontTable			=  false ;
 	// Page map object
 	protected	$PageMap ;
 	// Page locations (start and end offsets)
@@ -1188,7 +1245,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	// Indicates whether global static initializations have been made
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
-	private static	$StaticInitialized	=  false ;
+	private static	$StaticInitialized		=  false ;
 
 	// Drawing instructions that are to be ignored and removed from a text stream before processing, for performance 
 	// reasons (it is faster to call preg_replace() once to remove them than calling the __next_instruction() and 
@@ -1209,42 +1266,81 @@ class  PdfToText 	extends PdfObjectBase
 		'\/Span \s* << .*? >> [ \t\r\n>]*'
 	    ] ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
-	private static	$ReplacementConstructs	=
+	private static	$ReplacementConstructs		=
 	    [
 		'%n'	=>  '( [+\-]? ( ( [0-9]+ ( \. [0-9]* )? ) | ( \. [0-9]+ ) ) \s+ )'
 	     ] ;
 	// The final regexes that are built during static initialization by the __build_ignored_instructions() method
-	private static  $IgnoredInstructions	=  [] ;
+	private static  $IgnoredInstructions		=  [] ;
 
 	// A character map buffer is used to store results from previous calls to the MapCharacter() method of the 
 	// FontTable object. It dramatically reduces the number of calls needed, from one call for each character
 	// defined in the pdf stream, to one call on each DISTINCT character defined in the PDF stream.
 	// As an example, imagine a PDF file that contains 200K characters, but only 150 distinct ones. The
 	// MapCharacter method will be called 150 times, instead of 200 000...
-	private		$CharacterMapBuffer	=  [] ;
+	private		$CharacterMapBuffer		=  [] ;
 
 	// Font information buffer - another cache used by the __next_instruction() method to avoid repeated calls
 	// to the IsMapped() and GetMapWidth() methods
-	private		$FontInformationBuffer	=  [] ;
+	private		$FontInformationBuffer		=  [] ;
 
 	// Map id buffer - for avoiding unneccesar calls to GetFontByMapId
-	private		$MapIdBuffer		=  [] ;
+	private		$MapIdBuffer			=  [] ;
 
 	// Regex used for removing hyphens - we have to take care of different line endings : "\n" for Unix, "\r\n"
 	// for Windows, and "\r" for pure Mac files.
 	// Note that we replace an hyphen followed by an end-of-line then by non-space characters with the non-space
 	// characters, so the word gets joined on the same line. Spaces after the end of the word (on the next line)
 	// are removed, in order for the next word to appear at the beginning of the second line.
-	private static $RemoveHyphensRegex	=  '#
-							( 
-								  -
-								  [ \t]* ( (\r\n) | \n | \r )+ [ \t\r\n]*
-							 )
-							([^ \t\r\n]+)
-							\s*
-						    #msx' ;
+	private static $RemoveHyphensRegex		=  '#
+								( 
+									  -
+									  [ \t]* ( (\r\n) | \n | \r )+ [ \t\r\n]*
+								 )
+								([^ \t\r\n]+)
+								\s*
+							    #msx' ;
 
-	// A subset of a character classification array that avoids to many calls to the ctype_* functions or too many
+	// A small list of Unicode character ranges that are related to languages written from right to left
+	// For performance reasons, everythings is mapped to a range here, even if it includes codepoints that do not map to anything
+	// (this class is not a Unicode codepoint validator, but a Pdf text extractor...)
+	// To be completed !
+	private static	$RtlCharacters		=
+	   [
+		// This range represents the following languages :
+		// - Hebrew			(0590..05FF)
+		// - Arabic			(0600..06FF)
+		// - Syriac			(0700..074F)
+		// - Supplement for Arabic	(0750..077F)
+		// - Thaana			(0780..07BF)
+		// - N'ko			(07C0..07FF)
+		// - Samaritan			(0800..083F)
+		// - Mandaic			(0840..085F)
+		[ 0x00590, 0x0085F ],
+		// Hebrew supplement (I suppose ?) + other characters
+		[ 0x0FB1D, 0x0FEFC ],
+		// Mende kikakui
+		[ 0x1E800, 0x1E8DF ],
+		// Adlam
+		[ 0x1E900, 0x1E95F ],
+		// Others
+		[ 0x10800, 0x10C48 ],
+		[ 0x1EE00, 0x1EEBB ]
+	    ] ;
+	// As usual, caching a little bit the results of the IsRtlCharacter() method is welcome. Each item will have the value true if the
+	// character is RTL, or false if LTR.
+	private		$RtlCharacterBuffer		=  [] ;
+
+	// Encryption information 
+	public		$EncryptionMode			=  self::PDFCRYPT_NONE ;
+	public		$EncryptionAlgorithm		=  false ;
+	public		$EncryptionAlgorithmRevision	=  false ;
+	public		$HashedUserPassword		=  false ;
+	public		$HashedOwnerPassword		=  false ;
+	public		$EncryptionFlags		=  false ;
+	public		$EncryptionKeyLength		=  false ;
+
+	// A subset of a character classification array that avoids too many calls to the ctype_* functions or too many
 	// character comparisons.
 	// This array is used only for highly sollicited parts of code
 	const	CTYPE_ALPHA		=  0x01 ;		// Letter
@@ -1300,7 +1396,7 @@ class  PdfToText 	extends PdfObjectBase
 				None of the above options will apply.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  	__construct ( $filename = null, $options = self::PDFOPT_NONE )
+	public function  	__construct ( $filename = null, $options = self::PDFOPT_NONE, $user_password = false, $owner_password = false )
 	   {
 		// Perform static initializations if needed
 		if  ( ! self::$StaticInitialized )
@@ -1323,7 +1419,7 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> Options	=  $options ;
 
 		if  ( $filename )
-			$this -> Load ( $filename ) ;
+			$this -> Load ( $filename, $user_password, $owner_password ) ;
 	    }
 
 
@@ -1360,7 +1456,7 @@ class  PdfToText 	extends PdfObjectBase
 	                Optional PDF filename whose text contents are to be extracted.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  Load ( $filename )
+	public function  Load ( $filename, $user_password = false, $owner_password = false )
 	   {
 		// Check if the file exists
 		if  ( ! file_exists ( $filename ) )
@@ -1376,25 +1472,38 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> PdfVersion 		=  $match [ 'version' ] ;
 
 		// Initializations
-		$this -> Text 			=  '' ;
-		$this -> FontTable 		=  new PdfTexterFontTable ( ) ;
-		$this -> Filename 		=  $filename ;
-		$this -> Pages			=  [] ;
-		$this -> Images			=  [] ;
-		$this -> ImageData		=  [] ;
-		$this -> PageMap		=  new PdfTexterPageMap ( ) ;
-		$this -> PageLocations		=  [] ;
-		$this -> Author			=  '' ;
-		$this -> CreatorApplication	=  '' ;
-		$this -> ProducerApplication	=  '' ;
-		$this -> CreationDate		=  '' ;
-		$this -> ModificationDate	=  '' ;
-		$this -> GotAuthorInformation	=  false ;
+		$this -> Text 				=  '' ;
+		$this -> FontTable 			=  new PdfTexterFontTable ( ) ;
+		$this -> Filename 			=  $filename ;
+		$this -> Pages				=  [] ;
+		$this -> Images				=  [] ;
+		$this -> ImageData			=  [] ;
+		$this -> PageMap			=  new PdfTexterPageMap ( ) ;
+		$this -> PageLocations			=  [] ;
+		$this -> Author				=  '' ;
+		$this -> CreatorApplication		=  '' ;
+		$this -> ProducerApplication		=  '' ;
+		$this -> CreationDate			=  '' ;
+		$this -> ModificationDate		=  '' ;
+		$this -> GotAuthorInformation		=  false ;
+		$this -> ID				=  '' ;
+		$this -> ID2				=  '' ; 
+		$this -> UserPassword			=  $user_password ;
+		$this -> OwnerPassword			=  $owner_password ;
+		$this -> IsPasswordProtected		=  false ;
+		$this -> EncryptionMode			=  self::PDFCRYPT_NONE ;
+		$this -> EncryptionAlgorithm		=  false ;
+		$this -> EncryptionAlgorithmRevision	=  false ;
+		$this -> HashedUserPassword		=  false ;
+		$this -> HashedOwnerPassword		=  false ;
+		$this -> EncryptionFlags		=  false ;
+		$this -> EncryptionKeyLength		=  false ;
 
 		// Also reset cached information that may come from previous runs
-		$this -> CharacterMapBuffer	=  [] ;
-		$this -> FontInformationBuffer	=  [] ;
-		$this -> MapIdBuffer		=  [] ;
+		$this -> CharacterMapBuffer		=  [] ;
+		$this -> FontInformationBuffer		=  [] ;
+		$this -> MapIdBuffer			=  [] ;
+		$this -> RtlCharacterBuffer		=  [] ;
 
 		// Systematically set the GET_IMAGE_DATA flag if DECODE_IMAGE_DATA is specified
 		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
@@ -1403,6 +1512,9 @@ class  PdfToText 	extends PdfObjectBase
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
 		if  ( ! preg_match_all ( '/(?P<object_id> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $matches ) )
 			return ( false ) ;
+
+		// Extract trailer information, which may contain the ID of an object specifying encryption flags
+		$this -> GetTrailerInformation ( $contents ) ;
 
 		// Character maps encountered so far
 		$cmaps			=  [] ;
@@ -1945,11 +2057,23 @@ class  PdfToText 	extends PdfObjectBase
 		switch  ( $type )
 		   {
 		   	case 	self::PDF_FLATE_ENCODING :
+				// Objects in password-protected Pdf files SHOULD be encrypted ; however, it happens that we may encounter normal,
+				// unencrypted ones. This is why we always try to gzuncompress them first then, if failed, try to decrypt them
 		   		$decoded_stream_data 	=  @gzuncompress ( $stream_data ) ;
 
 				if  ( $decoded_stream_data  ===  false )
 				   {
-					if  ( self::$DEBUG  >  1 )
+					if  ( $this -> IsPasswordProtected )
+					   {
+						$decoded_stream_data	=  $this -> Decrypt ( $object_id, $stream_data ) ;
+
+						if  ( $decoded_stream_data  ===  false )
+						   {
+							if  ( self::$DEBUG  >  1 )
+								error ( new PdfToTextException ( "Unable to decrypt object contents.", $object_id ) ) ;
+						    }
+					    }
+					else if  ( self::$DEBUG  >  1 )
 						error ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
 				    }
 
@@ -2209,6 +2333,10 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Object streams data start with a series of object id/offset pairs. The offset is absolute to the first character
 		// after the last space of these series.
+		// Note : on Windows platforms, the default stack size is 1Mb. The following regular expression will make Apache crash in most cases,
+		// so you have to enable the following lines in your http.ini file to set a stack size of 8Mb, as for Unix systems :
+		//	Include conf/extra/httpd-mpm.conf
+		//	ThreadStackSize 8388608
 		if  ( ! preg_match ( '/^ \s* (?P<series> (\d+ \s+)+ )/x', $decoded_data, $series_match ) )
 		   {
 			if  ( self::$DEBUG  >  1 )
@@ -2250,6 +2378,34 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		return ( $objects ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Decrypt - Decrypts object data.
+	
+	    PROTOTYPE
+	        $data		=  $this -> Decrypt ( $object_id, $object_data ) ;
+	
+	    DESCRIPTION
+	        Decrypts object data, when the PDF file is password-protected.
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Pdf object number.
+
+		$object_data (string) -
+			Object data.
+		
+	    RETURN VALUE
+	        Returns the decrypted object data, or false if the encrypted object could not be decrypted.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  Decrypt ( $object_id, $object_data ) 
+	   {
+		return ( false ) ;
 	    }
 
 
@@ -2720,7 +2876,7 @@ class  PdfToText 	extends PdfObjectBase
 			$discard_last_instruction	=  false ;
 		    }
 
-		return ( $result ) ;
+		return ( $this -> __rtl_process ( $result ) ) ;
 	    }
 
 
@@ -3047,6 +3203,145 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetTrailerInformation - Retrieves trailer information.
+	
+	    PROTOTYPE
+	        $this -> GetTrailerInformation ( $contents ) ;
+	
+	    DESCRIPTION
+	        Retrieves trailer information :
+		- Unique file ID
+		- Id of the object containing encryption data, if the PDF file is encrypted
+		- Encryption data
+	
+	    PARAMETERS
+	        $contents (string) -
+	                PDF file contents.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetTrailerInformation ( $contents )
+	   {
+		// Be paranoid : check if there is trailer information
+		if  ( ! preg_match ( '/trailer \s* << (?P<trailer> .+?) >>/imsx', $contents, $trailer_match ) )
+			return ;
+
+		$trailer_data	=  $trailer_match [ 'trailer' ] ;
+
+		// Get the unique file id from the trailer data
+		static		$id_regex	=  '#
+							/ID \s* \[ \s*
+							< (?P<id1> [^>]+) >
+							\s*
+							< (?P<id2> [^>]+) >
+							\s* \]
+						    #imsx' ;
+
+		if  ( preg_match ( $id_regex, $trailer_data, $id_match ) )
+		   {
+			$this -> ID	=  $id_match [ 'id1' ] ;
+			$this -> ID2	=  $id_match [ 'id2' ] ;
+		    }
+
+		// If there is an object describing encryption data, get its number (/Encrypt flag)
+		if (  ! preg_match ( '#/Encrypt \s+ (?P<object> \d+)#ix', $trailer_data, $encrypt_match ) )
+			return ;
+
+		$encrypt_object_id	=  $encrypt_match [ 'object' ] ;
+
+		// Retrieve the encryption dictionary contents
+		if  ( ! preg_match ( '#' . $encrypt_object_id . ' \s+ 0 \s+ obj (?P<encrypt> .*?) \s* endobj#imsx', $contents, $encryption_match ) )
+			return ;
+
+		$encryption_data	=  $encryption_match [ 'encrypt' ] ;
+		
+		// Encryption mode
+		if  ( ! preg_match ( '#/Filter \s* / (?P<mode> \w+)#ix', $encryption_data, $encryption_data_match ) )
+			return ;
+
+		switch ( strtolower ( $encryption_data_match [ 'mode' ] ) )
+		   {
+			case	'standard' :
+				$this -> EncryptionMode		=  self::PDFCRYPT_STANDARD ;
+				break ;
+
+			default :
+				if  ( self::$DEBUG  >  1 )
+					error ( new PdfToTextException ( "Unhandled encryption mode '{$encryption_data [ 'mode' ]}'", $encrypt_object_id ) ) ;
+				
+		    }
+
+		// Other encryption data
+		preg_match ( '#/V \s+ (?P<value> \d+)#ix', $encryption_data, $algorithm_match ) ;
+		$this -> EncryptionAlgorithm		=  ( integer ) $algorithm_match [ 'value' ] ;
+
+		preg_match ( '#/R \s+ (?P<value> \d+)#ix', $encryption_data, $algorithm_revision_match ) ;
+		$this -> EncryptionAlgorithmRevision	=  ( integer ) $algorithm_revision_match [ 'value' ] ;
+
+		preg_match ( '#/P \s+ (?P<value> \-? \d+)#ix', $encryption_data, $flags_match ) ;
+		$this -> EncryptionFlags		=  ( integer) $flags_match [ 'value' ] ;
+
+		preg_match ( '#/R \s+ (?P<value> \d+)#ix', $encryption_data, $key_length_match ) ;
+		$this -> EncryptionKeyLength		=  $key_length_match [ 'value' ] ;
+
+		preg_match ( '#/U \s* \( \s* (?P<value> [^)]+) \)#ix', $encryption_data, $user_match ) ;
+		$this -> HashedUserPassword		=  $user_match [ 'value' ] ;
+
+		preg_match ( '#/O \s* \( \s* (?P<value> [^)]+) \)#ix', $encryption_data, $owner_match ) ;
+		$this -> HashedOwnerPassword		=  $owner_match [ 'value' ] ;
+
+		// All done, just say that the file is password-protected
+		$this -> IsPasswordProtected		=  true ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        IsRtlCharacter - Checks if a Unicode codepoint belongs to an RTL language.
+	
+	    PROTOTYPE
+	        $status		=  $this -> IsRtlCharacter ( $ch ) ;
+	
+	    DESCRIPTION
+	        Checks if a Unicode codepoint belongs to an RTL language.
+		For performance reasons, this function operates on as few character ranges as possible. For this reason, 
+		it may return true even if the specified codepoint does not have any character mapped to it.
+	
+	    PARAMETERS
+	        $ch (integer) -
+	                Unicode codepoint to be checked.
+	
+	    RETURN VALUE
+	        Returns true if the specified Unicode codepoint belongs to an RTL language, false otherwise.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsRtlCharacter ( $ch ) 
+	   {
+		if  ( isset ( $this -> RtlCharacterBuffer [ $ch ] ) )
+			return ( $this -> RtlCharacterBuffer [ $ch ] ) ;
+		else
+		   {
+			foreach  ( self::$RtlCharacters  as  $range )
+			   {
+				if  ( $ch  >=  $range [0]  &&  $ch  <=  $range [1] )
+				   {
+					$this -> RtlCharacterBuffer [ $ch ]	=  true ;
+
+					return ( true ) ;
+				    }
+			    }
+
+			$this -> RtlCharacterBuffer [ $ch ]	=  false ;
+
+			return ( false ) ;
+		    }
+	    }
+
+
 	// __extract_chars_from_array -
 	//	Extracts characters enclosed either within parentheses (character codes) or angle brackets (hex value)
 	//	from an array.
@@ -3155,6 +3450,16 @@ class  PdfToText 	extends PdfObjectBase
 
 			self::$IgnoredInstructions []	=  $template ;
 		    }
+	    }
+
+
+	// __rtl_process -
+	//	Processes the contents of a page when it contains characters belonging to an RTL language.
+	private function  __rtl_process ( $text )
+	   {
+		$result		=  $text ;
+
+		return ( $result ) ;
 	    }
 
 
@@ -3368,6 +3673,9 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		// Font uses the Windows Ansi encoding
 		else if  ( preg_match ( '#/Encoding \s* /WinAnsiEncoding#ix', $font_definition ) )
 			$font_type	=  PdfTexterFont::FONT_ENCODING_WINANSI ;
+		// Font uses the Mac Roman encoding
+		else if  ( preg_match ( '#/Encoding \s* /MacRomanEncoding#ix', $font_definition ) )
+			$font_type	=  PdfTexterFont::FONT_ENCODING_MAC_ROMAN ;
 	
 		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type ) ;
 
@@ -4309,13 +4617,19 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 		// Extract the Differences array
 	   	preg_match ( '/ \[ (?P<contents> [^\]]*)  \] /x', $definitions, $match ) ;
-		$data 		=  trim ( preg_replace ( '/(\d+)/', '/$1', $match [ 'contents' ] ) ) ;
+		$data 		=  trim ( preg_replace ( '/\s+(\d+)/', '/$1', $match [ 'contents' ] ) ) ;
 		$items 		=  explode ( '/', $data ) ;
-		array_shift ( $items ) ;
+
+		// Some /Differences[] arrays start with a slash, some other not. If the first item is empty, then it started with a slash
+		// so skip the item (it could also come from the fact that the starting number was preceded by spaces)
+		if  ( ! $items [0] )
+			$start	=  1 ;
+		else
+			$start	=  0 ;
 
 		$index 		=  0 ;
 
-		for  ( $i = 0, $item_count = count ( $items ) ; $i  <  $item_count ; $i ++ )
+		for  ( $i = $start, $item_count = count ( $items ) ; $i  <  $item_count ; $i ++ )
 		   {
 		   	$item 		=  trim ( $items [$i] ) ;
 
@@ -4327,10 +4641,25 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 			   {
 			   	// Keyword (character name) exists in the encoding table
 				if  ( isset ( self::$Encodings [ $item ] ) )
-					$this -> Map [ $index ] 	=  self::$Encodings [ $item ] [ $this -> Encoding ];
+				   {
+					$this -> Map [ $index ] 	=  self::$Encodings [ $item ] [ $this -> Encoding ] ;
+				    }
+				// Not defined ; check if this is the "/gxx" notation, where "xx" is a number
+				else if  ( preg_match ( '/g (?P<value> \d+)/x', $item, $match ) )
+				   {
+					$value		=  ( integer ) $match [ 'value' ] ;
+
+					// In my current state of investigations, the /g notation has the following characteristics :
+					// - The value 29 must be added to the number after the "/g" string (why ???)
+					// - The value after the "/g" string can be greater than 255, meaning that it could be Unicode codepoint
+					// This has to be carefully watched before revision
+					$value	+=  29 ;
+
+					$this -> Map [ $index ]		=  $value ;
+				    }
 				// Otherwise, put a quotation mark instead
 				else
-					$this -> Map [ $index ] 	=  '?' ;
+					$this -> Map [ $index ] 	=  ord ( '?' ) ;
 
 				$index ++ ;
 			    }
@@ -4358,10 +4687,16 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		else
 			$ord		=  $offset ;
 
+		// Check for final character translations (concerns only a few number of characters)
 		if  ( $this -> Encoding  ==  self::PDF_WIN_ANSI_ENCODING  &&  isset ( PdfTexterFont::$WinAnsiCharacterMap [ $ord ] ) )
 			$ord	=  PdfTexterFont::$WinAnsiCharacterMap [ $ord ] ;
 		else if  ( $this -> Encoding  ==  self::PDF_MAC_ROMAN_ENCODING  &&  isset ( PdfTexterFont::$MacRomanCharacterMap [ $ord ] ) )
 			$ord	=  PdfTexterFont::$MacRomanCharacterMap [ $ord ] ;
+		// As far as I have been able to see, the values expressed by the /Differences tag were the only ones used within the
+		// Pdf document ; however, handle the case where some characters do not belong to the characters listed by /Differences,
+		// and use the official Adobe encoding maps when necessary
+		else if  ( isset ( self::$Encodings [ $ord ] [ $this -> Encoding ] ) )
+			$ord	=  self::$Encodings [ $ord ] [ $this -> Encoding ] ;
 		
 		return ( $this -> CodePointToUtf8 ( $ord ) ) ;
 	    }
