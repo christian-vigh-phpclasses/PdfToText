@@ -347,6 +347,10 @@ The default value is a space.
 
 A string containing the whole text extracted from the underlying pdf file. Note that pages are separated with a form feed.
 
+### Title ###
+
+Document title, as specified in the author information object.
+
 ### UserPassword ###
 
 User password to be specified if the PDF file is password-protected.
