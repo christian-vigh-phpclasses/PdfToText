@@ -81,6 +81,10 @@ and here :
 
 [http://www.pdftotext.eu](http://www.pdftotext.eu "http://www.pdftotext.eu")
 
+and also here :
+
+[https://github.com/christian-vigh-phpclasses/PdfToText](https://github.com/christian-vigh-phpclasses/PdfToText "https://github.com/christian-vigh-phpclasses/PdfToText")
+
 # REFERENCE #
 
 ## METHODS ##
