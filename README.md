@@ -71,7 +71,16 @@ However, all of that will not guarantee that it will work in every situation ; s
 
 		christian.vigh@wuthering-bytes.com
 
+# OTHER LINKS #
+
+This class can also be found here :
+
+[http://www.phpclasses.org/package/9732-PHP-Extract-text-contents-from-PDF-files.html](http://www.phpclasses.org/package/9732-PHP-Extract-text-contents-from-PDF-files.html "http://www.phpclasses.org/package/9732-PHP-Extract-text-contents-from-PDF-files.html")
   
+and here :
+
+[http://www.pdftotext.eu](http://www.pdftotext.eu "http://www.pdftotext.eu")
+
 # REFERENCE #
 
 ## METHODS ##
@@ -232,6 +241,10 @@ One of the *PDFCRYPT\_\** constants.
 
 This value is set to *PDFCRYPT\_NONE if the PDF file is not password-protected.
 
+### EncryptMetadata ###
+
+A flag coming from a password-protected file that says is the document metadata is also encrypted.
+
 ### EOL ###
 
 The string to be used for line breaks. The default is PHP\_EOL.
@@ -239,14 +252,6 @@ The string to be used for line breaks. The default is PHP\_EOL.
 ### Filename ###
 
 Name of the file whose text contents have been extracted.
-
-### HashedOwnerPassword ###
-
-A 32-byte string used in determining whether a valid owner password was specified.
-
-### HashedUserPassword ###
-
-A 32-byte string used in determining whether a valid user password was specified.
 
 ### ID, ID2 ###
 
@@ -256,7 +261,7 @@ The second id is not clearly described in the Pdf specifications.
 
 ### Images ###
 
-An array of **PdfImage** objects.
+An array of objects inheriting from the **PdfImage** class. Currently, only the **PdfJpegIMage** class is implemented.
 
 The class currently supports the following properties :
 
@@ -321,6 +326,10 @@ will be rendered as :
 
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
+### OwnerEncryptionKey ###
+
+A 32-byte string used in determining whether a valid owner password was specified.
+
 ### OwnerPassword ###
 
 Owner password to be specified if the PDF file is password-protected.
@@ -350,6 +359,10 @@ A string containing the whole text extracted from the underlying pdf file. Note 
 ### Title ###
 
 Document title, as specified in the author information object.
+
+### UserEncryptionKey ###
+
+A 32-byte string used in determining whether a valid user password was specified.
 
 ### UserPassword ###
 
