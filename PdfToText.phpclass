@@ -25,10 +25,10 @@
 	To use this file, you must conform to the GNU Lesser General Public License.
 
     HISTORY
-    [Version : 1.2.47]	[Date : 2016/09/13]     [Author : CV]
-	. Changed the licensing model from GPL TO LGPL.
-	. Specialized the PdfImage class into subclasses. The only available subclass for now is PdfJpegImage.
-	. Added the $EncryptMetadata property, coming from encyption information present in the PDF file.
+    [Version : 1.2.48]	[Date : 2016/10/14]     [Author : CV]
+	. Some pages could not be extracted correctly from PDF documents including nested page content
+	  descriptions (ie, pages leading to another object listing in turn the objects that describe the page,
+	  instead of directly leading to the object that describe the page).
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
         Initial version.
@@ -502,7 +502,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.47" ;
+	const		VERSION					=  "1.2.48" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -4656,19 +4656,80 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	//	Tries to assign a page number to all page description objects that have been collected by the Peek() method.
 	//	Also creates the Pages associative array, whose keys are page numbers and whose values are the ids of the objects
 	//	that the page contains.
+	//
+	//	The following example gives an overview of a possible layout for page catalogs ; it describes which objects contain
+	//	what. 
+	//	Lines starting with "#x", where "x" is a number, stands for a PDF object definition, which will start with "x 0 obj"
+	//	in the PDF file.
+	//	Whenever numbers are referenced (other than those prefixed with a "#"), it means "reference to the specified object.
+	//	For example, "54" will refer to object #54, and will be given as "54 0 R" in the PDF file.
+	//	The numbers at the beginning of each line are just "step numbers", which will be referenced in the explanations after
+	//	the example.
+	/*
+		(01) #1 : /Type/Catalog /Pages 54
+		(02)    -> #54 : /Type/Pages /Kids[3 28 32 58] /Count 5
+		(03)           -> #3 : /Type/Page /Parent 54 /Contents[26]
+		(04)		     -> #26 : page contents
+		(05)           -> #28 : /Type/Page /Parent 54 /Contents[30]
+		(06)		     -> #30 : page contents
+		(07)	       -> #32 : /Type/Page /Parent 54 /Contents[34]
+		(08)		     -> #34 : page contents
+		(09)	       -> #58 : /Type/Pages /Parent 54 /Count 2 /Kids[36 40]
+		(10)		     -> #36 : /Type/Page /Parent 58 /Contents[38]
+		(11)			    -> #38 : page contents
+		(12)		     -> #40 : /Type/Page /Parent 58 /Contents[42]
+		(13)			    -> #42 : page contents
+	  */
+	 /*
+		 Explanations :
+		(01) Object #1 contains the page catalog ; it states that a further description of the page contents is given by object #54.
+		     Note that it could reference multiple page descriptions, such as : /Pages [54 68 99...] (although I did not met the
+		     case so far)
+		(02) Object #54 in turn says that it as "kids", described by objects #3, #28, #32 and #58. It also says that it has 5 pages
+		     (/Count parameter) ; but wait... the /Kids parameter references 4 objects while the /Count parameter states that we 
+		     have 5 pages : what happens ? we will discover it in the explanations below.
+		(03) Object #3 states that it is aimed for page description (/Type/Page) ; the page contents will be found in object
+		     #26, specified after the /Contents parameter. Note that here again, multiple objects could be referenced by the 
+		     /Contents parameter but, in our case, there is only one, 26. Object #3 also says that its parent object (in the page
+		     catalog) is object #54, defined in (01).
+		     Since this is the first page we met, it will have page number 1.
+		(04) ... object #26 contains the Postscript instructions to draw page #1
+		(05) Object #28 has the same type as #3 ; its page contents can be located in object #30 (06)
+		     The same applies for object #32 (07), whose page contents are given by object #34 (08).
+		     So, (05) and (07) will be pages 2 and 3, respectively.
+		(09) Now, it starts to become interesting : object #58 does not directly lead to an object containing Postscript instructions
+		     as did objects #3, #28 and #32, but to yet another page catalog which contains 2 pages (/Count 2), described by
+		     objects #36 and #40
+		(10) Object #36 says that we will find the page contents in object #38 (which will be page 4)
+		(12) ... and object #40 says that we will find the page contents in object #42 (and our final page, 5)
+	  */
 	protected function  MapKids ( $catalog, &$page ) 
 	   {
 		$entry		=  $this -> PageKids [ $catalog ] ;
 
+		// The PDF file contains an object containing a /Type/Pages/Kids[] construct, specified by another object containing a
+		// /Type/Catalog/Pages construct : we will rely on its contents to find which page contains what
 		if  ( isset ( $this -> PageContents [ $entry [ 'kids' ] [0] ] ) )
 		   {
 			foreach  ( $entry [ 'kids' ]  as  $item )
 			   {
-				$this -> PageContents [ $item ]	[ 'page' ]	=  $page ;
-				$this -> Pages [ $page ]			=  $this -> PageContents [ $item ] [ 'contents' ] ;
-				$page ++ ;
+				// Some objects given by a /Page /Contents[] construct do not directly lead to an object describing PDF contents,
+				// but rather to an object containing in turn a /Pages /Kids[] construct ; this adds a level of indirection, and
+				// we have to recursively process it
+				if  ( isset ( $this -> PageKids [ $item ] ) )
+				   {
+					$this -> MapKids ( $item, $page ) ;
+				    }
+				// The referenced object actually defines page contents (no indirection)
+				else
+				   {
+					$this -> PageContents [ $item ]	[ 'page' ]	=  $page ;
+					$this -> Pages [ $page ]			=  $this -> PageContents [ $item ] [ 'contents' ] ;
+					$page ++ ;
+				    }
 			    }
 		    }
+		// No page catalog at all : consider everything is on the same page (this class does not use the WheresMyCrystalBall trait)
 		else
 		   {
 			foreach  ( $entry [ 'kids' ]  as  $kid )

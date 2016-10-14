@@ -1,3 +1,8 @@
+    [Version : 1.2.47]	[Date : 2016/09/13]     [Author : CV]
+	. Changed the licensing model from GPL TO LGPL.
+	. Specialized the PdfImage class into subclasses. The only available subclass for now is PdfJpegImage.
+	. Added the $EncryptMetadata property, coming from encyption information present in the PDF file.
+
     [Version : 1.2.46]	[Date : 2016/08/24]     [Author : CV]
 	. A number of inconsistencies was found in the chain of MapCharacter() methods up to  array access
 	  on a PdfTexterCharacterMap object. Sometimes, a UTF8 string was returned, and sometimes it was a 
