@@ -25,16 +25,13 @@
 	To use this file, you must conform to the GNU Lesser General Public License.
 
     HISTORY
-    [Version : 1.2.49]	[Date : 2016/10/14]     [Author : CV]
-	. Font name specifiers (/Fx, /TTy, /Rz etc.) were processed differently by the IsFontMap() method (used
-	  to recognize an object that has font specifier/pdf object associations), the AddFontMap() method
-	  (which adds a font map to the internal font table) and the __next_instruction() method (which tries
-	  to recognize font specifiers within Postscript instructions). Such differences in the way of handling
-	  font specifiers led to discrepancies in the output text, with regards to the original text.
-	. Added the PdfToTextBase::$FontSpecifiers, which is now the regular expression used throughout this
-	  class to recognize a font specifier.
-	. Added the /OPBaseFont and /OPSUFont font specifiers (used by Ranx Xerox scanners).
-	. Added the PdfTexterPageMap::GetResourceMappings() method.
+    [Version : 1.2.50]	[Date : 2016/10/19]     [Author : CV]
+	. In the Adobe Postscript language, displaying text such as "(my car)" requires the left and right 
+	  parentheses to be escaped escaped with a backslash. The class did not handle the case where the 
+	  current font uses two-bytes characters, including the backslash itself : in such cases, the backslash
+	  was recognized as a normal character and, since escaped characters are always represented with one byte,
+	  the remaining input was shifted by one byte, giving most frequently far-east Unicode characters,
+	  such as Chinese. Thus, "(my car)" produced the string "\" followed by Unicode garbage.
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
         Initial version.
@@ -138,10 +135,6 @@ abstract class  PdfObjectBase		// extends  Object
 	    RETURN VALUE
 	        A string that contains the UTF8 bytes representing the Unicode code point.
 	
-	    IsObjectStream -
-		Checks if the code contains an object stream (/Type/ObjStm)
-			/Subtype/Image
-
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  CodePointToUtf8 ( $code )
 	   {
@@ -519,7 +512,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.49" ;
+	const		VERSION					=  "1.2.50" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2197,6 +2190,33 @@ class  PdfToText 	extends PdfObjectBase
 									   {
 										$unknown_character_met	=  true ;
 										break ;
+									    }
+
+									// Yes !!! for characters encoded with two bytes, we can find the following construct :
+									//	0x00 "\" "(" 0x00 "C" 0x00 "a" 0x00 "r" 0x00 "\" ")"
+									// which must be expanded as : (Car)
+									// We have here the escape sequences "\(" and "\)", but the backslash is encoded on two bytes
+									// (although the MSB is nul), while the escaped character is encoded on 1 byte. waiting
+									// for the next quirk to happen...
+									if  ( $newchar  ==  '\\' )
+									   {
+										$ch	=  $text [ $i + 2 ] ;
+
+										switch ( $ch ) 
+										   {
+											// Normally, only a few characters should be escaped...
+											case	'('	:  $newchar =  "("  ; break ;
+											case	')'	:  $newchar =  ")"  ; break ;
+											case	'\\'	:  $newchar =  "\\" ; break ;
+				   		   					case 	'n' 	:  $newchar =  "\n" ; break ;
+				   		   					case 	'r' 	:  $newchar =  "\r" ; break ;
+
+											// ... but should we consider that it is a heresy to escape other characters ?
+											// For the moment, no.
+											default		:  $newchar =  $ch  ; break ;
+										    }
+
+										$i ++ ;		// this time we processed 3 bytes, not 2
 									    }
 
 									$temp_result		.=  $newchar ;
