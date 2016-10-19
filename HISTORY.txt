@@ -1,3 +1,22 @@
+    [Version : 1.2.50]	[Date : 2016/10/19]     [Author : CV]
+	. In the Adobe Postscript language, displaying text such as "(my car)" requires the left and right 
+	  parentheses to be escaped escaped with a backslash. The class did not handle the case where the 
+	  current font uses two-bytes characters, including the backslash itself : in such cases, the backslash
+	  was recognized as a normal character and, since escaped characters are always represented with one byte,
+	  the remaining input was shifted by one byte, giving most frequently far-east Unicode characters,
+	  such as Chinese. Thus, "(my car)" produced the string "\" followed by Unicode garbage.
+
+    [Version : 1.2.49]	[Date : 2016/10/15]     [Author : CV]
+	. Font name specifiers (/Fx, /TTy, /Rz etc.) were processed differently by the IsFontMap() method (used
+	  to recognize an object that has font specifier/pdf object associations), the AddFontMap() method
+	  (which adds a font map to the internal font table) and the __next_instruction() method (which tries
+	  to recognize font specifiers within Postscript instructions). Such differences in the way of handling
+	  font specifiers led to discrepancies in the output text, with regards to the original text.
+	. Added the PdfToTextBase::$FontSpecifiers, which is now the regular expression used throughout this
+	  class to recognize a font specifier.
+	. Added the /OPBaseFont and /OPSUFont font specifiers (used by Ranx Xerox scanners).
+	. Added the PdfTexterPageMap::GetResourceMappings() method.
+
     [Version : 1.2.48]	[Date : 2016/10/14]     [Author : CV]
 	. Some pages could not be extracted correctly from PDF documents including nested page content
 	  descriptions (ie, pages leading to another object listing in turn the objects that describe the page,
