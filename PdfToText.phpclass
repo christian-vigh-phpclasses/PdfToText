@@ -21,17 +21,11 @@
     AUTHOR
         Christian Vigh, 04/2016.
 
-    LICENSE
-	To use this file, you must conform to the GNU Lesser General Public License.
-
     HISTORY
-    [Version : 1.2.50]	[Date : 2016/10/19]     [Author : CV]
-	. In the Adobe Postscript language, displaying text such as "(my car)" requires the left and right 
-	  parentheses to be escaped escaped with a backslash. The class did not handle the case where the 
-	  current font uses two-bytes characters, including the backslash itself : in such cases, the backslash
-	  was recognized as a normal character and, since escaped characters are always represented with one byte,
-	  the remaining input was shifted by one byte, giving most frequently far-east Unicode characters,
-	  such as Chinese. Thus, "(my car)" produced the string "\" followed by Unicode garbage.
+    [Version : 1.2.51]	[Date : 2016/10/22]     [Author : CV]
+	. Load() method : Added a comprehensive coverage of errors that may be returned by preg_match_all()
+	  when called for extracting obj/endobj constructs (some PDF files may lead pcre functions to reach the 
+	  pcre.recursion_limit or pcre_backtrack_limit settings of php.ini).
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
         Initial version.
@@ -512,7 +506,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.50" ;
+	const		VERSION					=  "1.2.51" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -887,8 +881,46 @@ class  PdfToText 	extends PdfObjectBase
 			$this -> Options	|=  self::PDFOPT_GET_IMAGE_DATA ;
 
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
-		if  ( ! preg_match_all ( '/(?P<object_id> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $matches ) )
-			return ( false ) ;
+		$matches	=  null ;
+		$status		=  preg_match_all ( '/(?P<object_id> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $matches ) ;
+
+		// We put a particular attention in treating errors returned by preg_match_all() here, since we need to be really sure why we did not
+		// find any PDF object in the supplied contents
+		if  ( ! $status ) 
+		   {
+			$preg_error	=  preg_last_error ( ) ;
+
+			switch  ( $preg_error )
+			   {
+				case  PREG_NO_ERROR :
+					return ( false ) ;
+
+				case  PREG_INTERNAL_ERROR :
+					error ( new PdfToTextException ( "PDF object extraction : the preg_match_all() function encountered an internal error." ) ) ;
+
+				case  PREG_BACKTRACK_LIMIT_ERROR :
+					error ( new PdfToTextException ( "PDF object extraction : backtrack limit reached (you may have to modify the pcre.backtrack_limit " .
+							"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.backtrack_limit' ) . ")." ) ) ;
+
+				case  PREG_JIT_STACKLIMIT_ERROR :
+					error ( new PdfToTextException ( "PDF object extraction : JIT stack limit reached (you may disable this feature by setting the pcre.jit " .
+							"setting of your PHP.ini file to 0)." ) ) ;
+
+				case  PREG_RECURSION_LIMIT_ERROR :
+					error ( new PdfToTextException ( "PDF object extraction : recursion limit reached (you may have to modify the pcre.recursion_limit " .
+							"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.recursion_limit' ) . ")." ) ) ;
+
+				case  PREG_BAD_UTF8_ERROR :
+					error ( new PdfToTextException ( "PDF object extraction : bad UTF8 character encountered." ) ) ;
+
+				case PREG_BAD_UTF8_OFFSET_ERROR :
+					error ( new PdfToTextException ( "PDF object extraction : the specified offset does not start at the beginning of a valid UTF8 codepoint." ) ) ;
+
+				default :
+					error ( new PdfToTextException ( "PDF object extraction : unkown PREG error #$preg_error" ) ) ;
+
+			    }
+		    }
 
 		// Build an object id/object data associative array ; this will later be used by the PdfTexterPageMap -> Peek() method
 		// to retrieve additional resources that may be local to a page
@@ -2222,6 +2254,7 @@ class  PdfToText 	extends PdfObjectBase
 									$temp_result		.=  $newchar ;
 								    }
 
+								// Happens only if we were unable to translate a character using the current character map
 								if  ( ! $unknown_character_met )
 								   {
 									$result		.=  $temp_result ;
