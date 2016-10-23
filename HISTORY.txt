@@ -1,3 +1,13 @@
+    [Version : 1.2.52]	[Date : 2016/10/23]     [Author : CV]
+	. Although page header and footer contents are not yet publicly available, they are internally extracted
+	  and removed from page contents. The regular expression that captured such data was too greedy, and 
+	  caused regular page contents to be mistakenly interpreted as header or footer contents.
+
+    [Version : 1.2.51]	[Date : 2016/10/22]     [Author : CV]
+	. Load() method : Added a comprehensive coverage of errors that may be returned by preg_match_all()
+	  when called for extracting obj/endobj constructs (some PDF files may lead pcre functions to reach the 
+	  pcre.recursion_limit or pcre_backtrack_limit settings of php.ini).
+
     [Version : 1.2.50]	[Date : 2016/10/19]     [Author : CV]
 	. In the Adobe Postscript language, displaying text such as "(my car)" requires the left and right 
 	  parentheses to be escaped escaped with a backslash. The class did not handle the case where the 
