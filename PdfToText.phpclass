@@ -22,10 +22,10 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.2.51]	[Date : 2016/10/22]     [Author : CV]
-	. Load() method : Added a comprehensive coverage of errors that may be returned by preg_match_all()
-	  when called for extracting obj/endobj constructs (some PDF files may lead pcre functions to reach the 
-	  pcre.recursion_limit or pcre_backtrack_limit settings of php.ini).
+    [Version : 1.2.52]	[Date : 2016/10/23]     [Author : CV]
+	. Although page header and footer contents are not yet publicly available, they are internally extracted
+	  and removed from page contents. The regular expression that captured such data was too greedy, and 
+	  caused regular page contents to be mistakenly interpreted as header or footer contents.
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
         Initial version.
@@ -506,7 +506,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.2.51" ;
+	const		VERSION					=  "1.2.52" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1860,9 +1860,22 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  ExtractTextData ( $object_id, $stream_contents, &$text, &$header, &$footer )
 	   {
+		// Normally, a header or footer is introduced with a construct like :
+		//	<< /Type /Pagination ... [/Bottom] ... >> (or [/Top]
+		// The initial regular expression was : 
+		//	<< .*? \[ \s* / (?P<location> (Bottom) | (Top) ) \s* \] .*? >> \s* BDC .*? EMC
+		// (the data contained between the BDC and EMC instructions are text-drawing instructions).
+		// However, this expression revealed to be too greedy and captured too much data ; in the following example :
+		//	<</MCID 0>> ...(several kb of drawing instructions)... << ... [/Bottom] ... >> BDC (other drawing instructions for the page footer) EMC
+		// everything was captured, from the initial "<<M/MCID 0>>" to the final "EMC", which caused regular page contents to be interpreted as page bottom
+		// contents.
+		// The ".*?" in the regex has been replaced with "[^>]*?", which works better. However, it will fail to recognize header/footer contents if
+		// the header/footer declaration contains a nested construct , such as : 
+		//	<< /Type /Pagination ... [/Bottom] ... << (some nested contents) >> ... >> (or [/Top]
+		// Let's wait for the case to happen one day...
 		static		$header_or_footer_re	=  '#
 								(?P<contents> 
-									<< .*? \[ \s* / (?P<location> (Bottom) | (Top) ) \s* \] .*? >> \s*
+									<< [^>]*? \[ \s* / (?P<location> (Bottom) | (Top) ) \s* \] [^>]*? >> \s*
 									BDC .*? EMC
 								 )
 							    #imsx' ;
@@ -1871,14 +1884,16 @@ class  PdfToText 	extends PdfObjectBase
 		$footer		=  
 		$text		=  '' ;
 
-		if  ( preg_match_all ( $header_or_footer_re, $stream_contents, $matches ) )
+		if  ( preg_match_all ( $header_or_footer_re, $stream_contents, $matches, PREG_OFFSET_CAPTURE ) )
 		   {
 			for  ( $i = 0, $count = count ( $matches [ 'contents' ] ) ; $i  <  $count ; $i ++ )
 			   {
-				if  ( ! strcasecmp ( $matches [ 'location' ] [$i], 'Bottom' ) )
-					$footer		=  $matches [ 'contents' ] [$i] ;
+				if  ( ! strcasecmp ( $matches [ 'location' ] [$i] [0], 'Bottom' ) )
+					$footer		=  $matches [ 'contents' ] [$i] [0] ;
 				else
-					$header		=  $matches [ 'contents' ] [$i] ;
+					$header		=  $matches [ 'contents' ] [$i] [0] ;
+
+				$remove []	=  [ $matches [ 'contents' ] [$i] [1], strlen ( $matches [ 'contents' ] [$i] [0] ) ] ;
 			    }
 
 			$text	=  preg_replace ( $header_or_footer_re, '', $stream_contents ) ;
