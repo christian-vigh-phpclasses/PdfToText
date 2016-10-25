@@ -1892,8 +1892,6 @@ class  PdfToText 	extends PdfObjectBase
 					$footer		=  $matches [ 'contents' ] [$i] [0] ;
 				else
 					$header		=  $matches [ 'contents' ] [$i] [0] ;
-
-				$remove []	=  [ $matches [ 'contents' ] [$i] [1], strlen ( $matches [ 'contents' ] [$i] [0] ) ] ;
 			    }
 
 			$text	=  preg_replace ( $header_or_footer_re, '', $stream_contents ) ;
