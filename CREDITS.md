@@ -32,6 +32,8 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Rolf Mast, who sent me samples that (finally) did not use character maps and allowed me to solve more easily a few bugs in the way I was parsing text drawing instructions
 - Rajnish Tatiwala who, among other things, sent me my first sample containing objects encoded with the CCITT FAX standard.
 - Jocemar Varela, who sent me samples that were generated using OCR software
+- Aryan Schmitz, who tried to port the PdfToText class to a system running PHP 5.2. This successful attempt led to long and detailed support exchanges, where I really appreciated his proactivity.
+- Francisco Godoy, who sent me a PDF sample which was enough simple to help me solve a long-time issue I had with PDF files using inline "templates"
 - And more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
