@@ -22,13 +22,10 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.0]	[2016/10/27]     [Author : CV]
-	. Added support for indirect object references in text drawing instructions. Such references may be of
-	  the form /Tplx, and are further described as /XObjects within the PDF file. Without this, some parts
-	  of the text contained in the PDF file will be completely missed.
-	. Added the MemoryUsage and MemoryPeakUsage properties, that give the difference between the memory
-	  occupied at the start and at the end of the Load() method. Note that this will not give the maximum
-	  amount of memory that has been occupied at a given time.
+    [Version : 1.3.1]	[Date : 2016/10/30]     [Author : CV]
+	. Author data was not correctly extracted in some cases.
+	. The ProcessTemplateReferences() issued some warnings in some cases, when no page structure is defined
+	  by the document
 
     (...)
 
@@ -511,7 +508,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.0" ;
+	const		VERSION					=  "1.3.1" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -3294,20 +3291,37 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	protected function  PeekAuthorInformation ( $object_id, $object_data )
 	   {
 		static		$re	=  '#
-						/
-						(?P<keyword> [^ (]+)
-						\(
-						(?P<value> [^)]+)
+						(?P<info>
+							/
+							(?P<keyword> [^ (]+)
+							\s* \(
+						)
 					    #imsx' ;
 
 		// To execute faster, run the regular expression only if the object data contains a /Author keyword
 		if  ( ( strpos  ( $object_data, '/Author' )  !==  false  ||  strpos ( $object_data, '/CreationDate' )  !==  false )  &&  
-				preg_match_all ( $re, $object_data, $matches ) )
+				preg_match_all ( $re, $object_data, $matches, PREG_OFFSET_CAPTURE ) )
 		   {
 			for  ( $i = 0, $count = count ( $matches [ 'keyword' ] ) ; $i  <  $count ; $i ++ )
 			   {
-				$keyword	=  $matches [ 'keyword' ] [$i] ;
-				$value		=  $this -> __extract_chars_from_block ( $matches [ 'value' ] [$i] ) ;
+				$keyword	=  $matches [ 'keyword' ] [$i] [0] ;
+
+				// Since the parameter value can contain any character, including "\" or "(", we will have to find the real closing
+				// parenthesis
+				$start_index	=  $matches [ 'info'    ] [$i] [1] + strlen ( $matches [ 'info' ] [$i] [0] ) ;
+				$value		=  '' ;
+
+				for  ( $j = $start_index, $object_length = strlen ( $object_data ) ; $j  <  $object_length ; $j ++ )
+				   {
+					if  ( $object_data [$j]  ==  '\\' )
+						$value	.=  '\\' . $object_data [++$j] ;
+					else if  ( $object_data [$j]  ==  ')' )
+						break ;
+					else
+						$value  .=  $object_data [$j] ;
+				    }
+
+				$value		=  $this -> __extract_chars_from_block ( $value ) ;
 
 				switch ( strtolower ( $keyword ) ) 
 				   {
@@ -4859,7 +4873,7 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 				// If the current object relates to the specified page number, AND it has xobjects, then the supplied text data
 				// may contain template reference of the form : /TPLx.
 				// In this case, we replace such a reference with the actual contents of the object they refer to
-				if  ( $page_contents [ 'page' ]  ==  $page_number  &&  count ( $page_contents [ 'xobjects' ] ) )
+				if  ( isset ( $page_contents [ 'page' ] )  &&  $page_contents [ 'page' ]  ==  $page_number  &&  count ( $page_contents [ 'xobjects' ] ) )
 				   {
 					$template_searches	=  [] ;
 					$template_replacements	=  [] ;
