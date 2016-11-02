@@ -1,3 +1,11 @@
+    [Version : 1.3.2]	[Date : 02/11/2016]     [Author : CV]
+	. Template references can reference an object, which in turn has its own template references.
+	  Changed the ProcessTemplateReferences() method to recursively handle such a situation.
+	. Reset internal structures at the end of the Load() method to save memory usage
+	. For backward compatibility with PHP versions < 5.2.11 where the mb_convert_encoding() function did not
+	  recognize hexadecimal HTML entities, changed the CodePointToUtf8() method to use only HTML entities
+	  expressed as decimal values.
+
     [Version : 1.3.1]	[Date : 2016/10/30]     [Author : CV]
 	. Author data was not correctly extracted in some cases.
 	. The ProcessTemplateReferences() issued some warnings in some cases, when no page structure is defined
