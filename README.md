@@ -211,6 +211,19 @@ A string containing the document creation date, in UTC format. The value can be 
 
 Application used to create the original document.
 
+### DocumentStartOffset ###
+
+A PDF document normally starts with a string of the form :
+
+	%PDF-a.b[.c.d...]
+
+where "a" and "b" (and the "c", "d", ... following) represent the version number of the PDF file.
+
+Some PDF documents may come with garbage at the beginning ; this is "illegal" of course, but Acrobat Reader is able to cope with that. So can do the **PdfToText** class...
+
+This property holds the byte offset in the input file where the starting "%PDF" string has been found.
+
+
 ### EncryptionAlgorithm ###
 
 Algorithm used for password-protected files.
@@ -293,6 +306,10 @@ Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is e
 
 This property is set to *true* if the Pdf file is password-protected.
 
+### MemoryUsage, MemoryPeakUsage ###
+
+Report the memory (peak) used by the *Load()* method.
+
 ### MinSpaceWidth ###
 
 Sometimes, characters (or blocks of characters) are separated by an offset which is counted in 1/1000's of text units. For certain ranges of values, when displayed on a graphical device, these consecutive characters appear to be separated by one space (or more). Of course, when generating ascii output, we would like to have some equivalent of such spacing.
@@ -355,6 +372,13 @@ Application used to generate the PDF file contents.
 A string to be used for separating blocks when a negative offset less than -1000 thousands of characters is specified between two sequences of characters specified as an array notation. This trick is often used when a pdf file contains tabular data.
 
 The default value is a space.
+
+### Statistics ###
+
+An associative array that contains the following entries :
+
+- 'TextSize' : Contains the total size in bytes represented by the Postscript-like instructions that draw the document contents
+- 'OptimizedTextSize' : Not all Postscript-like instructions for drawing page contents are significant ; since the parsing is done in pure PHP, it is very slow. This is why removing useless instructions with the preg\_replace() builtin function will in most cases significantly reduce the size of the data to be parsed. This entry gives the total size of the data that will be effectively parsed after removing the useless instructions.
 
 ### Text ###
 
