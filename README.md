@@ -423,6 +423,20 @@ The PDFOPT\_\* constants are a set of flags which can be combined when either in
 - *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
 - *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
 - *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
+- *PDFOPT\_NO\_HYPHENATED\_WORDS* : When specified, tries to join back hyphenated words into a single word. For example, the following text :
+
+		this is a sam-
+		ple text using hyphe-
+		nated words that can split
+		over seve-
+		ral lines.
+
+	will be rendered as :
+
+		this is a sample
+		text using hyphenated
+		words that can split
+		over several lines.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### PDFPERM\_\* ###
