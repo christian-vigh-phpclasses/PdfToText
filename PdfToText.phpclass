@@ -22,12 +22,16 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.4]	[Date : 2016/11/11]     [Author : CV]
-	. The PdfToText class is now compatible with PHP versions < 5.6
-	. Changed errors to warnings about unimplemented features.
-	. Corrected a warning issued by the Load() function when looping through page contents : some of them
-	  were NULL, instead of being an array, because of the modifications included in template processing
-	  in version 1.3.2 (related function : PdfTexterPageMap::MapKids).
+    [Version : 1.3.5]	[Date : 2016/12/02]     [Author : CV]
+	. Now handles references to font aliases that are local to a page. Previously, font aliases were
+	  considered as global to the document, which caused some incorrect character substitutions.
+	. Throw an exception if the mbstring extension is not loaded.
+	. Compatibility with PHP versions prior to 5.6 :
+	  - The memory_get_usage() and memory_get_peak_usage() functions are used only if implemented (they were
+	    implemented far later on Windows than on Unix). If not available, the MemoryUsage and MemoryPeakUsage
+	    properties will be set to zero.
+	. Fixed : Offsets specified between character strings were incorrectly interpreted, which sometimes
+	  caused groups of characters to be catenated together.
 
     (...)
 
@@ -511,7 +515,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.4" ;
+	const		VERSION					=  "1.3.5" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -750,6 +754,10 @@ class  PdfToText 	extends PdfObjectBase
 		'6' => self::CTYPE_XNUM  , '7' => self::CTYPE_XNUM  , '8' => self::CTYPE_XNUM  , '9' => self::CTYPE_XNUM
 	    ) ;
 
+	// Stuff specific to the current PHP version
+	private static	$HasMemoryGetUsage ;
+	private static  $HasMemoryGetPeakUsage ;
+
 
 	/*--------------------------------------------------------------------------------------------------------------
 
@@ -782,6 +790,10 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  __construct ( $filename = null, $options = self::PDFOPT_NONE, $user_password = false, $owner_password = false )
 	   {
+		// We need the mbstring PHP extension here...
+		if  ( ! function_exists ( 'mb_convert_encoding' ) )
+			error ( "You must enable the mbstring PHP extension to use this class." ) ;
+
 		// Perform static initializations if needed
 		if  ( ! self::$StaticInitialized )
 		   {
@@ -794,6 +806,10 @@ class  PdfToText 	extends PdfObjectBase
 
 			// Build the list of regular expressions from the list of ignored instruction templates
 			self::__build_ignored_instructions (  ) ;
+
+			// Check if some functions are supported or not
+			self::$HasMemoryGetUsage	=  function_exists ( 'memory_get_usage' ) ;
+			self::$HasMemoryGetPeakUsage	=  function_exists ( 'memory_get_peak_usage' ) ;
 
 			self::$StaticInitialized	=  true ;
 		    }
@@ -842,8 +858,8 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  Load ( $filename, $user_password = false, $owner_password = false )
 	   {
-		$memory_usage_start		=  memory_get_usage ( true ) ;
-		$memory_peak_usage_start	=  memory_get_peak_usage ( true ) ;
+		$memory_usage_start		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
+		$memory_peak_usage_start	=  ( self::$HasMemoryGetPeakUsage ) ?  memory_get_peak_usage ( true ) : 0 ;
 
 		// Check if the file exists
 		if  ( ! file_exists ( $filename ) )
@@ -1144,7 +1160,7 @@ class  PdfToText 	extends PdfObjectBase
 					echo "\n----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
 			    }
 
-			// All objects at this level has been process, so we can safely remove them from the object stack
+			// All objects at this level has been processed, so we can safely remove them from the object stack
 			array_pop ( $object_stack ) ;
 		    }
 
@@ -1154,11 +1170,15 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Current font defaults to -1, which means : take the first available font as the current one.
 		// Sometimes it may happen that text drawing instructions do not set a font at all (PdfPro for example)
-		$current_font	=  -1 ;
+		$current_font		=  -1 ;
 
 		// Build the page catalog
 		$this -> Pages	=  array ( ) ;
 		$this -> PageMap -> MapObjects ( $text ) ;
+
+		// Add font mappings local to each page
+		$mapped_fonts	=  $this -> PageMap -> GetMappedFonts ( ) ;
+		$this -> FontTable -> AddPageFontMap ( $mapped_fonts ) ;
 
 		// Extract text from the collected text elements
 		foreach ( $this -> PageMap -> Pages as  $page_number => $page_objects )
@@ -1201,12 +1221,13 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
 
+
 		unset ( $this -> FontTable ) ;
 		unset ( $this -> PageMap ) ;
 
 		// Compute memory occupied for this file
-		$memory_usage_end		=  memory_get_usage ( true ) ;
-		$memory_peak_usage_end		=  memory_get_peak_usage ( true ) ;
+		$memory_usage_end		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
+		$memory_peak_usage_end		=  ( self::$HasMemoryGetPeakUsage ) ?  memory_get_peak_usage ( true ) : 0 ;
 
 		$this -> MemoryUsage		=  $memory_usage_end      - $memory_usage_start ;
 		$this -> MemoryPeakUsage	=  $memory_peak_usage_end - $memory_peak_usage_start ;
@@ -1320,7 +1341,7 @@ class  PdfToText 	extends PdfObjectBase
 		- When $group_by_page is false :
 			[ [ 1, 100 ], [ 1, 200 ], [ 3, 157 ] ]
 		- When $group_by_page is true :
-			[ 1 => [ 100, 200 ], 3 => [ 157 ]
+			[ 1 => [ 100, 200 ], 3 => [ 157 ] ]
 	
 	    PARAMETERS
 	        $search (string) -
@@ -2067,6 +2088,9 @@ class  PdfToText 	extends PdfObjectBase
 		// Current font size
 		$current_font_size 		=  0 ;
 
+		// Active template
+		$current_template		=  '' ;
+
 		// Various pre-computed variables
 		$separator_length		=  strlen ( $this -> Separator ) ;
 
@@ -2104,7 +2128,7 @@ class  PdfToText 	extends PdfObjectBase
 		$same_separators		=  ( $this -> Separator  ==  $this -> BlockSeparator ) ;
 
 		// Loop through instructions
-		while  ( ( $instruction =  $this -> __next_instruction ( $data, $data_length, $data_index ) )  !==  false )
+		while  ( ( $instruction =  $this -> __next_instruction ( $page_number, $data, $data_length, $data_index, $current_template ) )  !==  false )
 		   {
 			// Character position after the current instruction
 			$data_index 	=  $instruction [ 'next' ] ;
@@ -2185,6 +2209,13 @@ class  PdfToText 	extends PdfObjectBase
 					    }
 
 			   		break ;
+
+				// "/TPLx" : references a template, which can contain additional font aliases
+				case	'template' :
+					if  ( $this -> PageMap -> IsValidXObjectName ( $instruction [ 'token' ] ) )
+						$current_template	=  $instruction [ 'token' ] ;
+
+					break ;
 
 			   	case 	'fontsize' :
 			   		$current_font_size 	=  $instruction [ 'size' ] ;
@@ -2476,7 +2507,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	// __next_instruction -
 	//	Retrieves the next instruction from the drawing text block.
-	function  __next_instruction ( $data, $data_length, $index )
+	function  __next_instruction ( $page_number, $data, $data_length, $index, $current_template )
 	   {
 		static 	$last_instruction 	=  false ;
 
@@ -2495,7 +2526,7 @@ class  PdfToText 	extends PdfObjectBase
 		$number_stack 	=  array ( ) ;
 
 		// Loop through the stream of tokens
-		while  ( ( $part = $this -> __next_token ( $data, $data_length, $index ) )  !==  false )
+		while  ( ( $part = $this -> __next_token ( $page_number, $data, $data_length, $index ) )  !==  false )
 		   {
 			$token 		=  $part [0] ;
 			$next_index 	=  $part [1] ;
@@ -2542,7 +2573,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Raw text output
 			else if  ( $token [0]  ==  '(' )
 			   {
-			   	$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
+			   	$next_part 	=  $this -> __next_token ( $page_number, $data, $data_length, $next_index ) ;
 			   	$instruction	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( $token ), 'token' => $token ) ;
 
 			   	if  ( $next_part [0]  ==  "'" )
@@ -2559,7 +2590,7 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass & self::CTYPE_ALNUM ) )
 				   {
-			   		$next_part 	=  $this -> __next_token ( $data, $data_length, $next_index ) ;
+			   		$next_part 	=  $this -> __next_token ( $page_number, $data, $data_length, $next_index ) ;
 			   		$instruction	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( $token ), 'token' => $token ) ;
 
 			   		if  ( $next_part [0]  ==  "'" )
@@ -2582,18 +2613,29 @@ class  PdfToText 	extends PdfObjectBase
 			// Token starts with a slash : maybe a font specification
 			else if  ( preg_match ( '#^ ( ' . self::$FontSpecifiers . ' ) #ix', $token ) )
 			   {
-				if  ( isset ( $this -> MapIdBuffer [ $token ] ) )
-					$id	=   $this -> MapIdBuffer [ $token ] ;
+				$key	=  "$current_template:$token" ;
+
+				if  ( isset ( $this -> MapIdBuffer [ $key ] ) )
+					$id	=   $this -> MapIdBuffer [ $key ] ;
 				else
 				   {
-					$id 	=  $this -> FontTable -> GetFontByMapId ( $token ) ;
+					$id 	=  $this -> FontTable -> GetFontByMapId ( $page_number, $current_template, $token ) ;
 
-					$this -> MapIdBuffer [ $token ]	=  $id ;
+					$this -> MapIdBuffer [ $key ]	=  $id ;
 				    }
 
 				return ( array ( 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id, 'token' => $token ) ) ;
 			    }
-			    // Other instructions : we're not that much interested in them, so clear the number stack and consider
+			// Template reference, such as /TPL1. Each reference has initially been replaced by /PDFTOTEXT_TEMPLATE_TPLx during substitution
+			// by ProcessTemplateReferences(), because templates not only specify text to be replaced, but also font aliases
+			// -and this is the place where we catch font aliases in this case
+			else if  ( preg_match ( '/PDFTOTEXT_TEMPLATE_ (?P<template> \w+) /ix', $token, $match ) )
+			   {
+				$current_template	=  '/' . $match [ 'template' ] ;
+
+				return ( array ( 'instruction' => 'template', 'next' => $next_index, 'token' => $current_template ) ) ;
+			    }
+			// Other instructions : we're not that much interested in them, so clear the number stack and consider
 			// that the current parameters, floating-point values, have been processed
 			else
 			   {
@@ -2610,7 +2652,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	// __next_token :
 	//	Retrieves the next token from the drawing instructions stream.
-	function  __next_token ( $data, $data_length, $index )
+	function  __next_token ( $page_number, $data, $data_length, $index )
 	   {
 		// Skip spaces
 		while  ( $index  <  $data_length  &&  ( $data [ $index ]  ==  ' '  ||  $data [ $index ]  ==  "\t"  ||  $data [ $index ]  ==  "\r"  ||  $data [ $index ]  ==  "\n" ) )
@@ -3174,10 +3216,11 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 			   {
 				$value	=  '' ;
 
-				while  ( $i  <  $length  &&  ( ( $array [$i]  >=  '0'  &&  $array [$i]  <=  '9' )  ||  $array [$i]  ==  '-'  ||  $array [$i]  ==  '+' ) )
+				while  ( $i  <  $length  &&  ( ( $array [$i]  >=  '0'  &&  $array [$i]  <=  '9' )  ||  
+						$array [$i]  ==  '-'  ||  $array [$i]  ==  '+'  ||  $array [$i]  ==  '.' ) )
 					$value	.=  $array [$i++] ;
 
-				$offsets []	=  ( integer ) $value ;
+				$offsets []	=  ( double ) $value ;
 
 				if  ( $value  !==  '' )
 					$i -- ;
@@ -3623,6 +3666,18 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	    }
 
 
+	// AddPageFontMap -
+	//	Adds font aliases to the current font map, in the form : "page:xobject:font".
+	//	The associated value is the font object itself.
+	public function  AddPageFontMap ( $map )
+	   {
+		foreach  ( $map  as  $map_entry )
+		   {
+			$this -> FontMap [ $map_entry [ 'page' ] . ':' . $map_entry [ 'xobject-name' ] . ':' . $map_entry [ 'font-name' ] ]	=  $map_entry [ 'object' ] ;
+		    }
+	    }
+
+
 	// AddCharacterMap -
 	//	Associates a character map to a font declaration that referenced it.
 	public function  AddCharacterMap ( $cmap )
@@ -3642,11 +3697,13 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 
 
 	// GetFontByMapId -
-	//	Returns the font id (object id) associated to the specified mapped id.
-	public function  GetFontByMapId ( $id )
+	//	Returns the font id (object id) associated with the specified mapped id.
+	public function  GetFontByMapId ( $page_number, $template, $id )
 	   {
 		if  ( isset ( $this -> FontMap [ $id ] ) )
 			return ( $this -> FontMap [ $id ] ) ;
+		else if  ( isset ( $this -> FontMap [ "$page_number:$template:$id" ] ) )
+			return ( $this -> FontMap [ "$page_number:$template:$id" ] ) ;
 		else
 			return ( -1 ) ;
 	    }
@@ -4710,6 +4767,8 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	// The same object can be referenced by many /Resources parameters throughout the pdf file, so its important to keep
 	// the analyzed mappings in a cache, so that later references will reuse the results of the first one
 	private		$ResourceMappingCache	=  array ( ) ;
+	// List of XObject names - Used by the IsValidTemplate() function
+	private		$XObjectNames		=  array ( ) ;
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -4987,18 +5046,14 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	   {
 		foreach  ( $page_contents [ 'xobjects' ]  as  $template_name => $template_object )
 		   {
-			if  ( isset ( $this -> TemplateObjects [ $template_object ] ) )
+			if  ( isset ( $this -> TemplateObjects [ $template_object ] )  &&  ! in_array ( $template_object, $objects_seen ) )
 			   {
-				$searches []		=  '#' . $template_name . ' \s+ Do\b #msx' ;
-				$replacements []	=  $this -> TemplateObjects [ $template_object ] ;
-			    }
-
-			// $objects_seen is here to prevent infinite recursion on PDF files generated by psychopathic software 
-			// Such a situation should never happen
-			if  ( isset ( $this -> PageContents [ $template_object ] ) &&  ! in_array ( $template_object, $objects_seen ) )
-			   {
+				$searches []		=  '#(' . $template_name . ' \s+ Do\b )#msx' ;
+				$replacements []	=  '/PDFTOTEXT_TEMPLATE_' . substr ( $template_name, 1 ) . ' ' . $this -> TemplateObjects [ $template_object ] ;
 				$objects_seen []	=  $template_object ;
-				$this -> __get_replacements ( $this -> PageContents [ $template_object ], $searches, $replacements ) ;
+			
+				if  ( isset ( $this -> PageContents [ $template_object ] ) )
+					$this -> __get_replacements ( $this -> PageContents [ $template_object ], $searches, $replacements, $objects_seen ) ;
 			    }
 		    }
 	    }
@@ -5150,6 +5205,129 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 				$this -> MapKids ( $kid, $page ) ;
 		    }
 	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetMappedFonts - Retrieves the mapped fonts per page
+	
+	    PROTOTYPE
+	        $array	=  $pagemap -> GetMappedFonts ( ) ;
+	
+	    DESCRIPTION
+	        Gets the mapped fonts, per page. XObjects are traversed, to retrieved additional font aliases defined
+		by them.
+		This function is used by the PdfTexter class to add additional entries to the FontMap object, 
+		ensuring that each reference to a font remains local to a page.
+	
+	    RETURN VALUE
+	        Returns an array of associative arrays which have the following entries :
+		- 'page' :
+			Page number.
+		- 'xobject-name' :
+			XObject name, that can define further font aliases. This entry is set to the empty string for
+			global font aliases.
+		- 'font-name' :
+			Font name (eg, "/F1", "/C1_0", etc.).
+		- 'object' :
+			Object defining the font attributes, such as character map, etc.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetMappedFonts ( )
+	   {
+		$mapped_fonts	=  array ( ) ;
+		$current_page	=  0 ;
+
+		foreach  ( $this -> PageCatalogs  as  $catalog )
+		   {
+			if  ( ! isset ( $this -> PageKids [ $catalog ] ) )
+				continue ;
+
+			foreach  ( $this -> PageKids [ $catalog ] [ 'kids' ]  as  $page_object )
+			   {
+				$current_page ++ ;
+
+				if  ( isset ( $this -> PageContents [ $page_object ] ) )
+				   {
+					$page_contents	=  $this -> PageContents [ $page_object ] ;
+					$associations	=  array ( ) ;
+
+					foreach  ( $page_contents [ 'fonts' ]  as  $font_name => $font_object )
+					   {
+						$mapped_fonts []		=  array 
+						   ( 
+							'page'		=>  $current_page, 
+							'xobject-name'	=>  '',
+							'font-name'	=>  $font_name, 
+							'object'	=>  $font_object 
+						    ) ;
+
+						$associations [ ":$font_name" ]	=  $font_object ;
+
+						$this -> __map_recursive ( $current_page, $page_contents [ 'xobjects' ], $mapped_fonts, $associations ) ;
+					    }
+				    }
+			    }
+		    }
+
+		return ( $mapped_fonts ) ;
+	    }
+
+	
+	// __map_recursive -
+	//	Recursively collects font aliases for XObjects.
+	private function  __map_recursive ( $page_number, $xobjects, &$mapped_fonts, &$associations )
+	   {
+		foreach  ( $xobjects  as  $xobject_name => $xobject_value ) 
+		   {
+			if  ( isset ( $this -> PageContents [ $xobject_value ] ) )
+			   {
+				foreach  ( $this -> PageContents [ $xobject_value ] [ 'fonts' ]  as  $font_name => $font_object )
+				   {
+					if  ( ! isset ( $associations [ "$xobject_name:$font_name" ] ) )
+					   {
+						$mapped_fonts []		=  array 
+						   ( 
+							'page'		=>  $page_number, 
+							'xobject-name'	=>  $xobject_name, 
+							'font-name'	=>  $font_name, 
+							'object'	=>  $font_object 
+						    ) ;
+
+						$associations [ "$xobject_name:$font_name" ]	=  $font_object ;
+					    }
+				    }
+
+				$this -> XObjectNames [ $xobject_name ]		=  1 ;
+				$this -> __map_recursive ( $page_number, $this -> PageContents [ $xobject_value ] [ 'xobjects' ], $mapped_fonts, $associations ) ;
+			    }
+		    }
+	    }
+
+
+	
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        IsValidXObject - Checks if the specified object is a valid XObject.
+	
+	    PROTOTYPE
+	        $status		=  $pagemap -> IsValidXObjectName ( $name ) ;
+	
+	    DESCRIPTION
+	        Checks if the specified name is a valid XObject defining its own set of font aliases.
+	
+	    PARAMETERS
+	        $name (string) -
+	                Name of the XObject to be checked.
+	
+	    RETURN VALUE
+	        Returns true if the specified XObject exists and defines its own set of font aliases, false otherwise.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  IsValidXObjectName ( $name )
+	   { return ( isset ( $this -> XObjectNames [ $name ] ) ) ; }
     }
     
 
