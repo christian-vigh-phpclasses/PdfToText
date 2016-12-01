@@ -20,7 +20,10 @@ Look at the class' blog for an overview on the underlying mechanics that are inv
 
 Examples are also provided in the **examples/** directory. Please have a look at the [examples/README.md](examples/README.md "README.md") file for a brief explanation on their structure.
 
-**IMPORTANT** : the **PdfToText** class generates UTF8-encoded text.
+**IMPORTANT** : the **PdfToText** class generates UTF8-encoded text. If your default character set is not UTF-8, you may need to add the following **meta** tag in the &lt;head&gt; part of your HTML page :
+
+	<meta charset="utf-8" />
+
 
 # FEATURES #
 
