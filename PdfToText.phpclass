@@ -22,16 +22,13 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.5]	[Date : 2016/12/02]     [Author : CV]
-	. Now handles references to font aliases that are local to a page. Previously, font aliases were
-	  considered as global to the document, which caused some incorrect character substitutions.
-	. Throw an exception if the mbstring extension is not loaded.
-	. Compatibility with PHP versions prior to 5.6 :
-	  - The memory_get_usage() and memory_get_peak_usage() functions are used only if implemented (they were
-	    implemented far later on Windows than on Unix). If not available, the MemoryUsage and MemoryPeakUsage
-	    properties will be set to zero.
-	. Fixed : Offsets specified between character strings were incorrectly interpreted, which sometimes
-	  caused groups of characters to be catenated together.
+    [Version : 1.3.6]	[Date : 2016/12/02]     [Author : CV]
+	. Started implementation of CID fonts (EXPERIMENTAL) :
+	  - Added the PdfTexterCIDMap abstract class.
+	  - Added the PdfTexterIdentityHMap class, to implement the IDENTITY-H CID font.
+	. CID tables are externalized and located into the directory pointed to by the PdfToText::CIDTablesDirectory 
+	  public static property. Currently, only the IDENTITY-H CID font is (partially) implemented.
+	. Usual behavior remains for inexisting CID substitution tables : garbage will be produced.
 
     (...)
 
@@ -515,7 +512,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.5" ;
+	const		VERSION					=  "1.3.6" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -589,6 +586,8 @@ class  PdfToText 	extends PdfObjectBase
 	public		$MinSpaceWidth			=  250 ;
 	// Pdf options
 	public		$Options			=  self::PDFOPT_NONE ;
+	// Location of the CID tables directory
+	public static	$CIDTablesDirectory ;
 	// Author information 
 	public		$Author				=  '' ;
 	public		$CreatorApplication		=  '' ;
@@ -663,10 +662,6 @@ class  PdfToText 	extends PdfObjectBase
 	     ) ;
 	// The final regexes that are built during static initialization by the __build_ignored_instructions() method
 	private static  $IgnoredInstructions		=  array ( ) ;
-
-	// Font information buffer - another cache used by the __next_instruction() method to avoid repeated calls
-	// to the IsMapped() and GetMapWidth() methods
-	private		$FontInformationBuffer		=  array ( ) ;
 
 	// Map id buffer - for avoiding unneccesary calls to GetFontByMapId
 	private		$MapIdBuffer			=  array ( ) ;
@@ -811,12 +806,15 @@ class  PdfToText 	extends PdfObjectBase
 			self::$HasMemoryGetUsage	=  function_exists ( 'memory_get_usage' ) ;
 			self::$HasMemoryGetPeakUsage	=  function_exists ( 'memory_get_peak_usage' ) ;
 
+			// Location of the directory containing CID fonts
+			self::$CIDTablesDirectory	=  dirname ( __FILE__ ) . DIRECTORY_SEPARATOR . 'CIDTables' ;
+
 			self::$StaticInitialized	=  true ;
 		    }
 
 		parent::__construct ( ) ;
 
-		$this -> Options	=  $options ;
+		$this -> Options		=  $options ;
 
 		if  ( $filename )
 			$this -> Load ( $filename, $user_password, $owner_password ) ;
@@ -922,7 +920,6 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> EncryptionKey			=  false ;
 
 		// Also reset cached information that may come from previous runs
-		$this -> FontInformationBuffer		=  array ( ) ;
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
 
@@ -1217,10 +1214,8 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Free memory
 		$this -> PageLocations			=  array ( ) ;
-		$this -> FontInformationBuffer		=  array ( ) ;
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
-
 
 		unset ( $this -> FontTable ) ;
 		unset ( $this -> PageMap ) ;
@@ -2095,22 +2090,7 @@ class  PdfToText 	extends PdfObjectBase
 		$separator_length		=  strlen ( $this -> Separator ) ;
 
 		// Current font map width, in bytes, plus a flag saying whether the current font is mapped or not
-		if  ( isset ( $this -> FontInformationBuffer [ $current_font ] ) )
-		   {
-			$current_font_map_width		=  $this -> FontInformationBuffer [ $current_font ] [ 'width' ] ;
-			$current_font_mapped		=  $this -> FontInformationBuffer [ $current_font ] [ 'mapped' ] ;
-		    }
-		else
-		   {
-			$current_font_map_width		=  $this -> FontTable -> GetMapWidth ( $current_font ) ;
-			$current_font_mapped		=  $this -> FontTable -> IsMapped ( $current_font ) ;
-
-			$this -> FontInformationBuffer [ $current_font ]	=  array
-			   (
-				'width'		=>  $current_font_map_width,
-				'mapped'	=>  $current_font_mapped
-			    ) ;
-		    }
+		$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
 
 		// Extra newlines to add before the current text
 		$extra_newlines 		=  0 ;
@@ -2191,23 +2171,7 @@ class  PdfToText 	extends PdfObjectBase
 			   	case 	'resource' :
 			   		$current_font 		=  $instruction [ 'resource' ] ;
 
-					if  ( isset ( $this -> FontInformationBuffer [ $current_font ] ) )
-					   {
-						$current_font_map_width		=  $this -> FontInformationBuffer [ $current_font ] [ 'width' ] ;
-						$current_font_mapped		=  $this -> FontInformationBuffer [ $current_font ] [ 'mapped' ] ;
-					    }
-					else
-					   {
-						$current_font_map_width		=  $this -> FontTable -> GetMapWidth ( $current_font ) ;
-						$current_font_mapped		=  $this -> FontTable -> IsMapped ( $current_font ) ;
-
-						$this -> FontInformationBuffer [ $current_font ]	=  array
-						   (
-							'width'		=>  $current_font_map_width,
-							'mapped'	=>  $current_font_mapped
-						    ) ;
-					    }
-
+					$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
 			   		break ;
 
 				// "/TPLx" : references a template, which can contain additional font aliases
@@ -2613,7 +2577,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Token starts with a slash : maybe a font specification
 			else if  ( preg_match ( '#^ ( ' . self::$FontSpecifiers . ' ) #ix', $token ) )
 			   {
-				$key	=  "$current_template:$token" ;
+				$key	=  "$page_number:$current_template:$token" ;
 
 				if  ( isset ( $this -> MapIdBuffer [ $key ] ) )
 					$id	=   $this -> MapIdBuffer [ $key ] ;
@@ -3629,6 +3593,8 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		// Font uses the Mac Roman encoding
 		else if  ( preg_match ( '#/Encoding \s* /MacRomanEncoding#ix', $font_definition ) )
 			$font_type	=  PdfTexterFont::FONT_ENCODING_MAC_ROMAN ;
+		else if  ( preg_match ( '#/Encoding \s* /Identity-H#ix', $font_definition ) )
+			$font_type	=  PdfTexterFont::FONT_ENCODING_IDENTITY_H ;
 	
 		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type ) ;
 
@@ -3696,53 +3662,51 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	    }
 
 
+	// GetFontAttributes -
+	//	Gets the specified font width in hex digits and whether the font has a character map or not.
+	public function  GetFontAttributes ( $page_number, $template, $font, &$font_map_width, &$font_mapped ) 
+	   {
+		// Font considered as global to the document
+		if  ( isset ( $this -> Fonts [ $font ] ) )
+			$key	=  $font ;
+		// Font not found : try to use the first one declared in the document
+		else 
+		   {
+			reset ( $this -> Fonts ) ;
+			$key	=  key ( $this -> Fonts ) ;
+		    }
+			
+		// Font has an associated character map
+		if  ( $this -> Fonts [ $key ] -> CharacterMap )
+		   {
+			$font_map_width		=  $this -> Fonts [ $key ] -> CharacterMap -> HexCharWidth ;
+			$font_mapped		=  true ;
+
+			return ( true ) ;
+		    }
+		// No character map : characters are specified as two hex digits
+		else
+		   {
+			$font_map_width		=  2 ;
+			$font_mapped		=  false ;
+
+			return ( false ) ;
+		    }
+	    }
+
+
 	// GetFontByMapId -
 	//	Returns the font id (object id) associated with the specified mapped id.
 	public function  GetFontByMapId ( $page_number, $template, $id )
 	   {
 		if  ( isset ( $this -> FontMap [ $id ] ) )
-			return ( $this -> FontMap [ $id ] ) ;
+			$font_object	=  $this -> FontMap [ $id ] ;
 		else if  ( isset ( $this -> FontMap [ "$page_number:$template:$id" ] ) )
-			return ( $this -> FontMap [ "$page_number:$template:$id" ] ) ;
+			$font_object	=  $this -> FontMap [ "$page_number:$template:$id" ] ;
 		else
-			return ( -1 ) ;
-	    }
+			$font_object	=  -1 ;
 
-	// IsMapped -
-	//	Checks if the specified font has an associated character map.
-	public function  IsMapped ( $font )
-	   {
-		// For text contents that did not specify a font using the /Rx instruction,
-		// use the first declared font as the default font
-		if  ( $font  ==  -1 )
-		   {
-			reset ( $this -> Fonts ) ;
-			$font 	=  key ( $this -> Fonts ) ;
-		    }
-
-		return ( isset ( $this -> Fonts [ $font ] )  &&
-				$this -> Fonts [ $font ] -> CharacterMap ) ;
-	    }
-
-
-	// GetMapWidth -
-	//	Returns the number of hex digits needed to represent a character in the specified font.
-	public function  GetMapWidth ( $font )
-	   {
-		// For text contents that did not specify a font using the /Rx instruction,
-		// use the first declared font as the default font
-		if  ( $font  ==  -1 )
-			$font	=  $this -> DefaultFont ;
-
-		if  ( isset ( $this -> Fonts [ $font ] )  &&  $this -> Fonts [ $font ] -> CharacterMap )
-		   {
-			$width 	=  $this -> Fonts [ $font ] -> CharacterMap -> HexCharWidth ;
-
-			if  ( $width )
-				return ( $width ) ;
-		    }
-
-		return ( 2 ) ;
+		return ( $font_object ) ;
 	    }
 
 
@@ -3757,12 +3721,18 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		if  ( $font  ==  -1 )
 			$font	=  $this -> DefaultFont ;
 
+		$cache	=  true ;
+
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
+		   {
 			$code	=  $this -> Fonts [ $font ] -> MapCharacter ( $ch, $return_false_on_failure ) ;
+			$cache	=  $this -> Fonts [ $font ] -> CharacterMap -> Cache ;
+		    }
 		else
 			$code	=  $this -> CodePointToUtf8 ( $ch ) ;
 
-		$this -> CharacterMapBuffer [ $font ] [ $ch ]	=  $code ;
+		if  ( $cache )
+			$this -> CharacterMapBuffer [ $font ] [ $ch ]	=  $code ;
 
 		return ( $code ) ;
 	    }
@@ -3787,6 +3757,7 @@ class  PdfTexterFont		extends PdfObjectBase
 	const	FONT_ENCODING_MAC_ROMAN		=  2 ;			// No character map, use the MAC OS Roman character set
 	const	FONT_ENCODING_UNICODE_MAP	=  3 ;			// Font has an associated unicode character map
 	const	FONT_ENCODING_PDF_MAP		=  4 ;			// Font has an associated PDF character map
+	const	FONT_ENCODING_IDENTITY_H	=  5 ;			// CID font : IDENTITY-H
 
 	// Windows Ansi mapping to Unicode. Only substitutions that have no direct equivalent are listed here
 	// Source : https://msdn.microsoft.com/en-us/goglobal/cc305145.aspx
@@ -3972,6 +3943,13 @@ class  PdfTexterFont		extends PdfObjectBase
 		$this -> Id		=  $resource_id ;
 		$this -> CharacterMapId	=  $cmap_id ;
 		$this -> FontType	=  $font_type ;
+
+		switch  ( $font_type )
+		   {
+			case	self::FONT_ENCODING_IDENTITY_H :
+				$this -> CharacterMap	=  new PdfTexterIdentityHMap (  $resource_id ) ;
+				break ;
+		    }
 	    }
 
 
@@ -4014,12 +3992,14 @@ class  PdfTexterFont		extends PdfObjectBase
 
   ==============================================================================================================*/
 abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
-					implements	ArrayAccess, Countable
+					implements	\ArrayAccess, \Countable
    {
 	// Object id of the character map
 	public		$ObjectId ;
 	// Number of hex digits in a character represented in hexadecimal notation
 	public 		$HexCharWidth ;
+	// Set to true if the values returned by the array access operator can safely be cached
+	public		$Cache		=  false ;
 
 
 
@@ -4693,6 +4673,283 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		return ( $this -> CodePointToUtf8 ( $ord ) ) ;
 	    }
     }
+
+
+/*==============================================================================================================
+
+    PdfTexterCIDMap -
+        A class for mapping (or trying to...) CID fonts.
+
+  ==============================================================================================================*/
+abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
+   {
+	const		UNKNOWN_CID		=  -1 ;
+	const		ALT_CID			=  -2 ;
+
+	private static	$CachedMaps		=  array ( ) ;
+
+	protected	$Map ;
+	protected	$MapFile ;
+
+	private		$LastAltOffset		=  false ;
+
+
+	public function  __construct ( $object_id, $map_name )
+	   {
+		parent::__construct ( $object_id ) ;
+		$this -> HexCharWidth	=  4 ;
+		
+		if  ( isset ( self::$CachedMaps [ $map_name ] ) )
+		   {
+			$map	=  self::$CachedMaps [ $map_name ] [ 'map' ] ;
+			$file	=  self::$CachedMaps [ $map_name ] [ 'file' ] ;
+		    }
+		else
+		   {
+			$file	=  PdfToText::$CIDTablesDirectory . DIRECTORY_SEPARATOR . $map_name . '.cid' ;
+
+			if  ( ! file_exists ( $file ) )
+			   {
+				if  ( PdfToText::$DEBUG )
+					warning ( new PdfToTextException ( "Could not find CID table \"$map_name\" in directory \"" . PdfToText::$CIDTablesDirectory . "\"." ) ) ;
+			    }
+			else
+				require ( $file ) ;
+
+			self::$CachedMaps [ $map_name ]		=  array ( 'file' => $file, 'map' => $map ) ;
+		    }
+
+		$this -> MapFile	=  $file ;
+		$this -> Map		=  $map ;
+
+		// Since alternate characters can be apparently prefixed by 0x0000 or 0x0001, two calls to the array access operator 
+		// will be needed to retrieve the exact character in such cases
+		// This is why we have to tell the upper layers not to cache the results
+		$this -> Cache		=  false ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	        Interface implementations.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( count ( $this -> Map ) ) ; }
+
+
+	public function  offsetExists ( $offset )
+	   { return ( isset ( $this -> Map [ 'plain' ] [ $offset ] ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   {
+		if  ( isset ( $this -> Map [ 'plain' ] [ $offset ] ) )
+		   {
+			$ch	=  $this -> Map [ 'plain' ] [ $offset ] ;
+
+			switch  ( $ch )
+			   {
+				case	self::UNKNOWN_CID :
+					if  ( PdfToText::$DEBUG )
+						echo ( '[UID:' . sprintf ( '%04x', $offset ) . "]" ) ;
+
+					$this -> LastAltOffset	=  false ;
+
+					if  ( ! PdfToText::$DEBUG )
+						return ( '' ) ;
+					else 
+						return ( "[UID: $offset]" ) ;
+
+				case	self::ALT_CID :
+					$this -> LastAltOffset		=  ( integer ) $offset ;
+
+					return ( '' ) ;
+
+				default :
+					if  ( $this -> LastAltOffset  ===  false ) 
+						return ( $ch ) ;
+
+					if  ( isset ( $this -> Map [ 'alt' ] [ $this -> LastAltOffset ] [ $offset ] ) )
+					   {
+						$ch2	=  $this -> Map [ 'alt' ] [ $this -> LastAltOffset ] [ $offset ] ;
+
+						if  ( $ch2  ==  self::UNKNOWN_CID )
+						   {
+							if  ( PdfToText::$DEBUG )
+							   {
+								echo ( "[CID{$this -> LastAltOffset}:" . sprintf ( '%04x', $offset ) . "]" ) ;
+
+								$ch2  =  "[CID{$this -> LastAltOffset}: $offset]" ;
+							    }
+						    }
+					    }
+					else
+						$ch2	=  '' ;
+
+					$this -> LastAltOffset	=  false ;
+
+					return ( $ch2 ) ;
+			    }
+		    }
+		else
+		   {
+			$this -> LastAltOffset	=  false ;
+			
+			return ( '' ) ;
+		    }
+	    }
+    }
+
+
+
+/*==============================================================================================================
+
+    PdfTexterIdentityHMap -
+        A class for mapping IDENTITY-H CID fonts (or trying to...).
+
+  ==============================================================================================================*/
+class  PdfTexterIdentityHMap		extends  PdfTexterCIDMap
+   {
+	private static		$CIDMap		=  array
+	   (
+		0 => '*0*',				// Seems to be a prefix for accentuated characters
+		1 => '*1*',				// Same 
+		2 => self::UNKNOWN_CID,
+		3 => ' ',
+		4 => self::UNKNOWN_CID,
+		5 => '"',
+		6 => self::UNKNOWN_CID,
+		7 => self::UNKNOWN_CID,
+		8 => '%',
+		9 => self::UNKNOWN_CID,
+		10 => self::UNKNOWN_CID,
+		11 => '(',
+		12 => ')',
+		13 => self::UNKNOWN_CID,
+		14 => '+',
+		15 => ',',
+		16 => '-',
+		17 => '.',
+		18 => '/',
+		19 => '0',
+		20 => '1',
+		21 => '2',
+		22 => '3',
+		23 => '4',
+		24 => '5',
+		25 => '6',
+		26 => '7',
+		27 => '8',
+		28 => '9',
+		29 => ':',
+		30 => ';',
+		31 => self::UNKNOWN_CID,
+		32 => '=',
+		33 => self::UNKNOWN_CID,
+		34 => '?',
+		35 => '@',
+		36 => 'A',
+		37 => 'B',
+		38 => 'C',
+		39 => 'D',
+		40 => 'E',
+		41 => 'F',
+		42 => 'G',
+		43 => 'H',
+		44 => 'I',
+		45 => 'J',
+		46 => 'K',
+		47 => 'L',
+		48 => 'M',
+		49 => 'N',
+		50 => 'O',
+		51 => 'P',
+		52 => 'Q',
+		53 => 'R',
+		54 => 'S',
+		55 => 'T',
+		56 => 'U',
+		57 => 'V',
+		58 => 'W',
+		59 => 'X',
+		60 => 'Y',
+		61 => 'Z',
+		62 => '[',
+		63 => self::UNKNOWN_CID,
+		64 => ']',
+		65 => self::UNKNOWN_CID,
+		66 => self::UNKNOWN_CID,
+		67 => '`',
+		68 => 'a',
+		69 => 'b',
+		70 => 'c',
+		71 => 'd',
+		72 => 'e',
+		73 => 'f',
+		74 => 'g',
+		75 => 'h',
+		76 => 'i',
+		77 => 'j',
+		78 => 'k',
+		79 => 'l',
+		80 => 'm',
+		81 => 'n',
+		82 => 'o',
+		83 => 'p',
+		84 => 'q',
+		85 => 'r',
+		86 => 's',
+		87 => 't',
+		88 => 'u',
+		89 => 'v',
+		90 => 'w',
+		91 => 'x',
+		92 => 'y',
+		93 => 'z',
+		94 => self::UNKNOWN_CID,
+		95 => self::UNKNOWN_CID,
+		96 => self::UNKNOWN_CID,
+		97 => self::UNKNOWN_CID,
+		98 => self::UNKNOWN_CID,
+		99 => self::UNKNOWN_CID,
+		100 => self::UNKNOWN_CID,
+		101 => self::UNKNOWN_CID,
+		102 => self::UNKNOWN_CID,
+		103 => self::UNKNOWN_CID,
+		104 => self::UNKNOWN_CID,
+		105 => self::UNKNOWN_CID,
+		106 => self::UNKNOWN_CID,
+		107 => self::UNKNOWN_CID,
+		108 => self::UNKNOWN_CID,
+		109 => self::UNKNOWN_CID,
+		110 => self::UNKNOWN_CID,
+		111 => self::UNKNOWN_CID,
+		112 => self::UNKNOWN_CID,
+		113 => self::UNKNOWN_CID,
+		114 => self::UNKNOWN_CID,
+		115 => self::UNKNOWN_CID,
+		116 => self::UNKNOWN_CID,
+		117 => self::UNKNOWN_CID,
+		118 => self::UNKNOWN_CID,
+		119 => self::UNKNOWN_CID,
+		120 => self::UNKNOWN_CID,
+		121 => 'ó',
+		122 => self::UNKNOWN_CID,
+		123 => self::UNKNOWN_CID,
+		124 => 'ö',
+		125 => self::UNKNOWN_CID,
+		126 => 'ú',
+		127 => self::UNKNOWN_CID
+	    ) ;
+
+
+	public function  __construct ( $object_id )
+	   {
+		parent::__construct ( $object_id, 'IDENTITY-H' ) ;
+	    }
+    }
+
 
 
 /*==============================================================================================================
