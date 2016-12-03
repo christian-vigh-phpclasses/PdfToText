@@ -206,6 +206,10 @@ A string to be used for separating chunks of text. The main goal is for processi
 
 The default value is the empty string.
 
+### CIDTablesDirectory ###
+
+Path to the directory containing CID mapping tables.
+
 ### CreationDate ###
 
 A string containing the document creation date, in UTC format. The value can be used as a parameter to the *strtotime()* PHP function.

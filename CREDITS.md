@@ -34,6 +34,8 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Jocemar Varela, who sent me samples that were generated using OCR software
 - Aryan Schmitz, who tried to port the PdfToText class to a system running PHP 5.2. This successful attempt led to long and detailed support exchanges, where I really appreciated his proactivity.
 - Francisco Godoy, who sent me a PDF sample which was enough simple to help me solve a long-time issue I had with PDF files using inline "templates"
+- Patryk, from expromo.pl, who helped me to handle font aliases that are local to a page by providing me with samples easy enough to investigate ; the same samples also helped me
+  to start an experimental support of CID fonts.
 - And more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
