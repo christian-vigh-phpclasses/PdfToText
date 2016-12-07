@@ -1,3 +1,10 @@
+    [Version : 1.3.7]	[Date : 2016/12/07]     [Author : CV]
+	. The PdfTexterFontTable::MapCharacter() method was generating notices for fonts without character maps.
+	. The regular expression in the PdfToText::Load() method was sometimes confusing PCRE when trying to
+	  match stream/endstream constructs because it contained [backslash]r and [backslash]n. This caused
+	  some objects to be missed from the input PDF file. They have been replaced with [backslash]s, and 
+	  carriage returns/line feeds are removed later from the beginning of the stream data.
+
     [Version : 1.3.6]	[Date : 2016/12/02]     [Author : CV]
 	. Started implementation of CID fonts (EXPERIMENTAL) :
 	  - Added the PdfTexterCIDMap abstract class.
