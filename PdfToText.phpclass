@@ -22,13 +22,12 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.6]	[Date : 2016/12/02]     [Author : CV]
-	. Started implementation of CID fonts (EXPERIMENTAL) :
-	  - Added the PdfTexterCIDMap abstract class.
-	  - Added the PdfTexterIdentityHMap class, to implement the IDENTITY-H CID font.
-	. CID tables are externalized and located into the directory pointed to by the PdfToText::CIDTablesDirectory 
-	  public static property. Currently, only the IDENTITY-H CID font is (partially) implemented.
-	. Usual behavior remains for inexisting CID substitution tables : garbage will be produced.
+    [Version : 1.3.7]	[Date : 2016/12/07]     [Author : CV]
+	. The PdfTexterFontTable::MapCharacter() method was generating notices for fonts without character maps.
+	. The regular expression in the PdfToText::Load() method was sometimes confusing PCRE when trying to
+	  match stream/endstream constructs because it contained [backslash]r and [backslash]n. This caused
+	  some objects to be missed from the input PDF file. They have been replaced with [backslash]s, and 
+	  carriage returns/line feeds are removed later from the beginning of the stream data.
 
     (...)
 
@@ -497,9 +496,6 @@ abstract class  PdfObjectBase		// extends  Object
 
 		return ( false ) ;
 	    }
-
-
-
     }
 
 
@@ -512,7 +508,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.6" ;
+	const		VERSION					=  "1.3.7" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1045,7 +1041,7 @@ class  PdfToText 	extends PdfObjectBase
 				$type 		=  $this -> GetEncodingType ( $object_number, $object_data ) ;
 
 				if  ( strpos ( $object_data, 'stream' )  ===  false  ||  
-						! preg_match ( '#[^/] stream ( (\r? \n) | \r ) (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
+						! preg_match ( '#[^/] stream \s+ (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
 				   {
 					// Some font definitions are in clear text in an object, some are encoded in a stream within the object
 					// We process here the unencoded ones
@@ -1092,7 +1088,7 @@ class  PdfToText 	extends PdfObjectBase
 					continue ;
 
 				// Isolate stream data and try to find its encoding type
-				$stream_data 		=  $stream_match [ 'stream' ] ;
+				$stream_data 		=  ltrim ( $stream_match [ 'stream' ], "\r\n" ) ;
 
 				// Ignore this stream if the object does not contain an encoding type (/FLATEDECODE, /ASCIIHEX or /ASCII85)
 				if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
@@ -3725,8 +3721,12 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 
 		if  ( isset  ( $this -> Fonts [ $font ] ) )
 		   {
-			$code	=  $this -> Fonts [ $font ] -> MapCharacter ( $ch, $return_false_on_failure ) ;
-			$cache	=  $this -> Fonts [ $font ] -> CharacterMap -> Cache ;
+			$font_object	=  $this -> Fonts [ $font ] ;
+
+			$code	=  $font_object -> MapCharacter ( $ch, $return_false_on_failure ) ;
+
+			if  ( $font_object -> CharacterMap )
+				$cache	=  $font_object -> CharacterMap -> Cache ;
 		    }
 		else
 			$code	=  $this -> CodePointToUtf8 ( $ch ) ;
