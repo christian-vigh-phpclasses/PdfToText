@@ -87,7 +87,7 @@ if  ( ! function_exists ( 'error' ) )
         Base class for all PDF objects defined here.
 
   ==============================================================================================================*/
-abstract class  PdfObjectBase		extends  Object
+abstract class  PdfObjectBase		//extends  Object
    {
 	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
 	const 	PDF_UNKNOWN_ENCODING 		=   0 ;		// No stream decoding type could be identified
