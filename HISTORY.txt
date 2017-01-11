@@ -1,3 +1,12 @@
+    [Version : 1.3.10]	[Date : 2017/01/11]     [Author : CV]
+	. Prevented a warning in GetFontAttributes() when no font resource is defined (this typically happens
+	  for pdf files where the text is graphically drawn and does not use font tables).
+	. Added a custom hex2bin() function for PHP versions < 5.4.0
+
+    [Version : 1.3.9]	[Date : 2016/01/01]     [Author : CV]
+	. Fixed warning messages produced when encountering font/map associations in objects with no stream
+	  defined.
+
     [Version : 1.3.8]	[Date : 2016/12/24]     [Author : CV]
 	. Added one more place in the Load() method where to recognize associations between font aliases and
 	  the object containing their definitions (some associations were "missed" in certain documents)
