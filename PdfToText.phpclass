@@ -22,10 +22,23 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.10]	[Date : 2017/01/11]     [Author : CV]
-	. Prevented a warning in GetFontAttributes() when no font resource is defined (this typically happens
-	  for pdf files where the text is graphically drawn and does not use font tables).
-	. Added a custom hex2bin() function for PHP versions < 5.4.0
+    [Version : 1.3.11]	[Date : 2017/01/28]     [Author : CV]
+	. Added the possibility to handle images encoded with the /FlateDecode/DCTDecode flags, which contain
+	  gzipped JPEG data. Other types of images can also be encoded this way but in different formats, and 
+	  will be processed later.
+	. Added the PFOPT_AUTOSAVE_IMAGES flag to autosave images to external files without keeping them
+	  into memory. 
+	. The new property ImageAutoSaveFileTemplate give the template for the external file name when autosave
+	  mode is enabled.
+	. The new property ImageAutoSaveFormat can be set to one of the IMG_* constants defined in the gd lib.
+	. Added the ImageCount property, which counts the number of images found in the document even if they
+	  are not processed.
+	. Added the AutoSavedImageFiles array property.
+	. Added the Output() method to the PdfImage class to display image contents on standard output
+	. Changed the PeekAuthorInformation() method to remove extraneous newlines when dealing with hex-encoded
+	  data.
+	. Corrected the ExtractText() method which could generate divisions by zero in some cases.
+	. Added the PdfImage::DestroyImageResource() method, to free libgd memory.
 
     (...)
 
@@ -543,7 +556,7 @@ abstract class  PdfObjectBase		//extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.10" ;
+	const		VERSION					=  "1.3.11" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -553,6 +566,7 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_DECODE_IMAGE_DATA		=  0x0004 ;		// Creates a jpeg resource for each image
 	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x0008 ;		// Ignore text leading values
 	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x0010 ;		// Join hyphenated words that are split on two lines
+	const		PDFOPT_AUTOSAVE_IMAGES			=  0x0020 ;		// Autosave images ; the ImageFileTemplate will need to be defined
 
 	// Encryption standards (to be completed, as more crazy PDF samples arise...)
 	const		PDFCRYPT_NONE				=  0 ;			// PDF file is not encrypted 
@@ -602,8 +616,22 @@ class  PdfToText 	extends PdfObjectBase
 	public		$Pages				=  array ( ) ;
 	// Document images (array of PdfImage objects)
 	public		$Images				=  array ( ) ;
+	protected	$ImageCount			=  0 ;
 	// Raw data for document images
 	public		$ImageData			=  array ( ) ;
+	// ImageAutoSaveFileTemplate :
+	//	Template for the file names to be generated when extracting images, if the PDFOPT_AUTOSAVE_IMAGES has been specified.
+	//	Can contain any path, plus the following printf()-like modifiers :
+	//	. "%p" : Path of the original PDF file.
+	//	. "%f" : Filename part of the original PDF file.
+	//	. "%d" : A sequential number, starting from 1, used when generating filenames. The format can contains a width specifier,
+	//		 such as "%3d", which will generate 3-digits sequential numbers left-filled with zeroes.
+	//	. "%s" : Image suffix, which will automatically based on the underlying image type.
+	public		$ImageAutoSaveFileTemplate	=   "%p/%f.%d.%s" ;
+	// Auto-save image file format
+	public		$ImageAutoSaveFormat		=  IMG_JPEG ;
+	// Auto-saved image file names
+	public		$AutoSavedImageFiles		=  array ( ) ;
 	// Text chunk separator (used to separate blocks of text specified as an array notation)
 	public		$BlockSeparator			=  '' ;
 	// Separator used to separate text groups where the offset value is less than -1000 thousands of character units
@@ -920,10 +948,12 @@ class  PdfToText 	extends PdfObjectBase
 		// Initializations
 		$this -> Text 				=  '' ;
 		$this -> FontTable 			=  new PdfTexterFontTable ( ) ;
-		$this -> Filename 			=  $filename ;
+		$this -> Filename 			=  realpath ( $filename ) ;
 		$this -> Pages				=  array ( ) ;
 		$this -> Images				=  array ( ) ;
 		$this -> ImageData			=  array ( ) ;
+		$this -> ImageCount			=  0 ;
+		$this -> AutoSavedImageFiles		=  array ( ) ;
 		$this -> PageMap			=  new PdfTexterPageMap ( ) ;
 		$this -> PageLocations			=  array ( ) ;
 		$this -> Author				=  '' ;
@@ -961,8 +991,12 @@ class  PdfToText 	extends PdfObjectBase
 			'OptimizedTextSize'		=>  0				// Optimized text size, with useless instructions removed
 		    ) ;
 
-		// Systematically set the GET_IMAGE_DATA flag if DECODE_IMAGE_DATA is specified
-		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
+		// Systematically set the DECODE_IMAGE_DATA flag if the AUTOSAVE_IMAGES flag has been specified
+		if  ( $this -> Options  &  self::PDFOPT_AUTOSAVE_IMAGES )
+			$this -> Options	|=  self::PDFOPT_DECODE_IMAGE_DATA ;
+
+		// Systematically set the GET_IMAGE_DATA flag if DECODE_IMAGE_DATA is specified (debug mode only)
+		if  ( self::$DEBUG  &&  $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
 			$this -> Options	|=  self::PDFOPT_GET_IMAGE_DATA ;
 
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
@@ -1556,7 +1590,8 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  AddImage ( $object_id, $stream_data, $type )
 	   {
-		if  ( $this -> Options  &  self::PDFOPT_GET_IMAGE_DATA )
+
+		if  ( self::$DEBUG  &&   $this -> Options  &  self::PDFOPT_GET_IMAGE_DATA )
 		    {
 			switch  ( $type )  
 			   {
@@ -1572,7 +1607,24 @@ class  PdfToText 	extends PdfObjectBase
 			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type ) ;
 
 			if  ( $image  !==  false )
-				$this -> Images []	=  $image ;
+			   {
+				$this -> ImageCount ++ ;
+
+				// When the PDFOPT_AUTOSAVE_IMAGES flag is set, we simply use a template filename to generate a real output filename
+				// then save the image to that file. The memory is freed after that.
+				if  ( $this -> Options  &  self::PDFOPT_AUTOSAVE_IMAGES )
+				   {
+					$output_filename 			=  $this -> __get_output_image_filename ( ) ;
+
+					$image -> SaveAs ( $output_filename, $this -> ImageAutoSaveFormat ) ;
+					unset ( $image ) ;
+					
+					$this -> AutoSavedImageFiles []		=  $output_filename ;
+				    }
+				// Otherwise, simply store the image data into memory
+				else
+					$this -> Images []	=  $image ;
+			    }
 		    }
 	    }
 
@@ -1815,12 +1867,24 @@ class  PdfToText 	extends PdfObjectBase
 				return ( new PdfFaxImage ( $object_data ) ) ;
 
 			// For now, I have not found enough information to be able to decode image data in an inflated stream...
+			// In some cases, however, this is JPEG data
 			case	self::PDF_FLATE_ENCODING :
-				return ( false ) ;
+				$image_data	=  gzuncompress ( $object_data ) ;
+				$image		=  new PdfJpegImage ( $image_data ) ;
+
+				if  ( $image -> ImageResource )
+					return ( $image ) ;
+
+				if  ( self::$DEBUG )
+					warning ( new PdfToTextException ( "Object #$object_id contains unknown compressed image data." ) ) ;
+
+				break ;
 
 			default :
 				warning ( new PdfToTextException ( "Image format type #$type not yet implemented for object #$object_id." ) ) ;
 		    }
+
+		return ( false ) ;
 	    }
 
 
@@ -2175,7 +2239,11 @@ class  PdfToText 	extends PdfObjectBase
 						if  ( - $instruction [ 'y' ]  >  $current_font_size ) 
 						   {
 							$use_same_line		=  false ;
-							$extra_newlines		=  ( integer ) ( $current_font_size / $last_relative_goto_y ) ;
+
+							if  ( $last_relative_goto_y )
+								$extra_newlines		=  ( integer ) ( $current_font_size / $last_relative_goto_y ) ;
+							else
+								$extra_newlines		=  0 ;
 						    }
 						else if  ( ! $instruction [ 'y' ] ) 
 						   {
@@ -3355,6 +3423,120 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	    }
 
 
+	// __get_output_image_filename -
+	//	Returns a real filename based on a template supplied by the AutoSaveImageFileTemplate property.
+	private function  __get_output_image_filename ( )
+	   {
+		static		$suffixes	=  array
+		   (
+			IMG_JPEG		=>  'jpg',
+			IMG_JPG			=>  'jpg',
+			IMG_GIF			=>  'gif',
+			IMG_PNG			=>  'png',
+			IMG_WBMP		=>  'wbmp',
+			IMG_XPM			=>  'xpm'
+		    ) ;
+
+		$template	=  $this -> ImageAutoSaveFileTemplate ;
+		$length		=  strlen ( $template ) ;
+		$parts		=  pathinfo ( $this -> Filename ) ;
+
+		if  ( ! isset ( $parts [ 'filename' ] ) )	// for PHP versions < 5.2
+		   {
+			$index		=  strrchr ( $parts [ 'basename' ], '.' ) ;
+
+			if  ( $index  ===  false )
+				$parts [ 'filename' ]	=  $parts [ 'basename' ] ;
+			else
+				$parts [ 'filename' ]	=  substr ( $parts [ 'basename' ], $index ) ;
+		    }
+
+		$searches	=  array ( ) ;
+		$replacements	=  array ( ) ;
+
+		// Search for each construct starting with '%'
+		for  ( $i = 0 ; $i  <  $length ; $i ++ )
+		   {
+			if  ( $template [$i]  !=  '%'  ||  $i + 1  >=  $length )
+				continue ;
+
+			$ch	=  $template [ ++ $i ] ;
+
+			// Percent sign found : check the character after
+			switch  ( $ch ) 
+			   {
+				// "%%" : Replace it with a single percent
+				case	'%' :
+					$searches []		=  '%%' ;
+					$replacements []	=  '%' ;
+					break ;
+
+				// "%p" : Path of the original PDF file
+				case	'p' :
+					$searches []		=  '%p' ;
+					$replacements []	=  $parts [ 'dirname' ] ;
+					break ;
+
+				// "%f" : Filename part of the original PDF file, without its suffix
+				case	'f' :
+					$searches []		=  '%f' ;
+					$replacements []	=  $parts [ 'filename' ] ;
+					break ;
+
+				// "%s" : Output image file suffix, determined by the ImageAutoSaveFormat property
+				case	's' :
+					if  ( isset ( $suffixes [ $this -> ImageAutoSaveFormat ] ) )
+					   {
+						$searches []		=  '%s' ;
+						$replacements []	=  $suffixes [ $this -> ImageAutoSaveFormat ] ;
+					    }
+					else
+					   {
+						$searches []		=  '%s' ;
+						$replacements []	=  'unknown' ;
+					    }
+
+					break ;
+
+				// Other : may be either "%d", or "%xd", where "x" are digits expression the width of the final sequential index
+				default :
+					$width	=  0 ;
+					$chars	=  '' ;
+
+					if  ( ctype_digit ( $ch ) )
+					   {
+						do
+						   {
+							$width	 =  ( $width * 10 ) + ord ( $ch ) - ord ( '0' ) ;
+							$chars  .=  $ch ;
+							$i ++ ;
+						    }  while  ( $i  <  $length  &&  ctype_digit ( $ch = $template [$i] ) ) ;
+
+						if  ( $template [$i]  ==  'd' )
+						   {
+							$searches []		=  '%' . $chars . 'd' ;
+							$replacements []	=  sprintf ( "%0{$width}d", $this -> ImageCount ) ;
+						    }
+					    }
+					else
+					   {
+						$searches []		=  '%d' ;
+						$replacements []	=  $this -> ImageCount ;
+					    }
+			    }
+		    }
+
+		// Perform the replacements
+		if  ( count ( $searches ) )
+			$result		=  str_replace ( $searches, $replacements, $template ) ;
+		else
+			$result		=  $template ;
+
+		// All done, return 
+		return ( $result ) ;
+	    }
+
+
 	// __rtl_process -
 	//	Processes the contents of a page when it contains characters belonging to an RTL language.
 	private function  __rtl_process ( $text )
@@ -3444,7 +3626,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 				   {
 					$end_index	=  strpos ( $object_data, '>', $start_index ) ;
 					$hexdigits	=  substr ( $object_data, $start_index, $end_index - $start_index ) ;
-					$value		=  hex2bin ( $hexdigits ) ;
+					$value		=  hex2bin ( str_replace ( array ( "\n", "\r", "\t" ), '', $hexdigits ) ) ;
 				    }
 
 				$value		=   $this -> __convert_utf16 ( $this -> __extract_chars_from_block ( $value ) ) ;
@@ -5661,6 +5843,18 @@ abstract class  PdfImage			extends  PdfObjectBase
 
 	/*--------------------------------------------------------------------------------------------------------------
 	
+	    DESTRUCTOR
+	        Destroys the associated image resource.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __destruct ( )
+	   {
+		$this -> DestroyImageResource ( ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
 	    NAME
 	        CreateImageResource - creates an image resource from the supplied image data.
 	
@@ -5677,6 +5871,26 @@ abstract class  PdfImage			extends  PdfObjectBase
 
 	 *-------------------------------------------------------------------------------------------------------------*/
 	abstract protected function  CreateImageResource ( $image_data ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        DestroyImageResource - Destroys the allocated image resource.
+	
+	    PROTOTYPE
+	        $this -> DestroyImageResource ( ) ;
+	
+	    DESCRIPTION
+	        Destroys the allocated image resource, using the libgd imagedestroy() function. This method can be 
+		overridden by derived class if the underlying image resource does not come from the gd lib.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  DestroyImageResource ( )
+	   {
+		if  ( $this -> ImageResource )
+			imagedestroy ( $this -> ImageResource ) ;
+	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -5700,6 +5914,9 @@ abstract class  PdfImage			extends  PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  SaveAs ( $output_file, $image_type = IMG_JPEG )
 	   {
+		if  ( ! $this -> ImageResource ) 
+			return ;
+
 		$image_types		=  imagetypes ( ) ;
 
 		switch  ( $image_type )
@@ -5744,6 +5961,12 @@ abstract class  PdfImage			extends  PdfObjectBase
 				error ( new PdfToTextException ( "Unknown image type #$image_type." ) ) ;
 		    }
 	    }
+
+
+	public function  Output ( )
+	   {
+		$this -> SaveAs ( null ) ;
+	    }
     }
 
 
@@ -5764,7 +5987,7 @@ class  PdfJpegImage		extends  PdfImage
 
 	public function  CreateImageResource ( $image_data )
 	   {
-		return ( imagecreatefromstring ( $image_data ) ) ;
+		return ( @imagecreatefromstring ( $image_data ) ) ;
 	    }
     }
 
