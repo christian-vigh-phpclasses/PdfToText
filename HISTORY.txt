@@ -1,3 +1,20 @@
+    [Version : 1.3.11]	[Date : 2017/01/28]     [Author : CV]
+	. Added the possibility to handle images encoded with the /FlateDecode/DCTDecode flags, which contain
+	  gzipped JPEG data. Other types of images can also be encoded this way but in different formats, and 
+	  will be processed later.
+	. Added the PFOPT_AUTOSAVE_IMAGES flag to autosave images to external files without keeping them
+	  into memory. 
+	. The new property ImageAutoSaveFileTemplate give the template for the external file name when autosave
+	  mode is enabled.
+	. The new property ImageAutoSaveFormat can be set to one of the IMG_* constants defined in the gd lib.
+	. Added the ImageCount property, which counts the number of images found in the document even if they
+	  are not processed.
+	. Added the Output() method to the PdfImage class to display image contents on standard output
+	. Changed the PeekAuthorInformation() method to remove extraneous newlines when dealing with hex-encoded
+	  data.
+	. Corrected the ExtractText() method which could generate divisions by zero in some cases.
+	. Added the PdfImage::DestroyImageResource() method, to free libgd memory.
+
     [Version : 1.3.10]	[Date : 2017/01/11]     [Author : CV]
 	. Prevented a warning in GetFontAttributes() when no font resource is defined (this typically happens
 	  for pdf files where the text is graphically drawn and does not use font tables).

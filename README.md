@@ -200,6 +200,10 @@ This section describes the properties that are available in a **PdfTText** objec
 
 Author name, as inscribed in the PDF file.
 
+### AutoSavedImageFiles ###
+
+When the *PDFOPT\_AUTOSAVE\_IMAGES* flag has been specified, this array of strings will contain the filenames where the auto-saved images have been put.
+
 ### BlockSeparator ###
 
 A string to be used for separating chunks of text. The main goal is for processing data displayed in tabular form, to ensure that column contents will not be catenated. However, this does not work in all cases.
@@ -283,6 +287,51 @@ A pair of unique ids generated for the document. The value of **ID** is used for
 
 The second id is not clearly described in the Pdf specifications.
 
+### ImageAutoSaveFileTemplate ###
+
+A template string to be used for generating filenames when the *PDFOPT\_AUTOSAVE\_IMAGES* flag has been specified.
+
+It can contain the following *print*-like formats :
+
+- **%p** : Replaced by the directory where the input PDF file resides.
+- **%f** : Replaced by the filename part (without suffix) of the input PDF file.
+- **%s** : Replaced by the suffix appropriate to the image format given by the **ImageAutoSaveFormat** property.
+- **%d** : Replaced by a sequential value, starting from 1, which gives the image number.
+
+The default value for this property is :
+
+	$ImageAutoSaveFileTemplate	=   "%p/%f.%d.%s" ;
+
+Using the template above, if your input filename is "/tmp/test.pdf" and contains 3 images, then you will get the following output images :
+
+- /tmp/test.1.jpg
+- /tmp/test.2.jpg
+- /tmp/test.3.jpg
+
+You can also specify a width with the "%d" format specifier ; the numbering will then be padded with leading zeroes. For example, the following template using the same example PDF file as above :
+
+	$pdf -> ImageAutoSaveFileTemplate	=   "%p/%f.%3d.%s" ;
+
+will generate the following filenames :
+
+- /tmp/test.001.jpg
+- /tmp/test.002.jpg
+- /tmp/test.003.jpg
+
+
+### ImageAutoSaveFormat ###
+
+When the *PDFOPT\_AUTOSAVE\_IMAGES* flag has been specified, indicates the format to be used for saving the images found in the PDF file. It can be any of the constants defined by the *gd* library regarding image formats : 
+
+			IMG_JPEG		=>  'jpg',
+			IMG_JPG			=>  'jpg',
+			IMG_GIF			=>  'gif',
+			IMG_PNG			=>  'png',
+			IMG_WBMP		=>  'wbmp',
+			IMG_XPM			=>  'xpm'
+
+Note that the association between the constant and corresponding file suffix is automatically handled.
+
 ### Images ###
 
 An array of objects inheriting from the **PdfImage** class. Currently, only the **PdfJpegIMage** class is implemented.
@@ -294,10 +343,15 @@ The class currently supports the following properties :
 The following methods are available :
 
 - *SaveAs ( $output\_file, $image\_type = IMG\_JPG )* : Saves the current image to the specified output file, using the specified file format (one of the predefined PHP constants : IMG\_JPG, IMG\_GIF, IMG\_PNG, IMG\_XBMP and IMG\_XBM).
+- *Output ( )* : Echoes the image contents to the standard output.
 
 Currently, images stored in proprietary Adobe format are not processed and will not appear in this array.
 
 Note that images will be extracted only if the PDFOPT\_DECODE\_IMAGE\_DATA is enabled. 
+
+### ImageCount ###
+
+Number of images found in the supplied PDF file. This number will only take into account the images whose format is recognized by the **PdfToText** class.
 
 ### ImageData ###
 
@@ -334,8 +388,9 @@ A string containing the last document modification date, in UTC format. The valu
 A combination of the following flags :
 
 - *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
-- *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
-- *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property.
+- *PDFOPT\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
+- *PDFOPT\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property.
+- *PDFOPT\_AUTOSAVE\_IMAGES* : Auto-saves the images found in the PDF file, using a filename template given by the **ImageAutoSaveFileTemplate** property. The **ImageAutoSaveFormat** property will define the image format to be used when generating the image files. The default output format is *IMG\_JPEG*. Note that the **Images** property will be left empty. This flag has been introduced to save internal memory if you only need to extract images. 
 - *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
 - *PDFOPT\_NO\_HYPHENATED\_WORDS : When specified, tries to join back hyphenated words into a single word. For example, the following text :
 
