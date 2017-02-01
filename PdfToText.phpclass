@@ -22,23 +22,25 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.11]	[Date : 2017/01/28]     [Author : CV]
-	. Added the possibility to handle images encoded with the /FlateDecode/DCTDecode flags, which contain
-	  gzipped JPEG data. Other types of images can also be encoded this way but in different formats, and 
-	  will be processed later.
-	. Added the PFOPT_AUTOSAVE_IMAGES flag to autosave images to external files without keeping them
-	  into memory. 
-	. The new property ImageAutoSaveFileTemplate give the template for the external file name when autosave
-	  mode is enabled.
-	. The new property ImageAutoSaveFormat can be set to one of the IMG_* constants defined in the gd lib.
-	. Added the ImageCount property, which counts the number of images found in the document even if they
-	  are not processed.
-	. Added the AutoSavedImageFiles array property.
-	. Added the Output() method to the PdfImage class to display image contents on standard output
-	. Changed the PeekAuthorInformation() method to remove extraneous newlines when dealing with hex-encoded
-	  data.
-	. Corrected the ExtractText() method which could generate divisions by zero in some cases.
-	. Added the PdfImage::DestroyImageResource() method, to free libgd memory.
+    [Version : 1.3.12]	[Date : 2017/02/01]     [Author : CV]
+	. Enhanced image extraction by adding support for more image formats, notably those having the
+	  /FlateDecode flag. The new supported image formats are :
+	  - Standard JPEG data, not initially specified as a real image
+	  - Image data encoded as :
+	    . RGB color values
+	    . CMYK color values
+	    . Gray scale color values
+	    Currently, only 8-bits color components are supported.
+	. Added the PdfInlinedImage class, and changed the AddImage() and DecodeImage() methods to handle
+	  these new image processing enhancements.
+	. Corrected incorrect character mappings : the regex that matches beginbfrange such as : 
+		<32> <33> <100>
+	  also matched :
+		<32> <33> [<57> <59]
+	  (!) as if it was specified as :
+		<32> <33> <59>
+	  This caused incorrect translation of characters sometimes. This seems to be a bug of the PCRE package ; 
+	  as a workaround, the regex matching the second form is tried first.
 
     (...)
 
@@ -556,7 +558,7 @@ abstract class  PdfObjectBase		//extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.11" ;
+	const		VERSION					=  "1.3.12" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1148,7 +1150,7 @@ class  PdfToText 	extends PdfObjectBase
 				// Extract image data, if any
 				else if  ( $this -> IsImage ( $object_data ) )
 				   {
-					$this -> AddImage ( $object_number, $stream_match [ 'stream' ], $type ) ;
+					$this -> AddImage ( $object_number, $stream_match [ 'stream' ], $type, $object_data ) ;
 					continue ;
 				    }
 				// Check if there is an association between font number and object number
@@ -1569,7 +1571,7 @@ class  PdfToText 	extends PdfObjectBase
 	        AddImage - Adds an image from the PDF stream to the current object.
 	
 	    PROTOTYPE
-	        $this -> AddImage ( $object_id, $stream_data, $type ) ;
+	        $this -> AddImage ( $object_id, $stream_data, $type, $object_data ) ;
 	
 	    DESCRIPTION
 	        Adds an image from the PDF stream to the current object.
@@ -1588,7 +1590,7 @@ class  PdfToText 	extends PdfObjectBase
 			One of the PdfToText::PDF_*_ENCODING constants.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  AddImage ( $object_id, $stream_data, $type )
+	protected function  AddImage ( $object_id, $stream_data, $type, $object_data )
 	   {
 
 		if  ( self::$DEBUG  &&   $this -> Options  &  self::PDFOPT_GET_IMAGE_DATA )
@@ -1604,7 +1606,7 @@ class  PdfToText 	extends PdfObjectBase
 
 		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
 		   {
-			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type ) ;
+			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type, $object_data ) ;
 
 			if  ( $image  !==  false )
 			   {
@@ -1844,7 +1846,7 @@ class  PdfToText 	extends PdfObjectBase
 	        $object_id (integer) -
 	                Pdf object number.
 
-		$object_data (string) -
+		$stream_data (string) -
 			Object data.
 
 		$type (integer) -
@@ -1854,34 +1856,30 @@ class  PdfToText 	extends PdfObjectBase
 	        Returns an object of type PdfIMage, or false if the image encoding type is not currently supported.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  DecodeImage ( $object_id, $object_data, $type )
+	protected function  DecodeImage ( $object_id, $stream_data, $type, $object_data )
 	   {
 		switch  ( $type )  
 		   {
 			// Normal JPEG image
 			case	self::PDF_DCT_ENCODING :
-				return ( new PdfJpegImage ( $object_data ) ) ;
+				return ( new PdfJpegImage ( $stream_data ) ) ;
 
 			// CCITT fax image
 			case	self::PDF_CCITT_FAX_ENCODING :
-				return ( new PdfFaxImage ( $object_data ) ) ;
+				return ( new PdfFaxImage ( $stream_data ) ) ;
 
 			// For now, I have not found enough information to be able to decode image data in an inflated stream...
 			// In some cases, however, this is JPEG data
 			case	self::PDF_FLATE_ENCODING :
-				$image_data	=  gzuncompress ( $object_data ) ;
-				$image		=  new PdfJpegImage ( $image_data ) ;
+				$image		=  PdfInlinedImage::CreateInstance ( $stream_data, $object_data ) ;
 
-				if  ( $image -> ImageResource )
+				if  ( $image )
 					return ( $image ) ;
-
-				if  ( self::$DEBUG )
-					warning ( new PdfToTextException ( "Object #$object_id contains unknown compressed image data." ) ) ;
 
 				break ;
 
 			default :
-				warning ( new PdfToTextException ( "Image format type #$type not yet implemented for object #$object_id." ) ) ;
+				return ( false ) ;
 		    }
 
 		return ( false ) ;
@@ -4374,10 +4372,25 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				// Loop through each range definition
 				foreach  ( $ranges  as  $range )
 				   {
+					// Array form :
+					//	<from><to>[ value1, value2, ... valuen ]
+					//	Generates mapping from "from" to "to" using the specified values. The value count
+					//	between square brackets must be the same as to - from + 1.
+					// We put them in the DirectMap array, since there is only a one to one correspondance
+				   	if  ( preg_match ( '/ < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* \[(?P<subst> [^\]]+ )\] /imx',
+									$range, $range_match ) )
+					   {
+						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
+						$to 		=  hexdec ( $range_match [ 'to'    ] ) ;
+						$subst 		=  preg_split ( '/\s+/',  trim ( $range_match [ 'subst' ] ) ) ;
+
+						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
+							$this -> DirectMap [$i] 	=  hexdec ( $subst [ $count ] ) ;
+					    }
 					// Normal form :
 					//	<from><to><start>
 					//	Generates mappings from start+from to start+to.
-					if  ( preg_match ( '/ <\s* (?P<from> [0-9a-f]+) \s*> \s* <\s* (?P<to> [0-9a-f]+) \s* > \s* <\s* (?P<subst> [0-9a-f]+) \s* > /imx',
+					else if  ( preg_match ( '/ <\s* (?P<from> [0-9a-f]+) \s*> \s* <\s* (?P<to> [0-9a-f]+) \s*> \s* <\s* (?P<subst> [0-9a-f]+) \s*> /imx',
 									$range, $range_match ) )
 					   {
 						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
@@ -4397,21 +4410,6 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 						    }
 						else
 							$this -> DirectMap [ $from ]	=  $subst ;
-					    }
-					// Array form :
-					//	<from><to>[ value1, value2, ... valuen ]
-					//	Generates mapping from "from" to "to" using the specified values. The value count
-					//	between square brackets must be the same as to - from + 1.
-					// We put them in the DirectMap array, since there is only a one to one correspondance
-				   	else if  ( preg_match ( '/ < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* \[(?P<subst> .*?)\] /imx',
-									$range, $range_match ) )
-					   {
-						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
-						$to 		=  hexdec ( $range_match [ 'to'    ] ) ;
-						$subst 		=  preg_split ( '/\s+/',  trim ( $range_match [ 'subst' ] ) ) ;
-
-						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> DirectMap [$i] 	=  hexdec ( $subst [ $count ] ) ;
 					    }
 				   }
 			    }
@@ -5915,7 +5913,10 @@ abstract class  PdfImage			extends  PdfObjectBase
 	public function  SaveAs ( $output_file, $image_type = IMG_JPEG )
 	   {
 		if  ( ! $this -> ImageResource ) 
+		   {
+			warning ( new PdfToTextException ( "No image resource allocated." ) ) ;
 			return ;
+		    }
 
 		$image_types		=  imagetypes ( ) ;
 
@@ -5985,11 +5986,410 @@ class  PdfJpegImage		extends  PdfImage
 	    }
 
 
-	public function  CreateImageResource ( $image_data )
+	protected function  CreateImageResource ( $image_data )
 	   {
-		return ( @imagecreatefromstring ( $image_data ) ) ;
+		return ( imagecreatefromstring ( $image_data ) ) ;
 	    }
     }
+
+
+/*==============================================================================================================
+
+    class PdfInlinedImage -
+        Decodes raw image data in objects having the /FlateDecode flag.
+
+  ==============================================================================================================*/
+class  PdfInlinedImage		extends  PdfImage
+   {
+	// Supported color schemes
+	const		COLOR_SCHEME_RGB		=  1 ;
+	const		COLOR_SCHEME_CMYK		=  2 ;
+	const		COLOR_SCHEME_GRAY		=  3 ;
+
+	// Color scheme names, for debugging only
+	private static	$DecoderNames		=  array
+	   (
+		self::COLOR_SCHEME_RGB		=>  'RGB',
+		self::COLOR_SCHEME_CMYK		=>  'CMYK',
+		self::COLOR_SCHEME_GRAY		=>  'Gray'
+	    ) ;
+
+	// Currently implemented image decoders
+	private static	$Decoders		=  array
+	   (
+		self::COLOR_SCHEME_RGB		=>  array
+		   (
+			8	=>  '__decode_rgb8'
+		    ),
+		self::COLOR_SCHEME_GRAY		=>  array
+		   (
+			8	=>  '__decode_gray8'
+		    ),
+		self::COLOR_SCHEME_CMYK		=>  array
+		   (
+			8	=>  '__decode_cmyk8'
+		    ),
+	    ) ;
+
+	// Image width and height
+	public		$Width, 
+			$Height ;
+	// Color scheme
+	public		$ColorScheme ;
+	// Number of bits per color component
+	public		$BitsPerComponent ;
+	// Decoding function, varying upon the supplied image type
+	public		$DecodingFunction	=  false ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Constructor - Builds an image from the supplied data.
+	
+	    PROTOTYPE
+	        $image	=  new  PdfInlinedImage ( $image_data, $width, $height, $bits_per_component, $color_scheme ) ;
+	
+	    DESCRIPTION
+	        Builds an image from the supplied data. Checks that the image flags are supported.
+	
+	    PARAMETERS
+	        $image_data (string) -
+	                Uncompressed image data.
+
+		$width (integer) -
+			Image width, in pixels.
+
+		$height (integer) -
+			Image height, in pixels.
+
+		$bits_per_components (integer) -
+			Number of bits per color component.
+
+		$color_scheme (integer) - 
+			One of the COLOR_SCHEME_* constants, specifying the initial data format.
+	
+	    NOTES
+	        Processed images are always converted to JPEG format.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $image_data, $width, $height, $bits_per_component, $color_scheme )
+	   {
+		$this -> Width			=  $width ;
+		$this -> Height			=  $height ;
+		$this -> BitsPerComponent	=  $bits_per_component ;
+		$this -> ColorScheme		=  $color_scheme ;
+
+		// Check that we have a decoding function for the supplied parameters
+		if  ( isset ( self::$Decoders [ $color_scheme ] ) )
+		   {
+			if  ( isset ( self::$Decoders [ $color_scheme ] [ $bits_per_component ] ) )
+				$this -> DecodingFunction	=  self::$Decoders [ $color_scheme ] [ $bits_per_component ] ;
+			else
+				error ( new PdfToTextException ( "No decoding function has been implemented for image objects having the " .
+						self::$DecoderNames [ $color_scheme ] . " color scheme with $bits_per_component bits per color component." ) ) ;
+		    }
+		else
+			error ( new PdfToTextException ( "Unknown color scheme $color_scheme." ) ) ;
+
+		parent::__construct ( $image_data ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        CreateInstance - Creates an appropriate instance of a PdfImage class.
+	
+	    PROTOTYPE
+	        $image	=  PdfInlinedImage ( $stream_data, $object_data ) ;
+	
+	    DESCRIPTION
+	        Creates an instance of either :
+		- A PdfJpegImage class, if the image specifications in $object_data indicate that the compressed stream
+		  contents are only JPEG data
+		- A PdfInlinedImage class, if the image specifications state that the compressed stream data contain
+		  only color values.
+
+		The class currently supports (in $stream_data) :
+		- Pure JPEG contents
+		- RGB values
+		- CMYK values
+		- Gray scale values (in the current version, the resulting image does not correctly reproduce the 
+		  initial colors, if interpolation is to be used).
+	
+	    PARAMETERS
+	        $stream_data (string) -
+	                Compressed image data.
+
+		$object_data (string) -
+			Object containing the stream data.
+	
+	    RETURN VALUE
+	        Returns :
+		- A PdfJpegImage object, if the stream data contains only pure JPEG contents
+		- A PdfInlinedImage object, in other cases.
+		- False if the supplied image data is not currently supported.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  CreateInstance ( $stream_data, $object_data )
+	   {
+		// Remove stream data from the supplied object data, to speed up the searches below
+		$index		=  strpos ( $object_data, 'stream' ) ;
+
+		if  ( $index  !==   false )
+			$object_data	=  substr ( $object_data, 0, $index ) ;
+
+		// Uncompress stream data
+		$image_data	=  gzuncompress ( $stream_data ) ;
+
+		// The /DCTDecode flag indicates JPEG contents - returns a PdfJpegImage object
+		if  ( stripos ( $object_data, '/DCTDecode' ) )
+			return ( new PdfJpegImage ( $image_data ) ) ;
+
+		// Get the image width & height
+		$match		=  null ;
+		preg_match ( '#/Width \s+ (?P<value> \d+)#ix', $object_data, $match ) ;
+		$width		=  ( integer ) $match [ 'value' ] ;
+
+		$match		=  null ;
+		preg_match ( '#/Height \s+ (?P<value> \d+)#ix', $object_data, $match ) ;
+		$height		=  ( integer ) $match [ 'value' ] ;
+
+		// Get the number of bits per color component
+		$match		=  null ;
+		preg_match ( '#/BitsPerComponent \s+ (?P<value> \d+)#ix', $object_data, $match ) ;
+		$bits_per_component	=  ( integer ) $match [ 'value' ] ;
+
+		// Get the target color space
+		// Sometimes, this refers to an object in the PDF file, which can also be embedded in a compound object
+		// We don't handle such cases for now
+		$match		=  null ;
+		preg_match ( '#/ColorSpace \s* / (?P<value> \w+)#ix', $object_data, $match ) ;
+
+		if  ( ! isset ( $match [ 'value' ] ) )
+			return ( false ) ;
+
+		$color_space_name	=  $match [ 'value' ] ;
+
+		// Check that we are able to handle the specified color space
+		switch ( strtolower ( $color_space_name ) )
+		   {
+			case	'devicergb' :
+				$color_space	=  self::COLOR_SCHEME_RGB ;
+				break ;
+
+			case	'devicegray' :
+				$color_space	=  self::COLOR_SCHEME_GRAY ;
+				break ;
+
+			case	'devicecmyk' :
+				$color_space	=  self::COLOR_SCHEME_CMYK ;
+				break ;
+
+			default :
+				warning ( new PdfToTextException ( "Unsupported color space \"$color_space_name\"." ) ) ;
+				return ( false ) ;
+		    }
+
+		// Also check that we can handle the specified number of bits per component
+		switch ( $bits_per_component )
+		   {
+			case	8 :
+				break ;
+
+			default :
+				warning ( new PdfToTextException ( "Unsupported bits per component : $bits_per_component." ) ) ;
+				return ( false ) ;
+		    }
+
+		// All done, return a PdfInlinedImage object
+		return ( new PdfInlinedImage ( $image_data, $width, $height, $bits_per_component, $color_space ) ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        CreateImageResource - Creates the image resource.
+	
+	    PROTOTYPE
+	        $resource	=  $image -> CreateImageResource ( $image_data ) ;
+	
+	    DESCRIPTION
+	        Creates a GD image according to the supplied image data, and the parameters supplied to the class
+		constructor.
+	
+	    PARAMETERS
+	        $image_data (string) -
+	                Image to be decoded.
+	
+	    RETURN VALUE
+	        Returns a GD graphics resource in true color, or false if there is currently no implemented decoding
+		function for this kind of images.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  CreateImageResource ( $image_data ) 
+	   {
+		$decoder	=  $this -> DecodingFunction ;
+
+		if  ( $decoder )
+			return ( $this -> $decoder ( $image_data ) ) ;
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Decoding functions.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+
+	// __decode_rgb8 -
+	//	Decodes image data consisting of 8-bits RGB values (one byte for each color component).
+	private function  __decode_rgb8 ( $data )
+	   {
+		$data_length	=  strlen ( $data ) ;
+		$colors		=  array ( ) ;
+		$width		=  $this -> Width ;
+		$height		=  $this -> Height ;
+		$image		=  imagecreatetruecolor ( $width, $height ) ;
+
+		for  ( $i = 0, $pixel_x = 0, $pixel_y = 0 ; $i + 3  <=  $data_length ; $i += 3, $pixel_x ++ )
+		   {
+			$red	=  ord ( $data [$i] ) ;
+			$green	=  ord ( $data [$i+1] ) ;
+			$blue	=  ord ( $data [$i+2] ) ;
+
+			$color	=  ( $red  <<  16 ) | ( $green  <<  8 )  | ( $blue ) ;
+
+			if  ( isset ( $colors [ $color ] ) )
+				$pixel_color	=  $colors [ $color ] ;
+			else
+			   {
+				$pixel_color		=  imagecolorallocate ( $image, $red, $green, $blue ) ;
+				$colors [ $color ]	=  $pixel_color ;
+			    }
+
+			if  ( $pixel_x  >=  $width )
+			   {
+				$pixel_x	=  0 ;
+				$pixel_y ++ ;
+			    }
+
+			imagesetpixel ( $image, $pixel_x, $pixel_y, $pixel_color ) ;
+		    }
+
+		return ( $image ) ;
+	    }
+
+
+	// __decode_cmyk8 -
+	//	Decodes image data consisting of 8-bits CMYK values (one byte for each color component).
+	private function  __decode_cmyk8 ( $data )
+	   {
+		$data_length	=  strlen ( $data ) ;
+		$colors		=  array ( ) ;
+		$width		=  $this -> Width ;
+		$height		=  $this -> Height ;
+		$image		=  imagecreatetruecolor ( $width, $height ) ;
+
+		for  ( $i = 0, $pixel_x = 0, $pixel_y = 0 ; $i + 4  <=  $data_length ; $i += 4, $pixel_x ++ )
+		   {
+			$cyan		=  ord ( $data [$i] ) ;
+			$magenta	=  ord ( $data [$i+1] ) ;
+			$yellow		=  ord ( $data [$i+2] ) ;
+			$black		=  ord ( $data [$i+3] ) ;
+
+			$color	=  ( $cyan  <<  24 ) | ( $magenta  <<  16 ) | ( $yellow  << 8 ) | ( $black ) ;
+
+			if  ( isset ( $colors [ $color ] ) )
+				$pixel_color	=  $colors [ $color ] ;
+			else
+			   {
+				$rgb			=  $this -> __convert_cmyk_to_rgb ( $cyan, $magenta, $yellow, $black ) ;
+				$pixel_color		=  imagecolorallocate ( $image, $rgb [0], $rgb [1], $rgb [2] ) ;
+				$colors [ $color ]	=  $pixel_color ;
+			    }
+
+			if  ( $pixel_x  >=  $width )
+			   {
+				$pixel_x	=  0 ;
+				$pixel_y ++ ;
+			    }
+
+			imagesetpixel ( $image, $pixel_x, $pixel_y, $pixel_color ) ;
+		    }
+
+		return ( $image ) ;
+	    }
+
+
+	// __decode_gray8 -
+	//	Decodes image data consisting of 8-bits gray values.
+	private function  __decode_gray8 ( $data )
+	   {
+		$data_length	=  strlen ( $data ) ;
+		$colors		=  array ( ) ;
+		$width		=  $this -> Width ;
+		$height		=  $this -> Height ;
+		$image		=  imagecreatetruecolor ( $width, $height ) ;
+
+		for  ( $i = 0, $pixel_x = 0, $pixel_y = 0 ; $i  <  $data_length ; $i ++, $pixel_x ++ )
+		   {
+			$color	=  ord ( $data [$i] ) ;
+
+			if  ( isset ( $colors [ $color ] ) )
+				$pixel_color	=  $colors [ $color ] ;
+			else
+			   {
+				$pixel_color		=  imagecolorallocate ( $image, $color, $color, $color ) ;
+				$colors [ $color ]	=  $pixel_color ;
+			    }
+
+			if  ( $pixel_x  >=  $width )
+			   {
+				$pixel_x	=  0 ;
+				$pixel_y ++ ;
+			    }
+
+			imagesetpixel ( $image, $pixel_x, $pixel_y, $pixel_color ) ;
+		    }
+
+		return ( $image ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Support functions.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+
+	// __convert_cmyk_to_rgb -
+	//	Converts CMYK color value to RGB.
+	private function  __convert_cmyk_to_rgb ( $C, $M, $Y, $K )
+	   {
+		if  ( $C  >  1  ||  $M  >  1  ||  $Y  >  1  ||  $K  >  1 )
+		   {
+			$C /= 100.0 ;
+			$M /= 100.0 ;
+			$Y /= 100.0 ;
+			$K /= 100.0 ;
+		    }
+
+   		$R 	=  ( 1 - $C * ( 1 - $K ) - $K ) * 256 ;
+   		$G 	=  ( 1 - $M * ( 1 - $K ) - $K ) * 256 ;
+   		$B 	=  ( 1 - $Y * ( 1 - $K ) - $K ) * 256 ;
+
+		$result =  array ( round ( $R ), round ( $G ), round ( $B ) ) ;
+
+		return ( $result ) ;
+  	    }
+    }
+
+
 
 
 /*==============================================================================================================
@@ -6006,7 +6406,7 @@ class  PdfFaxImage		extends  PdfImage
 	    }
 
 
-	public function  CreateImageResource ( $image_data )
+	protected function  CreateImageResource ( $image_data )
 	   {
 		warning ( new PdfToTextException ( "Decoding of CCITT Fax image format is not yet implemented." ) ) ;
 		//return ( imagecreatefromstring ( $image_data ) ) ;
