@@ -36,6 +36,8 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Francisco Godoy, who sent me a PDF sample which was enough simple to help me solve a long-time issue I had with PDF files using inline "templates"
 - Patryk, from expromo.pl, who helped me to handle font aliases that are local to a page by providing me with samples easy enough to investigate ; the same samples also helped me
   to start an experimental support of CID fonts.
+- DL, from aloha-intbiz.eu, who suggested me to give the option of saving images on-the-fly without storing them into memory, and who gave me samples that helped me to process more cases during image extraction.
+- Kis Balazs, who gave me a sample which helped me understand why sometimes certain accentuated characters where incorrectly translated.
 - And more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
