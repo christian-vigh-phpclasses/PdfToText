@@ -22,25 +22,10 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.12]	[Date : 2017/02/01]     [Author : CV]
-	. Enhanced image extraction by adding support for more image formats, notably those having the
-	  /FlateDecode flag. The new supported image formats are :
-	  - Standard JPEG data, not initially specified as a real image
-	  - Image data encoded as :
-	    . RGB color values
-	    . CMYK color values
-	    . Gray scale color values
-	    Currently, only 8-bits color components are supported.
-	. Added the PdfInlinedImage class, and changed the AddImage() and DecodeImage() methods to handle
-	  these new image processing enhancements.
-	. Corrected incorrect character mappings : the regex that matches beginbfrange such as : 
-		<32> <33> <100>
-	  also matched :
-		<32> <33> [<57> <59]
-	  (!) as if it was specified as :
-		<32> <33> <59>
-	  This caused incorrect translation of characters sometimes. This seems to be a bug of the PCRE package ; 
-	  as a workaround, the regex matching the second form is tried first.
+    [Version : 1.3.13]	[Date : 2017/02/05]     [Author : CV]
+	. Added the MaxSelectedPages property to extract only the first or last x pages of the document.
+	. Pure JPEG images are no more loaded into memory (using the gd library) when the 
+	  PDFOPT_AUTOSAVE_IMAGES flag is specified.
 
     (...)
 
@@ -558,7 +543,7 @@ abstract class  PdfObjectBase		//extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.12" ;
+	const		VERSION					=  "1.3.13" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -647,6 +632,10 @@ class  PdfToText 	extends PdfObjectBase
 	public		$MinSpaceWidth			=  250 ;
 	// Pdf options
 	public		$Options			=  self::PDFOPT_NONE ;
+	// Maximum number of pages to extract from the PDF. A zero value means "extract everything"
+	// If this number is negative, then the pages to be extract start from the last page. For example, a value of -2
+	// extracts the last two pages
+	public		$MaxSelectedPages		=  false ;
 	// Location of the CID tables directory
 	public static	$CIDTablesDirectory ;
 	// Author information 
@@ -714,7 +703,9 @@ class  PdfToText 	extends PdfObjectBase
 		 '^[fhqQS] \s+',
 		 '^(q \s+)+',
 		 'BX \s+ .*? EX',
-		 '-?0 (\. \d+)? \s+ T[cw]'
+		 '-?0 (\. \d+)? \s+ T[cw]',
+		 '\n[fhnqQS]\s+',
+		 '\r'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs		=  array
@@ -1256,6 +1247,10 @@ class  PdfToText 	extends PdfObjectBase
 		// Extract text from the collected text elements
 		foreach ( $this -> PageMap -> Pages as  $page_number => $page_objects )
 		   {
+			// Checks if this page is selected
+			if  ( ! $this -> IsPageSelected ( $page_number ) )
+				continue ;
+				
 			$this -> Pages [ $page_number ]		=  '' ;
 
 			foreach  ( $page_objects  as  $page_object ) 
@@ -1604,9 +1599,10 @@ class  PdfToText 	extends PdfObjectBase
 
 		     }
 
+
 		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
 		   {
-			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type, $object_data ) ;
+			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type, $object_data, $this -> Options  &  self::PDFOPT_AUTOSAVE_IMAGES ) ;
 
 			if  ( $image  !==  false )
 			   {
@@ -1851,18 +1847,22 @@ class  PdfToText 	extends PdfObjectBase
 
 		$type (integer) -
 			One of the PdfToText::PDF_*_ENCODING constants.
+
+		$autosave (boolean) -
+			When autosave is selected, images will not be decoded into memory unless they have a format
+			different from JPEG. This is intended to save memory.
 	
 	    RETURN VALUE
 	        Returns an object of type PdfIMage, or false if the image encoding type is not currently supported.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  DecodeImage ( $object_id, $stream_data, $type, $object_data )
+	protected function  DecodeImage ( $object_id, $stream_data, $type, $object_data, $autosave )
 	   {
 		switch  ( $type )  
 		   {
 			// Normal JPEG image
 			case	self::PDF_DCT_ENCODING :
-				return ( new PdfJpegImage ( $stream_data ) ) ;
+				return ( new PdfJpegImage ( $stream_data, $autosave ) ) ;
 
 			// CCITT fax image
 			case	self::PDF_CCITT_FAX_ENCODING :
@@ -1871,7 +1871,7 @@ class  PdfToText 	extends PdfObjectBase
 			// For now, I have not found enough information to be able to decode image data in an inflated stream...
 			// In some cases, however, this is JPEG data
 			case	self::PDF_FLATE_ENCODING :
-				$image		=  PdfInlinedImage::CreateInstance ( $stream_data, $object_data ) ;
+				$image		=  PdfInlinedImage::CreateInstance ( $stream_data, $object_data, $autosave ) ;
 
 				if  ( $image )
 					return ( $image ) ;
@@ -3550,14 +3550,45 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	//	(these are mainly shape drawing instructions).
 	private function  __strip_useless_instructions ( $data )
 	   {
-		$result		=  str_replace ( "\r\n", "\n", $data ) ;
-		$result		=  preg_replace ( self::$IgnoredInstructions, '', $result ) ;
-		$result		=  preg_replace ( array ( '/\n[fhnqQS]\s+/msx', '/\n+/' ), array ( ' ', "\n" ), $result ) ;
+		$result		=  preg_replace ( self::$IgnoredInstructions, '', $data ) ;
+
 
 		$this -> Statistics [ 'TextSize' ]		+=  strlen ( $data ) ;
 		$this -> Statistics [ 'OptimizedTextSize' ]	+=  strlen ( $result ) ;
 
 		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        IsPageSelected - Checks if a page is selected for output.
+	
+	    PROTOTYPE
+	        $status		=  $this -> IsPageSelected ( $page ) ;
+	
+	    DESCRIPTION
+	        Checks if the specified page is to be selected for output.
+	
+	    PARAMETERS
+	        $page (integer) -
+	                Page to be checked.
+	
+	    RETURN VALUE
+	        True if the page is to be selected for output, false otherwise.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsPageSelected ( $page )
+	   {
+		if  ( ! $this -> MaxSelectedPages )
+			return ( true ) ;
+		
+		if  ( $this -> MaxSelectedPages  >  0 )
+			return  ( $page  <=  $this -> MaxSelectedPages ) ;
+
+		// MaxSelectedPages  <  0 
+		return ( $page  >  count ( $this -> PageMap -> Pages ) + $this -> MaxSelectedPages ) ;
 	    }
 
 
@@ -5821,9 +5852,11 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 abstract class  PdfImage			extends  PdfObjectBase 
    {
 	// Image resource that can be used to process image data, using the php imagexxx() functions
-	public		$ImageResource ;
+	public		$ImageResource		=  false ;
 	// Original image data
 	protected	$ImageData ;
+	// Tells if the image resource has been created - false when the autosave feature is on and the image is pure JPEG data
+	protected	$NoResourceCreated ;
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -5832,10 +5865,13 @@ abstract class  PdfImage			extends  PdfObjectBase
 	        Creates a PdfImage object with a resource that can be used with imagexxx() php functions.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  __construct ( $image_data )
+	public function  __construct ( $image_data, $no_resource_created = false )
 	   {
-		$this -> ImageData	=  $image_data ;
-		$this -> ImageResource	=  $this -> CreateImageResource ( $image_data ) ;
+		$this -> ImageData		=  $image_data ;
+		$this -> NoResourceCreated	=  $no_resource_created ;
+
+		if  ( ! $no_resource_created )
+			$this -> ImageResource		=  $this -> CreateImageResource ( $image_data ) ;
 	    }
 
 
@@ -5914,7 +5950,11 @@ abstract class  PdfImage			extends  PdfObjectBase
 	   {
 		if  ( ! $this -> ImageResource ) 
 		   {
-			warning ( new PdfToTextException ( "No image resource allocated." ) ) ;
+			if  ( $this -> NoResourceCreated  &&  $image_type  ==  IMG_JPEG )
+				file_put_contents ( $output_file, $this -> ImageData ) ;
+			else
+				warning ( new PdfToTextException ( "No image resource allocated." ) ) ;
+
 			return ;
 		    }
 
@@ -5980,9 +6020,9 @@ abstract class  PdfImage			extends  PdfObjectBase
   ==============================================================================================================*/
 class  PdfJpegImage		extends  PdfImage 
    {
-	public function  __construct ( $image_data )
+	public function  __construct ( $image_data, $autosave )
 	   {
-		parent::__construct ( $image_data ) ;
+		parent::__construct ( $image_data, $autosave ) ;
 	    }
 
 
@@ -6132,7 +6172,7 @@ class  PdfInlinedImage		extends  PdfImage
 		- False if the supplied image data is not currently supported.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public static function  CreateInstance ( $stream_data, $object_data )
+	public static function  CreateInstance ( $stream_data, $object_data, $autosave )
 	   {
 		// Remove stream data from the supplied object data, to speed up the searches below
 		$index		=  strpos ( $object_data, 'stream' ) ;
@@ -6145,7 +6185,7 @@ class  PdfInlinedImage		extends  PdfImage
 
 		// The /DCTDecode flag indicates JPEG contents - returns a PdfJpegImage object
 		if  ( stripos ( $object_data, '/DCTDecode' ) )
-			return ( new PdfJpegImage ( $image_data ) ) ;
+			return ( new PdfJpegImage ( $image_data, $autosave ) ) ;
 
 		// Get the image width & height
 		$match		=  null ;

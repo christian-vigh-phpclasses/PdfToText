@@ -367,6 +367,14 @@ Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is e
 
 This property is set to *true* if the Pdf file is password-protected.
 
+### MaxSelectedPages ###
+
+Maximum number of pages to be selected. The default is the value 0, meaning that all pages will be selected for output.
+
+A value of 1 will extract the contents of the first page only, which can be useful if your PDF file is large and you're only interested by the contents of the first page.
+
+When this number is negative, selection starts from the end of the file : -1 means "extract the last page", -2 means "extract the last two pages", and so on.
+
 ### MemoryUsage, MemoryPeakUsage ###
 
 Report the memory (peak) used by the *Load()* method.
