@@ -1,3 +1,7 @@
+    [Version : 1.3.14]	[Date : 2017/02/07]     [Author : CV]
+	. Fixed the *_strpos methods which did not return correct page information any more
+	. Added new font aliases possibilities (/0 through /9 and /a through /z)
+
     [Version : 1.3.13]	[Date : 2017/02/05]     [Author : CV]
 	. Added the MaxSelectedPages property to extract only the first or last x pages of the document.
 	. Pure JPEG images are no more loaded into memory (using the gd library) when the 
