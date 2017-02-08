@@ -122,7 +122,7 @@ if  ( ! function_exists ( 'hex2bin' ) )
         Base class for all PDF objects defined here.
 
   ==============================================================================================================*/
-abstract class  PdfObjectBase		extends  Object
+abstract class  PdfObjectBase		// extends  Object
    {
 	// Possible encoding types for streams inside objects ; "unknown" means that the object contains no stream
 	const 	PDF_UNKNOWN_ENCODING 		=   0 ;		// No stream decoding type could be identified
@@ -140,8 +140,7 @@ abstract class  PdfObjectBase		extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static  $FontSpecifiers	=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | ' .
-						   '(/[0-9a-zA-Z])' ;
+	protected static  $FontSpecifiers	=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z])' ;
 
 
 	public function  __construct ( )
