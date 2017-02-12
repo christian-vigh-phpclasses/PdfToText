@@ -1,3 +1,25 @@
+    [Version : 1.3.15]	[Date : 2017/02/12]     [Author : CV]
+	. Handles author information whose keyword values refer to existing object contents instead of
+	  referring to a direct value
+	. Handles new constructions for beginbfchar/endbfchar constructs, which can act as beginbfrange ; 
+	  Example :
+		<21> <0009 0020 000d>
+	  means :
+	  	. Map character #21 to #0009
+		. Map character #22 to #0020
+		. Map character #23 to #000D
+	 There is no clue in the Adobe PDF specification that a single character could be mapped to a range.
+	 The normal constructs would be :
+		<21> <0009>
+		<22> <0020>
+		<23> <0000D>
+	. Regular expressions matching Postscript instructions to be removed before interpreting the remaining
+	  contents were sometimes catenating one instruction with the first parameter of the following one,
+	  which caused bad interpretation, some warnings and bad handling of the layout (some lines could be
+	  catenated together).
+	. Changed the MinSpaceWidth value from 250 to 200 (certain files separate words with lower spacing
+	  values)
+
     [Version : 1.3.14]	[Date : 2017/02/07]     [Author : CV]
 	. Fixed the *_strpos methods which did not return correct page information any more
 	. Added new font aliases possibilities (/0 through /9 and /a through /z)
