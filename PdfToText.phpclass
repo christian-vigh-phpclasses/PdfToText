@@ -22,9 +22,27 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.14]	[Date : 2017/02/07]     [Author : CV]
-	. Fixed the *_strpos methods which did not return correct page information any more
-	. Added new font aliases possibilities (/0 through /9 and /a through /z)
+    [Version : 1.3.15]	[Date : 2017/02/12]     [Author : CV]
+	. Handles author information whose keyword values refer to existing object contents instead of
+	  referring to a direct value
+	. Handles new constructions for beginbfchar/endbfchar constructs, which can act as beginbfrange ; 
+	  Example :
+		<21> <0009 0020 000d>
+	  means :
+	  	. Map character #21 to #0009
+		. Map character #22 to #0020
+		. Map character #23 to #000D
+	 There is no clue in the Adobe PDF specification that a single character could be mapped to a range.
+	 The normal constructs would be :
+		<21> <0009>
+		<22> <0020>
+		<23> <0000D>
+	. Regular expressions matching Postscript instructions to be removed before interpreting the remaining
+	  contents were sometimes catenating one instruction with the first parameter of the following one,
+	  which caused bad interpretation, some warnings and bad handling of the layout (some lines could be
+	  catenated together).
+	. Changed the MinSpaceWidth value from 250 to 200 (certain files separate words with lower spacing
+	  values)
 
     (...)
 
@@ -542,7 +560,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.14" ;
+	const		VERSION					=  "1.3.15" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -628,7 +646,7 @@ class  PdfToText 	extends PdfObjectBase
 	// Separator to be used between pages in the $Text property
 	public		$PageSeparator			=  "\n" ;
 	// Minimum value (in 1/1000 of text units) that separates two text chunks that can be considered as a real space
-	public		$MinSpaceWidth			=  250 ;
+	public		$MinSpaceWidth			=  200 ;
 	// Pdf options
 	public		$Options			=  self::PDFOPT_NONE ;
 	// Maximum number of pages to extract from the PDF. A zero value means "extract everything"
@@ -699,12 +717,10 @@ class  PdfToText 	extends PdfObjectBase
 		 '^W \s+ n \r? \n',
 		 '^q \s+ [hfS] \n',
 		 '(f | W) \* \s+',
-		 '^[fhqQS] \s+',
+		 '^[fhnqQS] \s+',
 		 '^(q \s+)+',
 		 'BX \s+ .*? EX',
-		 '-?0 (\. \d+)? \s+ T[cw]',
-		 '\n[fhnqQS]\s+',
-		 '\r'
+		 '-?0 (\. \d+)? \s+ T[cw]'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs		=  array
@@ -991,6 +1007,9 @@ class  PdfToText 	extends PdfObjectBase
 		if  ( self::$DEBUG  &&  $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
 			$this -> Options	|=  self::PDFOPT_GET_IMAGE_DATA ;
 
+		// Author information needs to be processed after, because it may reference objects that occur later in the PDF stream
+		$author_information_object_id		=  false ;
+
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
 		$matches	=  null ;
 		$status		=  preg_match_all ( '/(?P<object_id> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $matches ) ;
@@ -1038,7 +1057,7 @@ class  PdfToText 	extends PdfObjectBase
 		$pdf_objects	=  array ( ) ;
 
 		for  ( $i = 0, $count = count ( $matches [ 'object_id' ] ) ; $i  <  $count ; $i ++ )
-			$pdf_objects [ $matches [ 'object_id' ] [$i] ]	=  $matches [ 'object' ] [$i] ;		
+			$pdf_objects [ $matches [ 'object_id' ] [$i] ]	=  $matches [ 'object' ] [$i] ;	
 
 		// Extract trailer information, which may contain the ID of an object specifying encryption flags
 		$this -> GetTrailerInformation ( $contents ) ;
@@ -1071,6 +1090,11 @@ class  PdfToText 	extends PdfObjectBase
 		   		$object_data 	=  $object_matches [ 'object' ] [$i] ;
 		   		$object_number 	=  ( integer ) $object_matches [ 'object_id' ] [$i] ;
 
+				// Some additional objects may be uncovered after processing (in an object containing compacted objects for example)
+				// so add them to the list if necessary
+				if  ( ! isset ( $pdf_objects [ $object_number ] ) )
+					$pdf_objects [ $object_number ]		=  $object_data ;
+
 				// Handle the special case of object streams
 				if  ( $this -> IsObjectStream ( $object_data ) )
 				   {
@@ -1096,7 +1120,7 @@ class  PdfToText 	extends PdfObjectBase
 
 				// Check if the object contais authoring information - it can appear encoded or unencoded
 				if  ( ! $this -> GotAuthorInformation ) 
-					$this -> PeekAuthorInformation ( $object_number, $object_data ) ;
+					$author_information_object_id	=  $this -> PeekAuthorInformation ( $object_number, $object_data ) ;
 
 				// Also catch the object encoding type
 				$type 		=  $this -> GetEncodingType ( $object_number, $object_data ) ;
@@ -1174,7 +1198,7 @@ class  PdfToText 	extends PdfObjectBase
 
 				// Second chance to peek author information, this time on a decoded stream data
 				if  ( ! $this -> GotAuthorInformation )
-					$this -> PeekAuthorInformation ( $object_number, $decoded_stream_data ) ;
+					$author_information_object_id	=  $this -> PeekAuthorInformation ( $object_number, $decoded_stream_data ) ;
 
 				// Check for character maps
 				if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
@@ -1264,6 +1288,10 @@ class  PdfToText 	extends PdfObjectBase
 					echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
 			    }
 		    }
+
+		// Retrieve author information
+		if  ( $this -> GotAuthorInformation )
+			$this -> RetrieveAuthorInformation ( $author_information_object_id, $pdf_objects ) ;
 
 		// Build the page locations (ie, starting and ending offsets)
 		$offset		=  0 ;
@@ -3549,7 +3577,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	private function  __strip_useless_instructions ( $data )
 	   {
 		$result		=  preg_replace ( self::$IgnoredInstructions, '', $data ) ;
-
+		$result		=  str_replace ( "\r", '' , $result ) ;
 
 		$this -> Statistics [ 'TextSize' ]		+=  strlen ( $data ) ;
 		$this -> Statistics [ 'OptimizedTextSize' ]	+=  strlen ( $result ) ;
@@ -3612,18 +3640,81 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  PeekAuthorInformation ( $object_id, $object_data )
 	   {
-		static		$re	=  '#
-						(?P<info>
-							/
-							(?P<keyword> [^ (<]+)
-							\s* 
-							(?P<opening> [(<])
-						)
-					    #imsx' ;
+		if  ( ( strpos  ( $object_data, '/Author' )  !==  false  ||  strpos ( $object_data, '/CreationDate' )  !==  false ) )
+		   {
+			$this -> GotAuthorInformation	=  true ;
+			return ( $object_id ) ;
+		    }
+		else
+			return ( false ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        RetrieveAuthorInformation - Extracts author information
+	
+	    PROTOTYPE
+	        $this -> RetriveAuthorInformation ( $object_id, $pdf_objects ) ;
+	
+	    DESCRIPTION
+	        Extracts the author information. Handles the case where flag values refer to existing objects.
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Id of the object containing the author information.
+
+		$pdf_objects (array) -
+			Array whose keys are the PDF object ids, and values their corresponding contents.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  RetrieveAuthorInformation ( $object_id, $pdf_objects )
+	   {
+		static		$re		=  '#
+							(?P<info>
+								/
+								(?P<keyword> [^ (<]+)
+								\s* 
+								(?P<opening> [(<])
+							)
+						    #imsx' ;
+		static		$object_re	=  '#
+							(?P<info>
+								/
+								(?P<keyword> [^ (<]+)
+								\s* 
+								(?P<object_ref>
+									(?P<object> \d+)
+									\s+
+									\d+
+									\s+
+									R
+								 )
+							)
+						    #imsx' ;
+
+		// Retrieve the object data corresponding to the specified object id
+		$object_data	=  $pdf_objects [ $object_id ] ;
+
+		// Pre-process flags whose values refer to existing objects
+		if  ( preg_match_all ( $object_re, $object_data, $object_matches ) )
+		   {
+			$searches		=  array ( ) ;
+			$replacements		=  array ( ) ;
+
+			for  ( $i = 0, $count = count ( $object_matches [ 'keyword' ] ) ; $i  <  $count ; $i ++ )
+			   {
+				$searches []		=  $object_matches [ 'object_ref' ] [$i] ;
+				$replacements []	=  trim ( $pdf_objects [ $object_matches [ 'object' ] [$i] ] ) ;
+			    }
+
+			$object_data	=  str_replace ( $searches, $replacements, $object_data ) ;
+		    }
+
 
 		// To execute faster, run the regular expression only if the object data contains a /Author keyword
-		if  ( ( strpos  ( $object_data, '/Author' )  !==  false  ||  strpos ( $object_data, '/CreationDate' )  !==  false )  &&  
-				preg_match_all ( $re, $object_data, $matches, PREG_OFFSET_CAPTURE ) )
+		if  ( preg_match_all ( $re, $object_data, $matches, PREG_OFFSET_CAPTURE ) )
 		   {
 			for  ( $i = 0, $count = count ( $matches [ 'keyword' ] ) ; $i  <  $count ; $i ++ )
 			   {
@@ -3668,8 +3759,6 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 					case  'moddate'		:  $this -> ModificationDate		=  $this -> GetUTCDate ( $value ) ; break ;
 				    }
 			    }
-
-			$this -> GotAuthorInformation	=  true ;
 
 			if  ( self::$DEBUG )
 			   {
@@ -4375,17 +4464,31 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		    {
 		    	foreach  ( $char_matches [ 'chars' ]  as  $char_list )
 		    	   {
-				// Don't believe that the contents between beginbfchar/endbfchar are separated by line breaks !
-				// I have met one example where everything was put on the same line
-				preg_match_all ( '/ < \s* (?P<char> [0-9a-f]+) \s* > /imx', $char_list, $code_matches ) ;
-
-				for  ( $i = 0, $count = count ( $code_matches [ 'char' ] ) ; $i  <  $count ; $i += 2 )
+				// beginbfchar / endbfchar constructs can behave as a kind of beginfbfrange/endbfrange ; example :
+				//	<21> <0009 0020 000d>
+				// means :
+				//	. Map character #21 to #0009
+				//	. Map character #22 to #0020
+				//	. Map character #23 to #000D
+				// There is no clue in the Adobe PDF specification that a single character could be mapped to a range.
+				// The normal constructs would be :
+				//	<21> <0009>
+				//	<22> <0020>
+				//	<23> <0000D>
+				preg_match_all ( '/< \s* (?P<item> .*?) \s* >/msx', $char_list, $item_matches ) ;
+	
+				for  ( $i = 0, $item_count = count ( $item_matches [ 'item' ] ) ; $i  <  $item_count ; $i += 2 )
 				   {
-					   $src		=  hexdec ( $code_matches [ 'char' ] [ $i ] ) ;
-					   $dst		=  hexdec ( $code_matches [ 'char' ] [ $i + 1 ] ) ;
+					$char		=  hexdec ( $item_matches [ 'item' ] [$i] ) ;
+					$map		=  explode ( ' ', preg_replace ( '/\s+/', ' ', $item_matches [ 'item' ] [ $i + 1 ] ) ) ;
 
-					   $this -> DirectMap [ $src ]	=  $dst ;
+					for  ( $j = 0, $map_count = count ( $map ) ; $j  <  $map_count ; $j ++ )
+					   {
+						$replacement				=  hexdec ( $map [$j] ) ;
+						$this -> DirectMap [ $char + $j ]	=  $replacement ;
+					    }
 				    }
+
 		    	    }
 		     }
 
