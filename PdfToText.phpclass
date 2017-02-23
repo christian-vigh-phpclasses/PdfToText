@@ -22,27 +22,14 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.15]	[Date : 2017/02/12]     [Author : CV]
-	. Handles author information whose keyword values refer to existing object contents instead of
-	  referring to a direct value
-	. Handles new constructions for beginbfchar/endbfchar constructs, which can act as beginbfrange ; 
-	  Example :
-		<21> <0009 0020 000d>
-	  means :
-	  	. Map character #21 to #0009
-		. Map character #22 to #0020
-		. Map character #23 to #000D
-	 There is no clue in the Adobe PDF specification that a single character could be mapped to a range.
-	 The normal constructs would be :
-		<21> <0009>
-		<22> <0020>
-		<23> <0000D>
-	. Regular expressions matching Postscript instructions to be removed before interpreting the remaining
-	  contents were sometimes catenating one instruction with the first parameter of the following one,
-	  which caused bad interpretation, some warnings and bad handling of the layout (some lines could be
-	  catenated together).
-	. Changed the MinSpaceWidth value from 250 to 200 (certain files separate words with lower spacing
-	  values)
+    [Version : 1.3.16]	[Date : 2017/02/23]     [Author : CV]
+	. Changed the GetFontByMapId() method which was incorrectly searching a global font instead of searching
+	  first for a page-specific font.
+	. Compound objects were not correctly handled when object number/offset pairs were separated by a newline
+	  (str_replace() was called instead of preg_replace). This caused some objects to be missed.
+	. Performed some optimizations which allow for a performance gain of 5 to 10 percent in certain cases.
+	. Removed the suppression of carriage returns, as this is the only line separator used by Adobe software
+	  on Apple.
 
     (...)
 
@@ -560,7 +547,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.15" ;
+	const		VERSION					=  "1.3.16" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -706,7 +693,7 @@ class  PdfToText 	extends PdfObjectBase
 		'%n{4} ( (re) | (y) | (v) | (k) | (K) ) \s+',
 		'%n{3} ( (scn) | (SCN) | (r) | (rg) | (RG) ) \s+',
 		'%n{2} ( (m) | (l) ) \s+',
-		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) ) \s+',
+		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) | (i) ) \s+',
 		'\b ( (BDC) | (BT) | (ET) | (EMC) ) \s+',
 		'\/( (Cs \d+) | (CS \d+) | (GS \d+) | (Fm \d+) | (Im \d+) | (PlacedGraphic) ) \s+ \w+ \s*',
 		'\/( (Span) | (Artifact) | (Figure) | (P) ) \s* << .*? >> [ \t\r\n>]*',
@@ -732,6 +719,9 @@ class  PdfToText 	extends PdfObjectBase
 
 	// Map id buffer - for avoiding unneccesary calls to GetFontByMapId
 	private		$MapIdBuffer			=  array ( ) ;
+
+	// Same for MapCharacter()
+	private		$CharacterMapBuffer		=  array ( ) ;
 
 	// Regex used for removing hyphens - we have to take care of different line endings : "\n" for Unix, "\r\n"
 	// for Windows, and "\r" for pure Mac files.
@@ -991,6 +981,7 @@ class  PdfToText 	extends PdfObjectBase
 		// Also reset cached information that may come from previous runs
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
+		$this -> CharacterMapBuffer		=  array ( ) ;
 
 		// Debug statistics 
 		$this -> Statistics			=  array
@@ -1313,6 +1304,7 @@ class  PdfToText 	extends PdfObjectBase
 		// Free memory
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
+		$this -> CharacterMapBuffer		=  array ( ) ;
 
 		unset ( $this -> FontTable ) ;
 		unset ( $this -> PageMap ) ;
@@ -1991,7 +1983,7 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		// Extract the series of object id/offset pairs and the stream object data
-		$series		=  explode ( ' ', rtrim ( str_replace ( '/\s+/', ' ', $series_match [ 'series' ] ) ) ) ;
+		$series		=  explode ( ' ', rtrim ( preg_replace ( '/\s+/', ' ', $series_match [ 'series' ] ) ) ) ;
 		$data		=  substr ( $decoded_data, strlen ( $series_match [ 'series' ] ) ) ;
 
 		// $series should contain an even number of values
@@ -2244,109 +2236,6 @@ class  PdfToText 	extends PdfObjectBase
 			// Process current instruction
 			switch  ( $instruction [ 'instruction' ] )
 			   {
-				// "Tm", "Td" or "TD" : Output text on the same line, if the "y" coordinates are equal
-			   	case 	'goto' :
-					// Some text is positioned using 'Tm' instructions ; however they can be immediatley followed by 'Td' instructions
-					// which give a relative positioning ; so consider that the last instruction wins
-					if  ( $instruction [ 'relative' ] )
-					   {
-						// Try to put a separator if the x coordinate is non-zero
-						//if  ( $instruction [ 'x' ] - $last_goto_x  >=  $current_font_size )
-						//	$result		.=  $this -> Separator ;
-
-						$discard_last_instruction	=  true ;
-						$extra_newlines			=  0 ; 
-						$use_same_line			=  ( ( $last_relative_goto_y - abs ( $instruction  [ 'y' ] ) )  <=  $current_font_size ) ;
-						$last_relative_goto_y		=  abs ( $instruction [ 'y' ] ) ;
-						$last_goto_x			=  $instruction [ 'x' ] ;
-						
-						if  ( - $instruction [ 'y' ]  >  $current_font_size ) 
-						   {
-							$use_same_line		=  false ;
-
-							if  ( $last_relative_goto_y )
-								$extra_newlines		=  ( integer ) ( $current_font_size / $last_relative_goto_y ) ;
-							else
-								$extra_newlines		=  0 ;
-						    }
-						else if  ( ! $instruction [ 'y' ] ) 
-						   {
-							$use_same_line		=  true ;
-							$extra_newlines		=  0 ;
-						    }
-							
-						break ;
-					    }
-					else
-						$last_relative_goto_y	=  0 ;
-
-					$y	=  $last_goto_y + $last_relative_goto_y ;
-
-			   		if  ( $instruction [ 'y' ]  ==  $y  ||  abs ( $instruction [ 'y' ] - $y )  <  $current_font_size )
-			   		   {
-			   			$use_same_line 		=  true ;
-			   			$extra_newlines 	=  0 ;
-			   		    }
-					else
-					   {
-					   	// Compute the number of newlines we have to insert between the current and the next lines
-					   	if  ( $current_font_size )
-					   		$extra_newlines =  ( integer ) ( ( $y - $instruction [ 'y' ] - $current_font_size ) / $current_font_size ) ;
-
-						$use_same_line 		=  ( $last_goto_y  ==  0 ) ;
-					    }
-
-					$last_goto_y 		=  $instruction [ 'y' ] ;
-			   		break ;
-
-				// "/Rx" : sets the current font
-			   	case 	'resource' :
-			   		$current_font 		=  $instruction [ 'resource' ] ;
-
-					$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
-			   		break ;
-
-				// "/TPLx" : references a template, which can contain additional font aliases
-				case	'template' :
-					if  ( $this -> PageMap -> IsValidXObjectName ( $instruction [ 'token' ] ) )
-						$current_template	=  $instruction [ 'token' ] ;
-
-					break ;
-
-			   	case 	'fontsize' :
-			   		$current_font_size 	=  $instruction [ 'size' ] ;
-			   		break ;
-
-			   	// 'TL' : text leading to be used for the next "T*" in the flow
-			   	case	'leading' :
-					if  ( ! ( $this -> Options & self::PDFOPT_IGNORE_TEXT_LEADING ) )
-			   			$text_leading 		=  $instruction [ 'size' ] ;
-
-			   		break ;
-
-				// An "nl" instruction means TJ, Tj, T* or "'"
-			   	case 	'nl' :
-			   		if  ( ! $instruction [ 'conditional' ] )
-			   		   {
-			   		   	if  ( $instruction [ 'leading' ]  &&  $text_leading  &&  $current_font_size )
-			   		   	   {
-			   		   		$count 	=  ( integer ) ( ( $text_leading - $current_font_size ) / $current_font_size ) ;
-
-			   		   		if  ( ! $count )
-			   		   			$count 	=  1 ;
-			   		   	    }
-			   		   	else
-			   		   		$count 	=  1 ;
-
-		   		   		$extra			 =  str_repeat ( PHP_EOL, $count ) ;
-			   			$result 		.=  $extra ;
-						$needs_separator	 =  false ;
-						$last_goto_y 		-=  ( $count * $text_leading ) ;	// Approximation on y-coord change
-						$last_relative_goto_y	 =  0 ;
-			   		    }
-
-			   		break ;
-
 				// Raw text (enclosed by parentheses) or array text (enclosed within square brackets)
 				// is returned as a single instruction
 			   	case 	'text' :
@@ -2406,7 +2295,15 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	   	   {
 									$value		 =  substr ( $text, $i, $current_font_map_width ) ;
 			   			   	   	   	$ch 		 =  hexdec ( $value ) ;
-									$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+
+									if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else
+									   {
+										$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]		=  $newchar ;
+									    }
+
 			   			   			$result		.=  $newchar ;
 			   			   	   	    }
 
@@ -2427,7 +2324,14 @@ class  PdfToText 	extends PdfObjectBase
 								for  ( $i = 1 ; $i  <  $length ; $i += 2 )
 								   {
 									$ch		=  ( ord ( $text [$i] )  <<  8 )  |  ord ( $text [ $i + 1 ] ) ;
-									$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch, true ) ;
+
+									if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else
+									   {
+										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch, true ) ;
+										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]		=  $newchar ;
+									    }
 
 									// No mapping found for this pair of characters ; process them individually
 									if  ( $newchar  ===  false )
@@ -2480,7 +2384,11 @@ class  PdfToText 	extends PdfObjectBase
 							   {
 				   		   		for  ( $i = 1 ; $i  <  $length ; $i ++ )
 				   		   		   {
-				   		   			$ch 	=  $text [$i] ;
+				   		   			$ch 		=  $text [$i] ;
+
+									// Set to true to optimize calls to MapCharacters
+									// Currently does not work with pobox@dizy.sk/infoma.pdf (a few characters differ)
+									$use_map_buffer	=  false ;
 
 									// ... but don't forget to handle escape sequences "\n" and "\r" for characters
 									// 10 and 13
@@ -2517,10 +2425,26 @@ class  PdfToText 	extends PdfObjectBase
 													$i	+=  strlen ( $octal_matches [0] ) - 2 ;
 												    }
 				   		   				    }
+
+										$use_map_buffer		=  false ;
 				   		   			    }
 
 									// Add substituted character to the output result
-									$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, ord ( $ch ) ) ;
+									$ord		 =  ord ( $ch ) ;
+
+									if  ( ! $use_map_buffer )
+										$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+									else
+									   {
+										if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ) )
+											$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ;
+										else
+										   {
+											$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+											$this -> CharacterMapBuffer [ $current_font ] [ $ord ]	=  $newchar ;
+										    }
+									    }
+
 									$result		.=  $newchar ;
 				   		   		    }
 							    }
@@ -2573,7 +2497,15 @@ class  PdfToText 	extends PdfObjectBase
 									if  ( $ord  <  127 )
 										$newchar	=  $ch ;
 									else
-										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+									   {
+										if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ) )
+											$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ;
+										else
+										   {
+											$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+											$this -> CharacterMapBuffer [ $current_font ] [ $ord ]	=  $newchar ;
+										    }
+									    }
 
 									$result		.=  $newchar ;
 								    }
@@ -2587,6 +2519,112 @@ class  PdfToText 	extends PdfObjectBase
 							$value_index ++ ;
 			   			   }
 			   		    }
+
+					break ;
+
+				// An "nl" instruction means TJ, Tj, T* or "'"
+			   	case 	'nl' :
+			   		if  ( ! $instruction [ 'conditional' ] )
+			   		   {
+			   		   	if  ( $instruction [ 'leading' ]  &&  $text_leading  &&  $current_font_size )
+			   		   	   {
+			   		   		$count 	=  ( integer ) ( ( $text_leading - $current_font_size ) / $current_font_size ) ;
+
+			   		   		if  ( ! $count )
+			   		   			$count 	=  1 ;
+			   		   	    }
+			   		   	else
+			   		   		$count 	=  1 ;
+
+		   		   		$extra			 =  str_repeat ( PHP_EOL, $count ) ;
+			   			$result 		.=  $extra ;
+						$needs_separator	 =  false ;
+						$last_goto_y 		-=  ( $count * $text_leading ) ;	// Approximation on y-coord change
+						$last_relative_goto_y	 =  0 ;
+			   		    }
+
+			   		break ;
+
+				// "Tm", "Td" or "TD" : Output text on the same line, if the "y" coordinates are equal
+			   	case 	'goto' :
+					// Some text is positioned using 'Tm' instructions ; however they can be immediatley followed by 'Td' instructions
+					// which give a relative positioning ; so consider that the last instruction wins
+					if  ( $instruction [ 'relative' ] )
+					   {
+						// Try to put a separator if the x coordinate is non-zero
+						//if  ( $instruction [ 'x' ] - $last_goto_x  >=  $current_font_size )
+						//	$result		.=  $this -> Separator ;
+
+						$discard_last_instruction	=  true ;
+						$extra_newlines			=  0 ; 
+						$use_same_line			=  ( ( $last_relative_goto_y - abs ( $instruction  [ 'y' ] ) )  <=  $current_font_size ) ;
+						$last_relative_goto_y		=  abs ( $instruction [ 'y' ] ) ;
+						$last_goto_x			=  $instruction [ 'x' ] ;
+						
+						if  ( - $instruction [ 'y' ]  >  $current_font_size ) 
+						   {
+							$use_same_line		=  false ;
+
+							if  ( $last_relative_goto_y )
+								$extra_newlines		=  ( integer ) ( $current_font_size / $last_relative_goto_y ) ;
+							else
+								$extra_newlines		=  0 ;
+						    }
+						else if  ( ! $instruction [ 'y' ] ) 
+						   {
+							$use_same_line		=  true ;
+							$extra_newlines		=  0 ;
+						    }
+							
+						break ;
+					    }
+					else
+						$last_relative_goto_y	=  0 ;
+
+					$y	=  $last_goto_y + $last_relative_goto_y ;
+
+			   		if  ( $instruction [ 'y' ]  ==  $y  ||  abs ( $instruction [ 'y' ] - $y )  <  $current_font_size )
+			   		   {
+			   			$use_same_line 		=  true ;
+			   			$extra_newlines 	=  0 ;
+			   		    }
+					else
+					   {
+					   	// Compute the number of newlines we have to insert between the current and the next lines
+					   	if  ( $current_font_size )
+					   		$extra_newlines =  ( integer ) ( ( $y - $instruction [ 'y' ] - $current_font_size ) / $current_font_size ) ;
+
+						$use_same_line 		=  ( $last_goto_y  ==  0 ) ;
+					    }
+
+					$last_goto_y 		=  $instruction [ 'y' ] ;
+			   		break ;
+
+				// Set font size
+			   	case 	'fontsize' :
+			   		$current_font_size 	=  $instruction [ 'size' ] ;
+			   		break ;
+
+				// "/Rx" : sets the current font
+			   	case 	'resource' :
+			   		$current_font 		=  $instruction [ 'resource' ] ;
+
+					$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
+			   		break ;
+
+				// "/TPLx" : references a template, which can contain additional font aliases
+				case	'template' :
+					if  ( $this -> PageMap -> IsValidXObjectName ( $instruction [ 'token' ] ) )
+						$current_template	=  $instruction [ 'token' ] ;
+
+					break ;
+
+			   	// 'TL' : text leading to be used for the next "T*" in the flow
+			   	case	'leading' :
+					if  ( ! ( $this -> Options & self::PDFOPT_IGNORE_TEXT_LEADING ) )
+			   			$text_leading 		=  $instruction [ 'size' ] ;
+
+			   		break ;
 			    }
 
 			// Remember last instruction - this will help us into determining whether we should put the next text
@@ -3576,8 +3614,10 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	//	(these are mainly shape drawing instructions).
 	private function  __strip_useless_instructions ( $data )
 	   {
-		$result		=  preg_replace ( self::$IgnoredInstructions, '', $data ) ;
-		$result		=  str_replace ( "\r", '' , $result ) ;
+		$result		=  preg_replace ( self::$IgnoredInstructions, ' ', $data ) ;
+
+		// Don't replace carriage returns by nothing, as some Adobe software on Apple use it as a line terminator
+//		$result		=  str_replace ( "\r", '' , $result ) ;
 
 		$this -> Statistics [ 'TextSize' ]		+=  strlen ( $data ) ;
 		$this -> Statistics [ 'OptimizedTextSize' ]	+=  strlen ( $result ) ;
@@ -4037,10 +4077,10 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//	Returns the font id (object id) associated with the specified mapped id.
 	public function  GetFontByMapId ( $page_number, $template, $id )
 	   {
-		if  ( isset ( $this -> FontMap [ $id ] ) )
-			$font_object	=  $this -> FontMap [ $id ] ;
-		else if  ( isset ( $this -> FontMap [ "$page_number:$template:$id" ] ) )
+		if  ( isset ( $this -> FontMap [ "$page_number:$template:$id" ] ) )
 			$font_object	=  $this -> FontMap [ "$page_number:$template:$id" ] ;
+		else if  ( isset ( $this -> FontMap [ $id ] ) )
+			$font_object	=  $this -> FontMap [ $id ] ;
 		else
 			$font_object	=  -1 ;
 
