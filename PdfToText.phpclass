@@ -22,14 +22,11 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.16]	[Date : 2017/02/23]     [Author : CV]
-	. Changed the GetFontByMapId() method which was incorrectly searching a global font instead of searching
-	  first for a page-specific font.
-	. Compound objects were not correctly handled when object number/offset pairs were separated by a newline
-	  (str_replace() was called instead of preg_replace). This caused some objects to be missed.
-	. Performed some optimizations which allow for a performance gain of 5 to 10 percent in certain cases.
-	. Removed the suppression of carriage returns, as this is the only line separator used by Adobe software
-	  on Apple.
+    [Version : 1.3.17]	[Date : ]     [Author : CV]
+	. Completely rewrote the way text specified between parentheses, either as plain text or 2-bytes
+	  character codes, is processed. Some character values preceded with a backslash are escape sequences,
+	  which were not recognized in all cases, thus causing a shift when interpreting 2-bytes values and a
+	  bad mapping for the 2-bytes sequences that followed.
 
     (...)
 
@@ -547,7 +544,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.16" ;
+	const		VERSION					=  "1.3.17" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2323,7 +2320,25 @@ class  PdfToText 	extends PdfObjectBase
 
 								for  ( $i = 1 ; $i  <  $length ; $i += 2 )
 								   {
-									$ch		=  ( ord ( $text [$i] )  <<  8 )  |  ord ( $text [ $i + 1 ] ) ;
+									// Each character in the pair may be a backslash, which escapes the next character so we must skip it
+									if  ( $text [$i]  !=  '\\' )
+										$ch1	=  $text [$i] ;
+									else 
+									   {
+										$i ++ ;
+										$ch1	=  $this -> __process_escaped_character ( $text [$i] ) ;
+									    }
+
+									if  ( $text [$i + 1]  != '\\' )
+										$ch2	=  $text [$i + 1] ;
+									else
+									   {
+										$i ++ ;
+										$ch2	=  $this -> __process_escaped_character ( $text [$i + 1] ) ;
+									    }
+
+									// Build the 2-bytes character code
+									$ch		=  ( ord ( $ch1 )  <<  8 )  |  ord ( $ch2 ) ;
 
 									if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
 										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
@@ -2337,7 +2352,6 @@ class  PdfToText 	extends PdfObjectBase
 									if  ( $newchar  ===  false )
 									   {
 										$unknown_character_met	=  true ;
-										break ;
 									    }
 
 									// Yes !!! for characters encoded with two bytes, we can find the following construct :
@@ -2348,22 +2362,7 @@ class  PdfToText 	extends PdfObjectBase
 									// for the next quirk to happen...
 									if  ( $newchar  ==  '\\' )
 									   {
-										$ch	=  $text [ $i + 2 ] ;
-
-										switch ( $ch ) 
-										   {
-											// Normally, only a few characters should be escaped...
-											case	'('	:  $newchar =  "("  ; break ;
-											case	')'	:  $newchar =  ")"  ; break ;
-											case	'\\'	:  $newchar =  "\\" ; break ;
-				   		   					case 	'n' 	:  $newchar =  "\n" ; break ;
-				   		   					case 	'r' 	:  $newchar =  "\r" ; break ;
-
-											// ... but should we consider that it is a heresy to escape other characters ?
-											// For the moment, no.
-											default		:  $newchar =  $ch  ; break ;
-										    }
-
+										$ch	=  $this -> __process_escaped_character ( $text [ $i + 2 ] ) ;
 										$i ++ ;		// this time we processed 3 bytes, not 2
 									    }
 
@@ -2371,11 +2370,8 @@ class  PdfToText 	extends PdfObjectBase
 								    }
 
 								// Happens only if we were unable to translate a character using the current character map
-								if  ( ! $unknown_character_met )
-								   {
-									$result		.=  $temp_result ;
-									$handled	 =  true ;
-								    }
+								$result		.=  $temp_result ;
+								$handled	 =  true ;
 							    }
 
 							// Character strings within parentheses.
@@ -2961,6 +2957,31 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 	    }
 
+
+	// __process_escaped_character -
+	//	Text specified between parentheses, either as plain text or as codes using a Unicode CMAP, can be escaped through a backslash ;
+	//	For example, closing parentheses will be expressed as "\)", newlines as "\n", etc.
+	//	This function returns the appropriate code corresponding to the character after the backslash.
+	private function  __process_escaped_character ( $ch )
+	   {
+		switch ( $ch ) 
+		   {
+			// Normally, only a few characters should be escaped...
+			case	'('	:  $newchar =  "("  ; break ;
+			case	')'	:  $newchar =  ")"  ; break ;
+			case	'\\'	:  $newchar =  "\\" ; break ;
+			case 	'n' 	:  $newchar =  "\n" ; break ;
+			case 	'r' 	:  $newchar =  "\r" ; break ;
+			case 	'f' 	:  $newchar =  "\f" ; break ;
+			case 	't' 	:  $newchar =  "\t" ; break ;
+
+			// ... but should we consider that it is a heresy to escape other characters ?
+			// For the moment, no.
+			default		:  $newchar =  $ch  ; break ;
+		    }
+
+		return ( $newchar ) ;
+	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -3948,7 +3969,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$font_id	=  $id_matches   [ 'font_id' ] [$i] ;
 				$cmap_id	=  $cmap_matches [ 'cmap_id' ] [$i] ;
 
-				$this -> Fonts [ $font_id ]	=  new  PdfTexterFont ( $font_id, $cmap_id, PdfTexterFont::FONT_ENCODING_UNICODE ) ;
+				$this -> Fonts [ $font_id ]	=  new  PdfTexterFont ( $font_id, $cmap_id, PdfTexterFont::FONT_ENCODING_UNICODE_MAP ) ;
 			    }
 
 			return ;
