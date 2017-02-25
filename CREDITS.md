@@ -39,6 +39,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - DL, from aloha-intbiz.eu, who suggested me to give the option of saving images on-the-fly without storing them into memory, and who gave me samples that helped me to process more cases during image extraction.
 - Kis Balazs, who gave me a sample which helped me understand why sometimes certain accentuated characters where incorrectly translated.
 - Massimo Baglione, who sent me sample covering various artistic domains, and helped me identify and correct 
+- Aldo Mariussi, which supplied me a 1-page sample that helped me enhance the way 2-bytes character sequences are decoded when specified between parentheses
 - And more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
