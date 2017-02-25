@@ -1,4 +1,9 @@
-    [Version : 1.3.17]	[Date : ]     [Author : CV]
+    [Version : 1.3.18]	[Date : 25/02/2017]     [Author : CV]
+	. Corrected the PdfTexterUnicodeMap class, which did not correctly decode character maps in files 
+	  generated on Apple where line-endings are carriage returns. As a result, output looked like garbage
+	  data.
+
+    [Version : 1.3.17]	[Date : 25/02/2017]     [Author : CV]
 	. Completely rewrote the way text specified between parentheses, either as plain text or 2-bytes
 	  character codes, is processed. Some character values preceded with a backslash are escape sequences,
 	  which were not recognized in all cases, thus causing a shift when interpreting 2-bytes values and a
