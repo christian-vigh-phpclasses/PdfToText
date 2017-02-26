@@ -22,10 +22,8 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.3.18]	[Date : 25/02/2017]     [Author : CV]
-	. Corrected the PdfTexterUnicodeMap class, which did not correctly decode character maps in files 
-	  generated on Apple where line-endings are carriage returns. As a result, output looked like garbage
-	  data.
+    [Version : 1.4.0]	[Date : 26/02/2017]     [Author : CV]
+	. First implementation for handling languages written from right-to-left (RTL).
 
     (...)
 
@@ -543,7 +541,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.3.18" ;
+	const		VERSION					=  "1.4.0" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -736,6 +734,7 @@ class  PdfToText 	extends PdfObjectBase
 	// A small list of Unicode character ranges that are related to languages written from right to left
 	// For performance reasons, everythings is mapped to a range here, even if it includes codepoints that do not map to anything
 	// (this class is not a Unicode codepoint validator, but a Pdf text extractor...)
+	// The UTF-16 version is given as comments ; only the UTF-8 translation is used here
 	// To be completed !
 	private static	$RtlCharacters		=  array
 	   (
@@ -748,17 +747,75 @@ class  PdfToText 	extends PdfObjectBase
 		// - N'ko			(07C0..07FF)
 		// - Samaritan			(0800..083F)
 		// - Mandaic			(0840..085F)
-		array ( 0x00590, 0x0085F ),
+		//	array ( 0x00590, 0x0085F ),
 		// Hebrew supplement (I suppose ?) + other characters
-		array ( 0x0FB1D, 0x0FEFC ),
+		//	array ( 0x0FB1D, 0x0FEFC ),
 		// Mende kikakui
-		array ( 0x1E800, 0x1E8DF ),
+		//	array ( 0x1E800, 0x1E8DF ),
 		// Adlam
-		array ( 0x1E900, 0x1E95F ),
+		//	array ( 0x1E900, 0x1E95F ),
 		// Others
-		array ( 0x10800, 0x10C48 ),
-		array ( 0x1EE00, 0x1EEBB )
+		//	 array ( 0x10800, 0x10C48 ),
+		//	 array ( 0x1EE00, 0x1EEBB )
+		"\xD6"		=>  array ( array ( "\x90", "\xBF" ) ),
+		"\xD7"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xD8"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xD9"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xDA"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xDB"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xDC"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xDD"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xDE"		=>  array ( array ( "\x80", "\xBF" ) ),
+		"\xDF"		=>  array ( array ( "\x80", "\xBF" ) )
+		/*
+		"\xE0"		=>  array 
+		   (
+			array ( "\xA0\x80", "\xA0\xBF" ),
+			array ( "\xA1\x80", "\xA1\x9F" )
+		    ),
+		"\xEF"		=>  array
+		   (
+			array ( "\xAC\x9D", "\xAC\xBF" ),
+			array ( "\xAD\x80", "\xAD\xBF" ),
+			array ( "\xAE\x80", "\xAE\xBF" ),
+			array ( "\xAF\x80", "\xAF\xBF" ),
+			array ( "\xB0\x80", "\xB0\xBF" ),
+			array ( "\xB1\x80", "\xB1\xBF" ),
+			array ( "\xB2\x80", "\xB2\xBF" ),
+			array ( "\xB3\x80", "\xB3\xBF" ),
+			array ( "\xB4\x80", "\xB4\xBF" ),
+			array ( "\xB5\x80", "\xB5\xBF" ),
+			array ( "\xB6\x80", "\xB6\xBF" ),
+			array ( "\xB7\x80", "\xB7\xBF" ),
+			array ( "\xB8\x80", "\xB8\xBF" ),
+			array ( "\xB9\x80", "\xB9\xBF" ),
+			array ( "\xBA\x80", "\xBA\xBF" ),
+			array ( "\xBB\x80", "\xBB\xBC" )
+		    )
+		    */
 	    ) ;
+
+	// UTF-8 prefixes for RTL characters as keys, and number of characters that must follow the prefix as values
+	private static	$RtlCharacterPrefixLengths	=  array
+	   (
+		"\xD6"		=>  1,
+		"\xD7"		=>  1,
+		"\xD8"		=>  1,
+		"\xD9"		=>  1,
+		"\xDA"		=>  1,
+		"\xDB"		=>  1,
+		"\xDC"		=>  1,
+		"\xDE"		=>  1,
+		"\xDF"		=>  1
+		/*
+		"\xE0"		=>  2,
+		"\xEF"		=>  2
+		*/
+	    ) ;
+
+	// A string that contains all the RTL character prefixes above
+	private static  $RtlCharacterPrefixes ;
+
 	// As usual, caching a little bit the results of the IsRtlCharacter() method is welcome. Each item will have the value true if the
 	// character is RTL, or false if LTR.
 	private		$RtlCharacterBuffer		=  array ( ) ;
@@ -861,6 +918,9 @@ class  PdfToText 	extends PdfObjectBase
 
 			// Location of the directory containing CID fonts
 			self::$CIDTablesDirectory	=  dirname ( __FILE__ ) . DIRECTORY_SEPARATOR . 'CIDTables' ;
+
+			// The string that contains all the Rtl character prefixes in UTF-8 - An optimization used by the __rtl_process() method
+			self::$RtlCharacterPrefixes	=  implode ( '', array_keys ( self::$RtlCharacterPrefixLengths ) ) ;
 
 			self::$StaticInitialized	=  true ;
 		    }
@@ -3263,49 +3323,6 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 
 */
 
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    NAME
-	        IsRtlCharacter - Checks if a Unicode codepoint belongs to an RTL language.
-	
-	    PROTOTYPE
-	        $status		=  $this -> IsRtlCharacter ( $ch ) ;
-	
-	    DESCRIPTION
-	        Checks if a Unicode codepoint belongs to an RTL language.
-		For performance reasons, this function operates on as few character ranges as possible. For this reason, 
-		it may return true even if the specified codepoint does not have any character mapped to it.
-	
-	    PARAMETERS
-	        $ch (integer) -
-	                Unicode codepoint to be checked.
-	
-	    RETURN VALUE
-	        Returns true if the specified Unicode codepoint belongs to an RTL language, false otherwise.
-	
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  IsRtlCharacter ( $ch ) 
-	   {
-		if  ( isset ( $this -> RtlCharacterBuffer [ $ch ] ) )
-			return ( $this -> RtlCharacterBuffer [ $ch ] ) ;
-		else
-		   {
-			foreach  ( self::$RtlCharacters  as  $range )
-			   {
-				if  ( $ch  >=  $range [0]  &&  $ch  <=  $range [1] )
-				   {
-					$this -> RtlCharacterBuffer [ $ch ]	=  true ;
-
-					return ( true ) ;
-				    }
-			    }
-
-			$this -> RtlCharacterBuffer [ $ch ]	=  false ;
-
-			return ( false ) ;
-		    }
-	    }
-
 
 	// __build_ignored_instructions :
 	//	Takes the template regular expressions from the self::$IgnoredInstructionsTemplates, replace each string with the contents
@@ -3623,9 +3640,204 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 	//	Processes the contents of a page when it contains characters belonging to an RTL language.
 	private function  __rtl_process ( $text )
 	   {
-		$result		=  $text ;
+		$length		=  strlen ( $text ) ;
+		$pos		=  strcspn ( $text, self::$RtlCharacterPrefixes ) ;
 
+		// The text does not contain any of the UTF-8 prefixes that may introduce RTL contents :
+		// simply return it as is
+		if   ( $pos  ==  $length  ||  $text [$pos]  ===  "\x00" )
+			return ( $text ) ;
+
+		// Extract each individual line, and get rid of carriage returns if any
+		$lines		=  explode ( "\n", str_replace ( "\r", '', $text ) ) ;
+		$new_lines	=  array ( ) ;
+
+		// Loop through lines
+		foreach  ( $lines  as  $line )
+		   {
+			// Check if the current line contains potential RTL characters
+			$pos		=  strcspn ( $line, self::$RtlCharacterPrefixes ) ;
+			$length		=  strlen ( $line ) ;
+
+			// If not, simply store it as is
+			if  ( $pos  ==  $length )
+			   {
+				$new_lines []	=  $line ;
+				continue ;
+			    }
+
+			// Otherwise, it gets a little bit more complicated ; we have :
+			// - To process each series of RTL characters and put them in reverse order
+			// - Mark spaces and punctuation as "RTL separators", without reversing them (ie, a string like " ." remains " .", not ". ")
+			// - Other sequences of non-RTL characters must be preserved as is and are not subject to reordering
+			// The reordering sequence will be described later. For the moment, the $words array is used to store arrays of two elements :
+			// - The first one is a boolean indicating whether it concerns RTL characters (true) or not (false)
+			// - The second one is the string itself
+			$words		=  array ( ) ;
+
+			// Start of the string is not an RTL sequence ; we can add it to our $words array
+			if  ( $pos )
+			   {
+				$word		=  substr ( $line, 0, $pos ) ;
+				$words []	=  array ( $this -> __is_rtl_separator ( $word ), $word ) ;
+			    }
+
+			$in_rtl		=  true ;
+	
+			// Loop through remaining characters of the current line
+			while  ( $pos  <  $length )
+			   {
+				// Character at the current position may be RTL character
+				if  ( $in_rtl )
+				   {
+
+					$rtl_text		=  '' ;
+					$rtl_char		=  '' ;
+					$rtl_char_length	=  0 ;
+					$found_rtl		=  false ;
+
+					// Collect all the consecutive RTL characters, which represent a word, and put the letters in reverse order
+					while  ( $pos  <  $length  &&  $this -> __is_rtl_character ( $line, $pos, $rtl_char, $rtl_char_length ) )
+					   {
+						$rtl_text	 =  $rtl_char . $rtl_text ;
+						$pos		+=  $rtl_char_length ;
+						$found_rtl	 =  true ;
+					    }
+
+					// ... but make sure that we found a valid RTL sequence
+					if  ( $found_rtl )
+						$words []	 =  array ( true, $rtl_text ) ;
+					else
+						$words []	 =  array ( false, $line [ $pos ++ ] ) ;
+
+					// For now, we are no more in a series of RTL characters
+					$in_rtl		=  false ;
+				    }
+				// Non-RTL characters : collect them until either the end of the current line or the next RTL character
+				else
+				   {
+					$next_pos	=  $pos + strcspn ( $line, self::$RtlCharacterPrefixes, $pos ) ;
+
+					if  ( $next_pos  >=  $length )
+					   {
+						$word		=  substr ( $line, $pos ) ;
+						break ;
+					    }
+					else
+					   {
+						$word		=  substr ( $line, $pos, $next_pos - $pos ) ;
+						$pos		=  $next_pos ;
+						$in_rtl		=  true ;
+					    }
+
+					// Don't forget to make the distinction between a sequence of spaces and punctuations, and a real
+					// piece of text. Space/punctuation strings surrounded by RTL words will be interverted
+					$words []		=  array ( $this -> __is_rtl_separator ( $word ), $word ) ;
+				    }
+			    }
+
+			// Now we have an array, $words, whose first entry of each element indicates whether the second entry is an RTL string
+			// or not (this includes strings that contain only spaces and punctuation).
+			// We have to gather all the consecutive array items whose first entry is true, then invert their order.
+			// Non-RTL strings are not affected by this process.
+			$stacked_rtl_words	=  array ( ) ;
+			$new_words		=  array ( ) ;
+
+			foreach  ( $words  as  $word )
+			   {
+				// RTL word : put it onto the stack
+				if  ( $word [0] )
+					$stacked_rtl_words []	=  $word [1] ;
+				// Non-RTL word : add it as is to the output array, $new_words
+				else
+				   {
+					// But if RTL words were stacked before, invert them and add them to the output array
+					if  ( count ( $stacked_rtl_words ) )
+					   {
+						$new_words		=  array_merge ( $new_words, array_reverse ( $stacked_rtl_words ) ) ;
+						$stacked_rtl_words	=  array ( ) ;
+					    }
+
+					$new_words []	=  $word [1] ;
+				    }
+			    }
+
+			// Process any remaining RTL words that may have been stacked and not yet processed
+			if  ( count ( $stacked_rtl_words ) )
+				$new_words		=  array_merge ( $new_words, array_reverse ( $stacked_rtl_words ) ) ;
+
+			// That's ok, we have processed one more line
+			$new_lines []	=  implode ( '', $new_words ) ;
+		    }
+
+		// All done, return a catenation of all the lines processed so far
+		$result		=  implode ( "\n", $new_lines ) ;
+		
 		return ( $result ) ;
+	    }
+
+
+	// __is_rtl_character -
+	//	Checks if the sequence starting at $pos in string $text is a character belonging to an RTL language.
+	//	If yes, returns true and sets $rtl_char to the UTF8 string sequence for that character, and $rtl_char_length
+	//	to the length of this string.
+	//	If no, returns false.
+	private function  __is_rtl_character ( $text, $pos, &$rtl_char, &$rtl_char_length )
+	   {
+		$ch	=  $text [ $pos ] ;
+
+		// Check that the current character is the start of a potential UTF8 RTL sequence
+		if  ( isset  ( self::$RtlCharacterPrefixLengths [ $ch ] ) )
+		   {
+			// Get the number of characters that are expected after the sequence
+			$length_after	=  self::$RtlCharacterPrefixLengths [ $ch ] ;
+
+			// Get the sequence after the UTF8 prefix
+			$codes_after	=  substr ( $text, $pos + 1, $length_after ) ;
+
+			// Search through $RtlCharacters, which contains arrays of ranges related to the UTF8 character prefix
+			foreach  ( self::$RtlCharacters [ $ch ]  as  $range )
+			   {
+				if  ( strcmp ( $range [0], $codes_after )  <=  0  &&  
+				      strcmp ( $range [1], $codes_after )  >=  0 )
+				   {
+					$rtl_char		=  $ch . $codes_after ;
+					$rtl_char_length	=  $length_after + 1 ;
+
+					return ( true ) ;
+				}
+			    } 
+			    
+			return ( false ) ;
+		    }
+		else
+			return ( false ) ;
+	    }
+
+
+	// __is_rtl_separator -
+	//	RTL words are separated by spaces and punctuation signs that are specified as LTR characters.
+	//	However, such sequences, which are separators between words, must be considered as being part 
+	//	of an RTL sequence of words and therefore be reversed with them.
+	//	This function helps to determine if the supplied string is simply a sequence of spaces and
+	//	punctuation (a word separator) or plain text, that must keep its position in the line.
+	private function  __is_rtl_separator ( $text )
+	   {
+		static		$known_separators	=  array ( ) ;
+		static		$separators		=  " \t,.;:/!-_=+" ;
+
+		if  ( isset ( $known_separators [ $text ] ) )
+			return ( true ) ;
+
+		for  ( $i = 0, $length = strlen ( $text ) ; $i  <  $length ; $i ++ )
+		   {
+			if  ( strpos ( $separators, $text [$i] )  ===  false )
+				return ( false ) ;
+		    }
+
+		$known_separators [ $text ]	=  true ;
+
+		return ( true ) ;
 	    }
 
 
@@ -4560,7 +4772,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 			   {
 				// One day I think that I will find a pdf sample where the definitions are put on the same line...
 				// Until that, consider everything is separated by a newline 
-			   	$ranges 	=  explode ( "\n", trim ( $range_list ) ) ;
+			   	$ranges 	=  explode ( "\n", trim ( str_replace ( "\r", "\n", $range_list ) ) ) ;
 
 				// Loop through each range definition
 				foreach  ( $ranges  as  $range )
