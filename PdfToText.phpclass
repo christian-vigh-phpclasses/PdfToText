@@ -22,19 +22,10 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.1]	[Date : 2017/03/01]     [Author : CV]
-	. Enhanced page contents decoding (sometimes, the parameter of the /Contents flags does not reference
-	  objects containing drawing instructions, but objects containing the list of objects which in turn
-	  contain the real drawing instructions). This caused in rare cases some contents to be missed in the
-	  output.
-	. Changed the way compound objects are handled : instead of decoding them on-the-fly, preprocess them
-	  before any other processing takes place. This ensure that forward references to objects defined later
-	  in the pdf file will be satisfied.
-	. Ignore embedded images inside drawing instructions blocks ; the presence of gzipped data inside the
-	  embedded image could cause misinterpretation of drawing instructions following it. For the current
-	  version, embedded images will not be integrated into the image-extraction process.
-	. Fixed issue where the same group of text was extracted several times with some PDF samples.
-	. Better handle Japanese documents
+    [Version : 1.4.2]	[Date : 2017/03/02]     [Author : CV]
+	. Fixed mapping issue when the same character map was referenced by several font definitions (only the
+	  first definition was associated to the character map, which caused incorrect character mappings when
+	  subsequent fonts were used).
 	
     (...)
 
@@ -552,7 +543,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.1" ;
+	const		VERSION					=  "1.4.2" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -3942,7 +3933,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 		static		$re		=  '#
 							(?P<info>
 								/
-								(?P<keyword> [^ (<]+)
+								(?P<keyword> [a-z0-9_\-]+)
 								\s* 
 								(?P<opening> [(<])
 							)
@@ -4254,17 +4245,19 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//	Associates a character map to a font declaration that referenced it.
 	public function  AddCharacterMap ( $cmap )
 	   {
+		$status		=  false ;
+
+		// We loop through all fonts, since the same character map can be referenced by several font definitions
 		foreach  ( $this -> Fonts  as  $font )
 		   {
 			if  ( $font -> CharacterMapId  ==  $cmap -> ObjectId )
 			   {
 				$font -> CharacterMap	=  $cmap ;
-
-				return ( true ) ;
+				$status			=  true ;
 			    }
 		    }
 
-		return ( false ) ;
+		return ( $status ) ;
 	    }
 
 
