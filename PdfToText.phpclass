@@ -22,9 +22,20 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.0]	[Date : 26/02/2017]     [Author : CV]
-	. First implementation for handling languages written from right-to-left (RTL).
-
+    [Version : 1.4.1]	[Date : 2017/03/01]     [Author : CV]
+	. Enhanced page contents decoding (sometimes, the parameter of the /Contents flags does not reference
+	  objects containing drawing instructions, but objects containing the list of objects which in turn
+	  contain the real drawing instructions). This caused in rare cases some contents to be missed in the
+	  output.
+	. Changed the way compound objects are handled : instead of decoding them on-the-fly, preprocess them
+	  before any other processing takes place. This ensure that forward references to objects defined later
+	  in the pdf file will be satisfied.
+	. Ignore embedded images inside drawing instructions blocks ; the presence of gzipped data inside the
+	  embedded image could cause misinterpretation of drawing instructions following it. For the current
+	  version, embedded images will not be integrated into the image-extraction process.
+	. Fixed issue where the same group of text was extracted several times with some PDF samples.
+	. Better handle Japanese documents
+	
     (...)
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
@@ -334,11 +345,7 @@ abstract class  PdfObjectBase		// extends  Object
 		$status		=  true ;
 		$object_ids	=  array ( ) ;
 
-		if  ( preg_match ( "#$searched_string \s+ (?P<object> \d+) \s+ \d+ \s+ R#ix", $object_data, $match ) )
-		   {
-			$object_ids []	=  ( integer ) $match [ 'object' ] ;
-		    }
-		else if  ( preg_match ( "#$searched_string \s* \\[ (?P<objects> [^\]]+ ) \\]#ix", $object_data, $match ) )
+		if  ( preg_match ( "#$searched_string \s* \\[ (?P<objects> [^\]]+ ) \\]#ix", $object_data, $match ) )
 		   {
 			$object_list	=  $match [ 'objects' ] ;
 
@@ -349,6 +356,10 @@ abstract class  PdfObjectBase		// extends  Object
 			    }
 			else
 				$status		=  false ;
+		    }
+		else if  ( preg_match ( "#$searched_string \s+ (?P<object> \d+) \s+ \d+ \s+ R#ix", $object_data, $match ) )
+		   {
+			$object_ids []	=  ( integer ) $match [ 'object' ] ;
 		    }
 		else
 			$status		=  false ;
@@ -541,7 +552,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.0" ;
+	const		VERSION					=  "1.4.1" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -701,7 +712,8 @@ class  PdfToText 	extends PdfObjectBase
 		 '^[fhnqQS] \s+',
 		 '^(q \s+)+',
 		 'BX \s+ .*? EX',
-		 '-?0 (\. \d+)? \s+ T[cw]'
+		 '-?0 (\. \d+)? \s+ T[cw]',
+		 '\bBI\b .*? \bID\b .*? \bEI\b'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs		=  array
@@ -1104,7 +1116,25 @@ class  PdfToText 	extends PdfObjectBase
 		$pdf_objects	=  array ( ) ;
 
 		for  ( $i = 0, $count = count ( $matches [ 'object_id' ] ) ; $i  <  $count ; $i ++ )
-			$pdf_objects [ $matches [ 'object_id' ] [$i] ]	=  $matches [ 'object' ] [$i] ;	
+		   {
+			$object_number			=  $matches [ 'object_id' ] [$i] ;
+			$object_data			=  $matches [ 'object'    ] [$i] ;
+
+			$pdf_objects [ $object_number ]	=  $object_data ;
+	
+			// Handle the special case of object streams
+			if  ( $this -> IsObjectStream ( $object_data ) )
+			   {
+				// Ignore ill-formed object streams
+				if  ( ( $object_stream_matches = $this -> DecodeObjectStream ( $object_number, $object_data ) )  ===  false )
+					continue ;
+
+				// Add this list of objects to the list of known objects
+				for  ( $j = 0, $object_stream_count = count ( $object_stream_matches [ 'object_id' ] ) ; $j  <  $object_stream_count ; $j ++ )
+					$pdf_objects [ $object_stream_matches [ 'object_id' ] [$j] ]	=  $object_stream_matches [ 'object' ] [$j] ;
+			    }
+
+		    }
 
 		// Extract trailer information, which may contain the ID of an object specifying encryption flags
 		$this -> GetTrailerInformation ( $contents ) ;
@@ -1124,178 +1154,144 @@ class  PdfToText 	extends PdfObjectBase
 		// An array that will store object ids as keys and text contents as values
 		$text			=  array ( ) ;
 
-		while  ( ( $object_stack_count = count ( $object_stack ) )  >  0 )
+		// Loop through the objects
+		foreach  ( $pdf_objects  as  $object_number => $object_data )
 		   {
-			// Get the last object on the stack, which represents the objects to process in the most inner level of recursion
-			$current_stacked_object		=  $object_stack [ $object_stack_count - 1 ] ;
-			$object_matches			=  $current_stacked_object [ 'matches' ] ;
-			$start_index			=  $current_stacked_object [ 'index' ] ; 
+			// Some additional objects may be uncovered after processing (in an object containing compacted objects for example)
+			// so add them to the list if necessary
+			if  ( ! isset ( $pdf_objects [ $object_number ] ) )
+				$pdf_objects [ $object_number ]		=  $object_data ;
 
-			// Loop through the objects
-			for ( $i = $start_index, $object_match_count = count ( $object_matches [ 'object' ] ) ; $i  <  $object_match_count ; $i ++ )
+			// Try to catch information related to page mapping - but don't discard the object since it can contain additional information
+			$this -> PageMap -> Peek ( $object_number, $object_data, $pdf_objects ) ;
+
+			// Check if the object contais authoring information - it can appear encoded or unencoded
+			if  ( ! $this -> GotAuthorInformation ) 
+				$author_information_object_id	=  $this -> PeekAuthorInformation ( $object_number, $object_data ) ;
+
+			// Also catch the object encoding type
+			$type 		=  $this -> GetEncodingType ( $object_number, $object_data ) ;
+			$stream_match	=  null ;
+
+			if  ( strpos ( $object_data, 'stream' )  ===  false  ||  
+					! preg_match ( '#[^/] stream \s+ (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
 			   {
-		   		$object_data 	=  $object_matches [ 'object' ] [$i] ;
-		   		$object_number 	=  ( integer ) $object_matches [ 'object_id' ] [$i] ;
-
-				// Some additional objects may be uncovered after processing (in an object containing compacted objects for example)
-				// so add them to the list if necessary
-				if  ( ! isset ( $pdf_objects [ $object_number ] ) )
-					$pdf_objects [ $object_number ]		=  $object_data ;
-
-				// Handle the special case of object streams
-				if  ( $this -> IsObjectStream ( $object_data ) )
+				// Some font definitions are in clear text in an object, some are encoded in a stream within the object
+				// We process here the unencoded ones
+				if  ( $this -> IsFont ( $object_data ) )
 				   {
-					// Ignore ill-formed object streams
-					if  ( ( $object_stream_matches = $this -> DecodeObjectStream ( $object_number, $object_data ) )  ===  false )
-						continue ;
-
-					// First, update the current context of the current object in the object stack.
-					// "Updating the context" simply means updating the starting index of the inner for() loop, which will be used the next time
-					// this for() loop will be executed for this stacked object list
-					$object_stack [ $object_stack_count - 1 ] [ 'index' ]	=  $i + 1 ;
-
-					// Now push the objects coming from the object stream onto the stack
-					array_push ( $object_stack, array ( 'index' => 0, 'matches' => $object_stream_matches ) ) ;
-
-					// Of course, we need now to process them, before going back to the object list we were currently processing
-					// This is done by executing the next iteration of the outer while() loop
-					continue 2 ;
+					$this -> FontTable -> Add ( $object_number, $object_data ) ;
+					continue ;
 				    }
+				// Some character maps may also be in clear text
+				else if  ( $this -> IsCharacterMap ( $object_data ) )
+				    {
+					$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
 
-				// Try to catch information related to page mapping - but don't discard the object since it can contain additional information
-				$this -> PageMap -> Peek ( $object_number, $object_data, $pdf_objects ) ;
+					if  ( $cmap )
+						$cmaps [] 	=  $cmap ;
 
-				// Check if the object contais authoring information - it can appear encoded or unencoded
-				if  ( ! $this -> GotAuthorInformation ) 
-					$author_information_object_id	=  $this -> PeekAuthorInformation ( $object_number, $object_data ) ;
-
-				// Also catch the object encoding type
-				$type 		=  $this -> GetEncodingType ( $object_number, $object_data ) ;
-				$stream_match	=  null ;
-
-				if  ( strpos ( $object_data, 'stream' )  ===  false  ||  
-						! preg_match ( '#[^/] stream \s+ (?P<stream> .*?) endstream#imsx', $object_data, $stream_match ) )
-				   {
-					// Some font definitions are in clear text in an object, some are encoded in a stream within the object
-					// We process here the unencoded ones
-					if  ( $this -> IsFont ( $object_data ) )
-					   {
-						$this -> FontTable -> Add ( $object_number, $object_data ) ;
-						continue ;
-					    }
-					// Some character maps may also be in clear text
-					else if  ( $this -> IsCharacterMap ( $object_data ) )
-					    {
-						$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
-
-						if  ( $cmap )
-							$cmaps [] 	=  $cmap ;
-
-						continue ;
-					    }
-					// Check if there is an association between font number and object number
-					else if  ( $this -> IsFontMap ( $object_data ) )
-		   			   {
-						$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
-						//continue ;
-					    }
-					// Ignore other objects that do not contain an encoded stream
-		   			else 
-					   {
-						if  ( self::$DEBUG  >  1 )
-							echo "\n----------------------------------- UNSTREAMED #$object_number\n$object_data" ;
-
-		   				continue ;
-					    }
-				    }
-				// Extract image data, if any
-				else if  ( $this -> IsImage ( $object_data ) )
-				   {
-					$this -> AddImage ( $object_number, $stream_match [ 'stream' ], $type, $object_data ) ;
 					continue ;
 				    }
 				// Check if there is an association between font number and object number
 				else if  ( $this -> IsFontMap ( $object_data ) )
-	   			   {
+				   {
 					$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
-
-					if  ( ! $stream_match )
-						continue ;
+					//continue ;
 				    }
-				   
-				// Check if the stream contains data (yes, I have found a sample that had streams of length 0...)
-				// In other words : ignore empty streams
-				if  ( stripos ( $object_data, '/Length 0' )  !==  false )
-					continue ;
-
-				// Isolate stream data and try to find its encoding type
-				$stream_data 		=  ltrim ( $stream_match [ 'stream' ], "\r\n" ) ;
-
-				// Ignore this stream if the object does not contain an encoding type (/FLATEDECODE, /ASCIIHEX or /ASCII85)
-				if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
+				// Ignore other objects that do not contain an encoded stream
+				else 
 				   {
 					if  ( self::$DEBUG  >  1 )
-						echo "\n----------------------------------- UNENCODED #$object_number :\n$object_data" ;
+						echo "\n----------------------------------- UNSTREAMED #$object_number\n$object_data" ;
 
 					continue ;
 				    }
+			    }
+			// Extract image data, if any
+			else if  ( $this -> IsImage ( $object_data ) )
+			   {
+				$this -> AddImage ( $object_number, $stream_match [ 'stream' ], $type, $object_data ) ;
+				continue ;
+			    }
+			// Check if there is an association between font number and object number
+			else if  ( $this -> IsFontMap ( $object_data ) )
+			   {
+				$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
 
-				// Decode the encoded stream
-				$decoded_stream_data 	=  $this -> DecodeData ( $object_number, $stream_data, $type ) ;
+				if  ( ! $stream_match )
+					continue ;
+			    }
+			   
+			// Check if the stream contains data (yes, I have found a sample that had streams of length 0...)
+			// In other words : ignore empty streams
+			if  ( stripos ( $object_data, '/Length 0' )  !==  false )
+				continue ;
 
-				// Second chance to peek author information, this time on a decoded stream data
-				if  ( ! $this -> GotAuthorInformation )
-					$author_information_object_id	=  $this -> PeekAuthorInformation ( $object_number, $decoded_stream_data ) ;
+			// Isolate stream data and try to find its encoding type
+			$stream_data 		=  ltrim ( $stream_match [ 'stream' ], "\r\n" ) ;
 
-				// Check for character maps
-				if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
-				   {
-					$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $decoded_stream_data ) ;
+			// Ignore this stream if the object does not contain an encoding type (/FLATEDECODE, /ASCIIHEX or /ASCII85)
+			if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
+			   {
+				if  ( self::$DEBUG  >  1 )
+					echo "\n----------------------------------- UNENCODED #$object_number :\n$object_data" ;
 
-					if  ( $cmap )
-						$cmaps [] 	=  $cmap ;
-				   }
-				// Font definitions
-				else if  ( $this -> IsFont ( $decoded_stream_data ) )
-				   {
-					$this -> FontTable -> Add ( $object_number, $decoded_stream_data ) ;
-				    }
-				// Plain text (well, in fact PDF drawing instructions)
-				else if  ( $this -> IsText ( $object_data, $decoded_stream_data ) )
-				   {
-					$text_data	=  false ;
-
-					// We currently ignore page headers and footers
-					if  ( ! $this -> IsPageHeaderOrFooter ( $decoded_stream_data ) )
-					   {
-						$text [ $object_number ]	=  
-						$text_data			=  $decoded_stream_data ;
-					    }
-					// However, they may be mixed with actual text contents so we need to separate them...
-					else
-					   {
-						$this -> ExtractTextData ( $object_number, $decoded_stream_data, $remainder, $header, $footer ) ;
-
-						// We still need to check again that the extracted text portion contains something useful
-						if  ( $this -> IsText ( $object_data, $remainder ) )
-						   {
-							$text [ $object_number ]	=  
-							$text_data			=  $remainder ;
-						    }
-					    }
-
-					// The current object may be a text object that have been defined as an XObject in some other object
-					// In this case, we have to keep it since it may be referenced by a /TPLx construct from within 
-					// another text object
-					if  ( $text_data )
-						$this -> PageMap -> AddTemplateObject ( $object_number, $text_data ) ;
-				    }
-				else if  ( self::$DEBUG  >  1 )
-					echo "\n----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
+				continue ;
 			    }
 
-			// All objects at this level has been processed, so we can safely remove them from the object stack
-			array_pop ( $object_stack ) ;
+			// Decode the encoded stream
+			$decoded_stream_data 	=  $this -> DecodeData ( $object_number, $stream_data, $type ) ;
+
+			// Second chance to peek author information, this time on a decoded stream data
+			if  ( ! $this -> GotAuthorInformation )
+				$author_information_object_id	=  $this -> PeekAuthorInformation ( $object_number, $decoded_stream_data ) ;
+
+			// Check for character maps
+			if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
+			   {
+				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $decoded_stream_data ) ;
+
+				if  ( $cmap )
+					$cmaps [] 	=  $cmap ;
+			   }
+			// Font definitions
+			else if  ( $this -> IsFont ( $decoded_stream_data ) )
+			   {
+				$this -> FontTable -> Add ( $object_number, $decoded_stream_data ) ;
+			    }
+			// Plain text (well, in fact PDF drawing instructions)
+			else if  ( $this -> IsText ( $object_data, $decoded_stream_data ) )
+			   {
+				$text_data	=  false ;
+
+				// We currently ignore page headers and footers
+				if  ( ! $this -> IsPageHeaderOrFooter ( $decoded_stream_data ) )
+				   {
+					$text [ $object_number ]	=  
+					$text_data			=  $decoded_stream_data ;
+				    }
+				// However, they may be mixed with actual text contents so we need to separate them...
+				else
+				   {
+					$this -> ExtractTextData ( $object_number, $decoded_stream_data, $remainder, $header, $footer ) ;
+
+					// We still need to check again that the extracted text portion contains something useful
+					if  ( $this -> IsText ( $object_data, $remainder ) )
+					   {
+						$text [ $object_number ]	=  
+						$text_data			=  $remainder ;
+					    }
+				    }
+
+				// The current object may be a text object that have been defined as an XObject in some other object
+				// In this case, we have to keep it since it may be referenced by a /TPLx construct from within 
+				// another text object
+				if  ( $text_data )
+					$this -> PageMap -> AddTemplateObject ( $object_number, $text_data ) ;
+			    }
+			else if  ( self::$DEBUG  >  1 )
+				echo "\n----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
 		    }
 
 		// Associate character maps with declared fonts
@@ -5845,11 +5841,23 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 				$fonts					=  $this -> GetResourceMappings ( $object_id, $object_data, '/Font', $pdf_objects ) ;
 				$xobjects				=  $this -> GetResourceMappings ( $object_id, $object_data, '/XObject', $pdf_objects ) ;
 
+				// Yes ! some /Contents parameters may designate another object which contains references to the real text contents
+				// in the form : [x 0 R y 0 R etc.], so we have to dig into it...
+				$new_references				=  array ( ) ;
+
+				foreach  ( $references  as  $reference )
+				   {
+					if  ( $this -> GetObjectReferences ( $reference, $pdf_objects [ $reference ], '', $nested_references ) )
+						$new_references		=  array_merge ( $new_references, $nested_references ) ;
+					else
+						$new_references []	=  $reference ;
+				    }
+
 				$this -> PageContents [ $object_id ]	=  array
 				   (
 					'object'	=>  $object_id,
 					'parent'	=>  $parent,
-					'contents'	=>  $references,
+					'contents'	=>  $new_references,
 					'fonts'		=>  $fonts,
 					'xobjects'	=>  $xobjects
 				    ) ;
@@ -6802,8 +6810,6 @@ class  PdfInlinedImage		extends  PdfImage
 		return ( $result ) ;
   	    }
     }
-
-
 
 
 /*==============================================================================================================
