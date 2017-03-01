@@ -21,9 +21,9 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Stephen Layton, who provided me with samples and actively tested my new versions
 - Theodis Butler, who also provided me with samples and helped me solve some issues
 - Rafael Rojas Torres, who gave me the idea of handling password-protected pdf files. Although not yet implemented, this definitely is on my roadmap.
--  Rolf Kellner , who had issues with unicode translations on far-east and middle-east languages. I have not yet solved them, but I'm still working on it !
--  Yuri Kadeev, who had issues with data presented in tabular format. I won't be able to solve all of them, but it helped me a lot to solve issues presented by other users.
--  Steve Majors, from CashFlowProducts.com, who gave me several samples to work on and even provided me with an access to his bug-tracking system
+- Rolf Kellner , who had issues with unicode translations on far-east and middle-east languages. I have not yet solved them, but I'm still working on it !
+- Yuri Kadeev, who had issues with data presented in tabular format. I won't be able to solve all of them, but it helped me a lot to solve issues presented by other users.
+- Steve Majors, from CashFlowProducts.com, who gave me several samples to work on and even provided me with an access to his bug-tracking system
 - Antonio Jùnior, who gave me a sample using text images encoded in a format I did not handle yet ; still under work...
 - Tom Perro and the user named *srizoophari*, because they gave me the idea of implementing some features which allow for searching text page by page (and handle page contents separately, instead of a single block of text)
 - Shishant Todi, who gave me pdf samples built in a very strange way. I'm still working on them !
@@ -40,7 +40,9 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Kis Balazs, who gave me a sample which helped me understand why sometimes certain accentuated characters where incorrectly translated.
 - Massimo Baglione, who sent me sample covering various artistic domains, and helped me identify and correct 
 - Aldo Mariussi, which supplied me a 1-page sample that helped me enhance the way 2-bytes character sequences are decoded when specified between parentheses
-- And more... 
+- Jens Kirk and Roshayne Jaimon, who sent me samples containing compound objects, which incited me to entirely review the way I was handling them. As a side-effect, this new way of handling PDF objects solved as a miracle 3 other bugs !
+- Youen Toupin, with a sample containing embedded binary images in regular PDF object streams, which is a feature I was not aware of
+- And much more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
 

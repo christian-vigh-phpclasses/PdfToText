@@ -1,3 +1,17 @@
+    [Version : 1.4.1]	[Date : 26/02/2017]     [Author : CV]
+	. Enhanced page contents decoding (sometimes, the parameter of the /Contents flags does not reference
+	  objects containing drawing instructions, but objects containing the list of objects which in turn
+	  contain the real drawing instructions). This caused in rare cases some contents to be missed in the
+	  output.
+	. Changed the way compound objects are handled : instead of decoding them on-the-fly, preprocess them
+	  before any other processing takes place. This ensure that forward references to objects defined later
+	  in the pdf file will be satisfied.
+	. Ignore embedded images inside drawing instructions blocks ; the presence of gzipped data inside the
+	  embedded image could cause misinterpretation of drawing instructions following it. For the current
+	  version, embedded images will not be integrated into the image-extraction process.
+	. Fixed issue where the same group of text was extracted several times with some PDF samples.
+	. Better handle Japanese documents
+	
     [Version : 1.4.0]	[Date : 26/02/2017]     [Author : CV]
 	. First implementation for handling languages written from right-to-left (RTL).
 
