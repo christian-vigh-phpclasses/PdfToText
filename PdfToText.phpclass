@@ -22,10 +22,18 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.2]	[Date : 2017/03/02]     [Author : CV]
-	. Fixed mapping issue when the same character map was referenced by several font definitions (only the
-	  first definition was associated to the character map, which caused incorrect character mappings when
-	  subsequent fonts were used).
+    [Version : 1.4.3]	[Date : 2017/03/03]     [Author : CV]
+	. Handle the case where Unicode fonts can also have an associated /Encoding object, specifying a
+	  /Differences flag that maps character ids to other character ids.
+	. The checkings performed on special /Contents references which reference an object holding the list
+	  of the objects contained in the page was a little bit too relaxed and, in some rare cases, caused
+	  a few text blocks to be missing in the output (this feature was introduced in version 1.4.1).
+	. Corrected a warning in method GetMappedFonts()
+	. For better performance, remove all useless instructions at the start and end of each drawing
+	  instruction block.
+	. Started expanding the PdfTexterEncodingFont::$Encodings table to add character mappings with
+	  character names not described in the PDF specifications.
+	. Better handle recognition of author information (sometimes, the hex2bin() function issued a warning)
 	
     (...)
 
@@ -543,7 +551,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.2" ;
+	const		VERSION					=  "1.4.3" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -691,7 +699,7 @@ class  PdfToText 	extends PdfObjectBase
 		'%n{2} ( (m) | (l) ) \s+',
 		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) | (i) ) \s+',
 		'\b ( (BDC) | (BT) | (ET) | (EMC) ) \s+',
-		'\/( (Cs \d+) | (CS \d+) | (GS \d+) | (Fm \d+) | (Im \d+) | (PlacedGraphic) ) \s+ \w+ \s*',
+		'\/( (Cs \d+) | (CS \d+) | (G[Ss] \d+) | (Fm \d+) | (Im \d+) | (PlacedGraphic) ) \s+ \w+ \s*',
 		'\/( (Span) | (Artifact) | (Figure) | (P) ) \s* << .*? >> [ \t\r\n>]*',
 		'\/ ( (PlacedGraphic) | (Artifact) ) \s+',
 		'\d+ \s+ ( (scn) | (SCN) )',
@@ -701,7 +709,8 @@ class  PdfToText 	extends PdfObjectBase
 		 '^q \s+ [hfS] \n',
 		 '(f | W) \* \s+',
 		 '^[fhnqQS] \s+',
-		 '^(q \s+)+',
+		 '^ \s* (\b [a-zA-Z] \s+)+',
+		 '\s* (\b [a-zA-Z] \s+)+$',
 		 'BX \s+ .*? EX',
 		 '-?0 (\. \d+)? \s+ T[cw]',
 		 '\bBI\b .*? \bID\b .*? \bEI\b'
@@ -3933,7 +3942,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 		static		$re		=  '#
 							(?P<info>
 								/
-								(?P<keyword> [a-z0-9_\-]+)
+								(?P<keyword> (Author) | (Creator) | (Producer) | (Title) | (CreationDate) | (ModDate) )
 								\s* 
 								(?P<opening> [(<])
 							)
@@ -3941,7 +3950,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 		static		$object_re	=  '#
 							(?P<info>
 								/
-								(?P<keyword> [^ (<]+)
+								(?P<keyword> (Author) | (Creator) | (Producer) | (Title) | (CreationDate) | (ModDate) )
 								\s* 
 								(?P<object_ref>
 									(?P<object> \d+)
@@ -3979,7 +3988,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 			   {
 				$keyword	=  $matches [ 'keyword' ] [$i] [0] ;
 				$opening	=  $matches [ 'opening' ] [$i] [0] ;
-				$start_index	=  $matches [ 'info' ] [$i] [1] + strlen ( $matches [ 'info' ] [$i] [0] ) ;
+				$start_index	=  $matches [ 'info'    ] [$i] [1] + strlen ( $matches [ 'info' ] [$i] [0] ) ;
 				
 				// Text between parentheses : the text is written as is
 				if  ( $opening  ==  '(' )
@@ -4149,8 +4158,9 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			echo $font_definition ;
 		    }
 
-		$font_type	=  PdfTexterFont::FONT_ENCODING_STANDARD ;
-		$cmap_id	=  0 ;
+		$font_type		=  PdfTexterFont::FONT_ENCODING_STANDARD ;
+		$cmap_id		=  0 ;
+		$secondary_cmap_id	=  0 ;
 
 		// Font resource id specification
 	   	if  ( preg_match ( '#<< \s* (?P<rscdefs> /R\d+ .*) >>#ix', $font_definition, $match ) )
@@ -4177,6 +4187,9 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		   {
 			$cmap_id	=  $match [ 'cmap' ] ;
 			$font_type	=  PdfTexterFont::FONT_ENCODING_UNICODE_MAP ;
+
+			if  ( preg_match ( '#/Encoding \s* (?P<cmap> \d+)#ix', $font_definition, $secondary_match ) )
+				$secondary_cmap_id	=  $secondary_match [ 'cmap' ] ;
 		    } 
 		// Font has an associated character map (using a cmap id)
 		else if  ( preg_match ( '#/Encoding \s* (?P<cmap> \d+) \s+ \d+ #ix', $font_definition, $match ) )
@@ -4193,7 +4206,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		else if  ( preg_match ( '#/Encoding \s* /Identity-H#ix', $font_definition ) )
 			$font_type	=  PdfTexterFont::FONT_ENCODING_IDENTITY_H ;
 	
-		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type ) ;
+		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id ) ;
 
 		// Arbitrarily set the default font to the first font encountered in the pdf file
 		if  ( $this -> DefaultFont  ===  false )
@@ -4254,6 +4267,11 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			   {
 				$font -> CharacterMap	=  $cmap ;
 				$status			=  true ;
+			    }
+			else if  ( $font -> SecondaryCharacterMapId  ==  $cmap -> ObjectId )
+			   {
+				$font -> SecondaryCharacterMap	=  $cmap ;
+				$status				=  true ;
 			    }
 		    }
 
@@ -4534,18 +4552,22 @@ class  PdfTexterFont		extends PdfObjectBase
 	public		$FontType ;
 	// Character map id, specified by the /ToUnicode flag
 	public		$CharacterMapId ;
-	// Optional character map, that may be set by the PdfToText::Load method just before processing text drawinf blocks
+	// Secondary character map id, specified by the /Encoding flag and that can contain a /Differences flag
+	public		$SecondaryCharacterMapId ;
+	// Optional character map, that may be set by the PdfToText::Load method just before processing text drawing blocks
 	public		$CharacterMap		=  null ;
+	public		$SecondaryCharacterMap	=  null ;
 
 
 	// Constructor -
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
-	public function  __construct ( $resource_id, $cmap_id, $font_type )
+	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id )
 	   {
 		parent::__construct ( ) ;
-		$this -> Id		=  $resource_id ;
-		$this -> CharacterMapId	=  $cmap_id ;
-		$this -> FontType	=  $font_type ;
+		$this -> Id				=  $resource_id ;
+		$this -> CharacterMapId			=  $cmap_id ;
+		$this -> SecondaryCharacterMapId	=  $secondary_cmap_id ;
+		$this -> FontType			=  $font_type ;
 
 		switch  ( $font_type )
 		   {
@@ -4564,7 +4586,19 @@ class  PdfTexterFont		extends PdfObjectBase
 		if  ( $this -> CharacterMap )
 		   {
 			if  ( isset ( $this -> CharacterMap [ $ch ] ) )
-				return ( $this -> CharacterMap [ $ch ] ) ;
+			   {
+				// Since a /ToUnicode map can have an associated /Encoding map with a /Differences list, this is the right place
+				// to perform the translation (ie, the final Unicode codepoint is impacted by the /Differences list)
+				if  ( ! $this -> SecondaryCharacterMap )		// Most common case first !
+					return ( $this -> CharacterMap [ $ch ] ) ;
+				else
+				   {
+					if  ( isset  ( $this -> SecondaryCharacterMap [ $ch ] ) )
+						return ( $this -> SecondaryCharacterMap [ $ch ] ) ;
+					else
+						return ( $this -> CharacterMap [ $ch ] ) ;
+				    }
+			    }
 		    }
 		else if  ( $this -> FontType  ==  self::FONT_ENCODING_WINANSI )
 		   {
@@ -4836,7 +4870,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 	   { return  ( $this -> offsetGetSafe ( $offset )  !==  false ) ; }
 
 
-	public function  offsetGetSafe ( $offset )
+	public function  offsetGetSafe ( $offset, $translate = true )
 	   {
 		// An easy optimization : since accessing character maps is done using code like this :
 		//	if  ( isset ( ... -> CharacterMap [$index] ) )
@@ -4847,7 +4881,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		static		$last_code		=  -1,
 				$last_offset		=  -1 ;
 
-		if  ( $offset  ==  $last_offset )
+		if  ( $translate  &&  $offset  ==  $last_offset )
 			return ( $last_code ) ;
 
 		// Return value
@@ -4855,7 +4889,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 
 		// Character already has an entry (character reference => subtituted character)
 		if  ( isset ( $this -> DirectMap [ $offset ] ) )
-			$code	=  $this -> CodePointToUtf8 ( $this -> DirectMap [ $offset ] ) ;
+			$code	=  ( $translate ) ? $this -> CodePointToUtf8 ( $this -> DirectMap [ $offset ] ) : $this -> DirectMap [ $offset ] ;
 		// Character does not has a direct entry ; have a look in the character ranges defined for this map
 		else if  ( $this -> RangeCount  &&  $offset  >=  $this -> RangeMin  &&  $offset  <=  $this -> RangeMax )
 		   {
@@ -4883,14 +4917,17 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 			// so that it will be directly retrieved during subsequent accesses
 			if  ( $result  !==  false )
 			   {
-				$code				=  $this -> CodePointToUtf8 ( $result ) ;
+				$code				=  ( $translate ) ? $this -> CodePointToUtf8 ( $result ) : $result ;
 				$this -> DirectMap [ $offset ]	=  $result ;
 			    }
 		    }
 
 		// Remember last queried offset and its corresponding code
-		$last_code	=  $code ;
-		$last_offset	=  $offset ;
+		if  ( $translate )
+		   {
+			$last_code	=  $code ;
+			$last_offset	=  $offset ;
+		    }
 
 		// All done, return
 		return ( $code ) ;
@@ -5157,7 +5194,17 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		'yen' 			=>  array ( 0245, 0264, 0245, 0245 ),
 		'z'			=>  array ( 0172, 0172, 0172, 0172 ),
 		'zcaron' 		=>  array (    0,    0, 0236, 0236 ),
-		'zero' 			=>  array ( 0060, 0060, 0060, 0060 )
+		'zero' 			=>  array ( 0060, 0060, 0060, 0060 ),
+
+		// Additions which are not described in the PDF specifications - much more foreign characters are available !
+		// (see https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html)
+		// This table is currently far from being complete
+		'odblacute'		=>  array ( 0x151, 0x151, 0x151, 0x151 ),
+		'udblacute'		=>  array ( 0x171, 0x171, 0x171, 0x171 ),
+		'Odblacute'		=>  array ( 0x150, 0x150, 0x150, 0x150 ),
+		'Udblacute'		=>  array ( 0x170, 0x170, 0x170, 0x170 ),
+
+
 	   ) ;
 
 
@@ -5206,7 +5253,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		    }
 
 		// Extract the Differences array
-	   	preg_match ( '/ \[ (?P<contents> [^\]]*)  \] /x', $definitions, $match ) ;
+	   	preg_match ( '/ \[ \s* (?P<contents> [^\]]*?)  \s* \] /x', $definitions, $match ) ;
 		$data 		=  trim ( preg_replace ( '/\s+(\d+)/', '/$1', $match [ 'contents' ] ) ) ;
 		$items 		=  explode ( '/', $data ) ;
 
@@ -5840,7 +5887,11 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 
 				foreach  ( $references  as  $reference )
 				   {
-					if  ( $this -> GetObjectReferences ( $reference, $pdf_objects [ $reference ], '', $nested_references ) )
+					// We just need to check that the object contains something like :
+					//	[x 0 R y 0 R ...]
+					// and nothing more 
+					if  ( preg_match ( '#^\s* \[ [^]]+ \]#x', $pdf_objects [ $reference ] )  &&
+							$this -> GetObjectReferences ( $reference, $pdf_objects [ $reference ], '', $nested_references ) )
 						$new_references		=  array_merge ( $new_references, $nested_references ) ;
 					else
 						$new_references []	=  $reference ;
@@ -6140,19 +6191,22 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					$page_contents	=  $this -> PageContents [ $page_object ] ;
 					$associations	=  array ( ) ;
 
-					foreach  ( $page_contents [ 'fonts' ]  as  $font_name => $font_object )
+					if  ( isset ( $page_contents [ 'fonts' ] ) )
 					   {
-						$mapped_fonts []		=  array 
-						   ( 
-							'page'		=>  $current_page, 
-							'xobject-name'	=>  '',
-							'font-name'	=>  $font_name, 
-							'object'	=>  $font_object 
-						    ) ;
+						foreach  ( $page_contents [ 'fonts' ]  as  $font_name => $font_object )
+						   {
+							$mapped_fonts []		=  array 
+							   ( 
+								'page'		=>  $current_page, 
+								'xobject-name'	=>  '',
+								'font-name'	=>  $font_name, 
+								'object'	=>  $font_object 
+							    ) ;
 
-						$associations [ ":$font_name" ]	=  $font_object ;
+							$associations [ ":$font_name" ]	=  $font_object ;
 
-						$this -> __map_recursive ( $current_page, $page_contents [ 'xobjects' ], $mapped_fonts, $associations ) ;
+							$this -> __map_recursive ( $current_page, $page_contents [ 'xobjects' ], $mapped_fonts, $associations ) ;
+						    }
 					    }
 				    }
 			    }
