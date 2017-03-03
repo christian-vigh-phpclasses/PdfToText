@@ -1,3 +1,16 @@
+    [Version : 1.4.3]	[Date : 2017/03/03]     [Author : CV]
+	. Handle the case where Unicode fonts can also have an associated /Encoding object, specifying a
+	  /Differences flag that maps character ids to other character ids.
+	. The checkings performed on special /Contents references which reference an object holding the list
+	  of the objects contained in the page was a little bit too relaxed and, in some rare cases, caused
+	  a few text blocks to be missing in the output (this feature was introduced in version 1.4.1).
+	. Corrected a warning in method GetMappedFonts()
+	. For better performance, remove all useless instructions at the start and end of each drawing
+	  instruction block.
+	. Started expanding the PdfTexterEncodingFont::$Encodings table to add character mappings with
+	  character names not described in the PDF specifications.
+	. Better handle recognition of author information (sometimes, the hex2bin() function issued a warning)
+
     [Version : 1.4.2]	[Date : 2017/03/02]     [Author : CV]
 	. Fixed mapping issue when the same character map was referenced by several font definitions (only the
 	  first definition was associated to the character map, which caused incorrect character mappings when
@@ -5,7 +18,7 @@
 	. The regular expression catching author information was a little bit too greedy, causing some 
 	  misinterpretations and warnings in the output.
 
-    [Version : 1.4.1]	[Date : 26/02/2017]     [Author : CV]
+    [Version : 1.4.1]	[Date : 2017/02/27]     [Author : CV]
 	. Enhanced page contents decoding (sometimes, the parameter of the /Contents flags does not reference
 	  objects containing drawing instructions, but objects containing the list of objects which in turn
 	  contain the real drawing instructions). This caused in rare cases some contents to be missed in the
