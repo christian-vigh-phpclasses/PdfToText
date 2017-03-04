@@ -1,3 +1,13 @@
+    [Version : 1.4.4]	[Date : 2017/03/04]     [Author : CV]
+	. Fixed several issues that affected text output :
+	  - Completely changed the way "beginbfrange..endbfrange" constructs are handled ; some interpretation
+	    problems occurred when line breaks were present at unexpected places, giving incorrect character 
+	    mappings.
+	  - Unified the way escaped characters are handled in a text stream ; sometimes, the escaped character
+	    appeared as is in the output, instead of being mapped.
+	  - Handle more character escapes such as backspace, which has no equivalent in PHP.
+	. Handle the case where author information contains parentheses, which are also used as delimiters
+	
     [Version : 1.4.3]	[Date : 2017/03/03]     [Author : CV]
 	. Handle the case where Unicode fonts can also have an associated /Encoding object, specifying a
 	  /Differences flag that maps character ids to other character ids.
