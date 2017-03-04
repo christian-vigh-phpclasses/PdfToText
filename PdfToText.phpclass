@@ -22,18 +22,15 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.3]	[Date : 2017/03/03]     [Author : CV]
-	. Handle the case where Unicode fonts can also have an associated /Encoding object, specifying a
-	  /Differences flag that maps character ids to other character ids.
-	. The checkings performed on special /Contents references which reference an object holding the list
-	  of the objects contained in the page was a little bit too relaxed and, in some rare cases, caused
-	  a few text blocks to be missing in the output (this feature was introduced in version 1.4.1).
-	. Corrected a warning in method GetMappedFonts()
-	. For better performance, remove all useless instructions at the start and end of each drawing
-	  instruction block.
-	. Started expanding the PdfTexterEncodingFont::$Encodings table to add character mappings with
-	  character names not described in the PDF specifications.
-	. Better handle recognition of author information (sometimes, the hex2bin() function issued a warning)
+    [Version : 1.4.4]	[Date : 2017/03/04]     [Author : CV]
+	. Fixed several issues that affected text output :
+	  - Completely changed the way "beginbfrange..endbfrange" constructs are handled ; some interpretation
+	    problems occurred when line breaks were present at unexpected places, giving incorrect character 
+	    mappings.
+	  - Unified the way escaped characters are handled in a text stream ; sometimes, the escaped character
+	    appeared as is in the output, instead of being mapped.
+	  - Handle more character escapes such as backspace, which has no equivalent in PHP.
+	. Handle the case where author information contains parentheses, which are also used as delimiters
 	
     (...)
 
@@ -551,7 +548,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.3" ;
+	const		VERSION					=  "1.4.4" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2447,35 +2444,34 @@ class  PdfToText 	extends PdfObjectBase
 				   		   			   {
 				   		   				$ch 	=  $text [++$i] ;
 
-				   		   				switch  ( $ch )
-				   		   				   {
-				   		   					case 	'n' 	:  $ch =  "\n" ; break ;
-				   		   					case 	'r' 	:  $ch =  "\r" ; break ;
+										// Escaped character
+										if  ( $ch  !=  '0' )
+											$ch		=  $this -> __process_escaped_character ( $ch ) ;
+										// However, an octal form can also be specified ; in this case we have to take into account
+										// the character width for the current font (if the character width is 4 hex digits, then we
+										// will encounter constructs such as "\000\077").
+										// The method used here is dirty : we build a regex to match octal character representations on a substring
+										// of the text 
+										else
+										   {
+											$width		=  $current_font_map_width / 2 ;	// Convert to byte count
+											$subtext	=  substr ( $text, $i - 1 ) ;
+											$regex		=  "#^ (\\\\ [0-7]+){1,$width} #imsx" ;
 
-											// However, an octal form can also be specified ; in this case we have to take into account
-											// the character width for the current font (if the character width is 4 hex digits, then we
-											// will encounter constructs such as "\000\077").
-											// The method used here is dirty : we build a regex to match octal character representations on a substring
-											// of the text 
-											default :
-												$width		=  $current_font_map_width / 2 ;	// Convert to byte count
-												$subtext	=  substr ( $text, $i - 1 ) ;
-												$regex		=  "#^ (\\\\ [0-7]+){1,$width} #imsx" ;
+											$status		=  preg_match ( $regex, $subtext, $octal_matches ) ;
 
-												$status		=  preg_match ( $regex, $subtext, $octal_matches ) ;
+											if  ( $status )
+											   {
+												$octal_values	=  explode ( '\\', substr ( $octal_matches [0], 1 ) ) ;
+												$ord		=  0 ;
 
-												if  ( $status )
-												   {
-													$octal_values	=  explode ( '\\', substr ( $octal_matches [0], 1 ) ) ;
-													$ord		=  0 ;
+												foreach  ( $octal_values  as  $octal_value ) 
+													$ord	=  ( $ord  <<  8 ) + octdec ( $octal_value ) ;
 
-													foreach  ( $octal_values  as  $octal_value ) 
-														$ord	=  ( $ord  <<  8 ) + octdec ( $octal_value ) ;
-
-													$ch	 =  chr ( $ord ) ;
-													$i	+=  strlen ( $octal_matches [0] ) - 2 ;
-												    }
-				   		   				    }
+												$ch	 =  chr ( $ord ) ;
+												$i	+=  strlen ( $octal_matches [0] ) - 2 ;
+											    }
+										    }
 
 										$use_map_buffer		=  false ;
 				   		   			    }
@@ -3022,13 +3018,15 @@ class  PdfToText 	extends PdfObjectBase
 		switch ( $ch ) 
 		   {
 			// Normally, only a few characters should be escaped...
-			case	'('	:  $newchar =  "("  ; break ;
-			case	')'	:  $newchar =  ")"  ; break ;
-			case	'\\'	:  $newchar =  "\\" ; break ;
-			case 	'n' 	:  $newchar =  "\n" ; break ;
-			case 	'r' 	:  $newchar =  "\r" ; break ;
-			case 	'f' 	:  $newchar =  "\f" ; break ;
-			case 	't' 	:  $newchar =  "\t" ; break ;
+			case	'('	:  $newchar =  "("		; break ;
+			case	')'	:  $newchar =  ")"		; break ;
+			case	'\\'	:  $newchar =  "\\"		; break ;
+			case 	'n' 	:  $newchar =  "\n"		; break ;
+			case 	'r' 	:  $newchar =  "\r"		; break ;
+			case 	'f' 	:  $newchar =  "\f"		; break ;
+			case 	't' 	:  $newchar =  "\t"		; break ;
+			case 	'b' 	:  $newchar =  chr (  8 )	; break ;
+			case 	'v' 	:  $newchar =  chr ( 11 )	; break ;
 
 			// ... but should we consider that it is a heresy to escape other characters ?
 			// For the moment, no.
@@ -3993,6 +3991,8 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 				// Text between parentheses : the text is written as is
 				if  ( $opening  ==  '(' )
 				   {
+					$parent_level	=  1 ;
+
 					// Since the parameter value can contain any character, including "\" or "(", we will have to find the real closing
 					// parenthesis
 					$value		=  '' ;
@@ -4001,8 +4001,20 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 					   {
 						if  ( $object_data [$j]  ==  '\\' )
 							$value	.=  '\\' . $object_data [++$j] ;
+						else if  ( $object_data [$j]  ==  '(' )
+						   {
+							$value	.=  '(' ;
+							$parent_level ++ ;
+						    }
 						else if  ( $object_data [$j]  ==  ')' )
-							break ;
+						   {
+							$parent_level -- ;
+
+							if  ( ! $parent_level )
+								break ;
+							else
+								$value	.=  ')' ;
+						    }
 						else
 							$value  .=  $object_data [$j] ;
 					    }
@@ -4590,14 +4602,16 @@ class  PdfTexterFont		extends PdfObjectBase
 				// Since a /ToUnicode map can have an associated /Encoding map with a /Differences list, this is the right place
 				// to perform the translation (ie, the final Unicode codepoint is impacted by the /Differences list)
 				if  ( ! $this -> SecondaryCharacterMap )		// Most common case first !
-					return ( $this -> CharacterMap [ $ch ] ) ;
+					$code	=  $this -> CharacterMap [ $ch ] ;
 				else
 				   {
 					if  ( isset  ( $this -> SecondaryCharacterMap [ $ch ] ) )
-						return ( $this -> SecondaryCharacterMap [ $ch ] ) ;
+						$code	=  $this -> SecondaryCharacterMap [ $ch ] ;
 					else
-						return ( $this -> CharacterMap [ $ch ] ) ;
+						$code	=  $this -> CharacterMap [ $ch ] ;
 				    }
+
+				return ( $code ) ;
 			    }
 		    }
 		else if  ( $this -> FontType  ==  self::FONT_ENCODING_WINANSI )
@@ -4790,56 +4804,72 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		// Process beginbfrange/endbfrange constructs
 		if  ( preg_match_all ( '/ beginbfrange \s* (?P<ranges> .*?) endbfrange /imsx', $definitions, $range_matches ) )
 		   {
-			
 			foreach  ( $range_matches [ 'ranges' ]  as  $range_list )
 			   {
-				// One day I think that I will find a pdf sample where the definitions are put on the same line...
-				// Until that, consider everything is separated by a newline 
-			   	$ranges 	=  explode ( "\n", trim ( str_replace ( "\r", "\n", $range_list ) ) ) ;
+				$start_index	=  0 ;
 
-				// Loop through each range definition
-				foreach  ( $ranges  as  $range )
+				// There are two forms of syntax in a beginbfrange..endbfrange construct
+				// 1) "<x> <y> <z>", which maps character ids x through y to z through (z+y-x)
+				// 2) "<x> <y> [<a1> <a2> ... <an>]", which maps character x to a1, x+1 to a2, up to y, which is mapped to an
+				// All the values are hex digits.
+				// We will loop through the range definitions by first identifying the <x> and <y>, and the character that follows
+				// them, which is either a "<" for notation 1), or a "[" for notation 2).
+				while  ( preg_match ( '#  < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* (?P<nextchar> .) #imsx',
+						$range_list, $range_match, PREG_OFFSET_CAPTURE, $start_index ) )
 				   {
-					// Array form :
-					//	<from><to>[ value1, value2, ... valuen ]
-					//	Generates mapping from "from" to "to" using the specified values. The value count
-					//	between square brackets must be the same as to - from + 1.
-					// We put them in the DirectMap array, since there is only a one to one correspondance
-				   	if  ( preg_match ( '/ < \s* (?P<from> [0-9a-f]+) \s* > \s* < \s* (?P<to> [0-9a-f]+) \s* > \s* \[(?P<subst> [^\]]+ )\] /imx',
-									$range, $range_match ) )
-					   {
-						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
-						$to 		=  hexdec ( $range_match [ 'to'    ] ) ;
-						$subst 		=  preg_split ( '/\s+/',  trim ( $range_match [ 'subst' ] ) ) ;
+					$from			=  hexdec ( $range_match [ 'from' ] [0] ) ;
+					$to			=  hexdec ( $range_match [ 'to'   ] [0] ) ;
+					$next_char		=  $range_match [ 'nextchar' ] [0] ;
+					$next_char_index	=  $range_match [ 'nextchar' ] [1] ;
 
-						for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
-							$this -> DirectMap [$i] 	=  hexdec ( $subst [ $count ] ) ;
-					    }
-					// Normal form :
-					//	<from><to><start>
-					//	Generates mappings from start+from to start+to.
-					else if  ( preg_match ( '/ <\s* (?P<from> [0-9a-f]+) \s*> \s* <\s* (?P<to> [0-9a-f]+) \s*> \s* <\s* (?P<subst> [0-9a-f]+) \s*> /imx',
-									$range, $range_match ) )
+					// Form 1) : catch the third hex value after <x> and <y>
+					if  ( $next_char  ==  '<' )
 					   {
-						$from 		=  hexdec ( $range_match [ 'from'  ] ) ;
-						$to 		=  hexdec ( $range_match [ 'to'    ] ) ;
-						$subst 		=  hexdec ( $range_match [ 'subst' ] ) ;
-
-						if  ( $from  !=  $to )
+						if  ( preg_match ( '/ \s* (?P<start> [0-9a-f]+) (?P<tail> \s* > \s*) /imsx', $range_list, $start_match, PREG_OFFSET_CAPTURE, $next_char_index + 1 ) )
 						   {
-							$this -> RangeMap []	=  array ( $from, $to, $subst ) ;
+							$subst		=  hexdec ( $start_match [ 'start' ] [0] ) ;
 
-							// Adjust min and max values for the ranges stored in this character map - to avoid unnecessary testing
-							if  ( $from  <  $this -> RangeMin )
-								$this -> RangeMin	=  $from ;
+							// Don't create a range if <x> and <y> are the same
+							if  ( $from  !=  $to )
+							   {
+								$this -> RangeMap []	=  array ( $from, $to, $subst ) ;
 
-							if  ( $to  >  $this -> RangeMax )
-								$this -> RangeMax	=  $to ;
+								// Adjust min and max values for the ranges stored in this character map - to avoid unnecessary testing
+								if  ( $from  <  $this -> RangeMin )
+									$this -> RangeMin	=  $from ;
+
+								if  ( $to  >  $this -> RangeMax )
+									$this -> RangeMax	=  $to ;
+							    }
+							else
+								$this -> DirectMap [ $from ]	=  $subst ;
+							
+							$start_index	=  $start_match [ 'tail' ] [1] + 1 ;
 						    }
 						else
-							$this -> DirectMap [ $from ]	=  $subst ;
+							error ( "Character range $from..$to not followed by an hexadecimal value in Unicode map #$object_id." ) ;
 					    }
-				   }
+					// Form 2) : catch all the hex values between square brackets after <x> and <y>
+					else if  ( $next_char  ==  '[' )
+					   {
+						if  ( preg_match ( '/ (?P<values> [\s<>0-9a-f]+ ) (?P<tail> \] \s*)/imsx', $range_list, $array_match, PREG_OFFSET_CAPTURE, $next_char_index + 1 ) )
+						   {
+							preg_match_all ( '/ < \s* (?P<num> [0-9a-f]+) \s* > /imsx', $array_match [ 'values' ] [0], $array_values ) ;
+
+							for  ( $i = $from, $count = 0 ; $i  <=  $to ; $i ++, $count ++ )
+								$this -> DirectMap [$i] 	=  hexdec ( $array_values [ 'num' ] [ $count ] ) ;
+
+							$start_index	=  $array_match [ 'tail' ] [1] + 1 ;
+						    }
+						else
+							error ( "Character range $from..$to not followed by an array of hexadecimal values in Unicode map #$object_id." ) ;
+					    }
+					else
+					   {
+						error ( "Unexpected character '$next_char' in Unicode map #$object_id." ) ;
+						$start_index	=  $range_match [ 'nextchar' ] [1] + 1 ;
+					    }
+				    }
 			    }
 
 			// Sort the ranges by their starting offsets 
@@ -4872,18 +4902,6 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 
 	public function  offsetGetSafe ( $offset, $translate = true )
 	   {
-		// An easy optimization : since accessing character maps is done using code like this :
-		//	if  ( isset ( ... -> CharacterMap [$index] ) )
-		//		$ch	=  ... -> CharacterMap [$index] ;
-		// and that both the offsetExists() and offsetGet() methods use offsetGetSafe(), we are sure that a call to
-		// isset() is immediately followed by an array access, so remember the last value that was found during the
-		// call to isset()
-		static		$last_code		=  -1,
-				$last_offset		=  -1 ;
-
-		if  ( $translate  &&  $offset  ==  $last_offset )
-			return ( $last_code ) ;
-
 		// Return value
 		$code	=  false ;
 
