@@ -15,6 +15,8 @@
 	Or :
 
 		$pdf	=  new PdfToText ( ) ;
+		// Modify any property here before loading the file ; for example :
+		// $pdf -> BlockSeparator = " " ;
 		$pdf -> Load ( 'sample.pdf' ) ;
 		echo $pdf -> Text ;
 
@@ -22,9 +24,10 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.6]	[Date : 2017/03/04]     [Author : CV]
-	. Fixed errors regarding undefined PdfTexterFont::$WinAnsiCharacterMap and $MacRomanCharacter map, which
-	  had been moved to the PdfTexterAdobeWinAnsiMap and PdfTexterAdobeMacRomanMap classes, respectively.
+    [Version : 1.4.7]	[Date : 2017/03/05]     [Author : CV]
+	. First (and partial) implementation of CID fonts for the eastern Europe languages (currently tested on
+	  Polish).
+	. Fixed a warning about an undefined $map variable in class PdfTexterIdentityHCIDFont.
 	
     (...)
 
@@ -542,7 +545,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.6" ;
+	const		VERSION					=  "1.4.7" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -4214,8 +4217,15 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		// Font uses the Mac Roman encoding
 		else if  ( preg_match ( '#/Encoding \s* /MacRomanEncoding#ix', $font_definition ) )
 			$font_type	=  PdfTexterFont::FONT_ENCODING_MAC_ROMAN ;
+		// Experimental implementation of CID fonts
 		else if  ( preg_match ( '#/Encoding \s* /Identity-H#ix', $font_definition ) )
-			$font_type	=  PdfTexterFont::FONT_ENCODING_IDENTITY_H ;
+		   {
+			// A really experimental way of detecting eastern europe languages...
+			if  ( stripos ( $font_definition, '/ABCDEE+' )  !==  false )
+				$font_type	=  PdfTexterFont::FONT_ENCODING_CID_EASTERN ;
+			else
+				$font_type	=  PdfTexterFont::FONT_ENCODING_CID_IDENTITY_H ;
+		    }
 	
 		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id ) ;
 
@@ -4389,7 +4399,8 @@ class  PdfTexterFont		extends PdfObjectBase
 	const	FONT_ENCODING_MAC_ROMAN		=  2 ;			// No character map, use the MAC OS Roman character set
 	const	FONT_ENCODING_UNICODE_MAP	=  3 ;			// Font has an associated unicode character map
 	const	FONT_ENCODING_PDF_MAP		=  4 ;			// Font has an associated PDF character map
-	const	FONT_ENCODING_IDENTITY_H	=  5 ;			// CID font : IDENTITY-H
+	const	FONT_ENCODING_CID_IDENTITY_H	=  5 ;			// CID font : IDENTITY-H
+	const	FONT_ENCODING_CID_EASTERN	=  6 ;			// CID font : languages from eastern Europe (to be confirmed...)
 
 	// Font variants
 	const   FONT_VARIANT_STANDARD		=  0x0000 ;
@@ -4433,8 +4444,12 @@ class  PdfTexterFont		extends PdfObjectBase
 				$this -> CharacterMap	=  new  PdfTexterAdobeMacRomanMap ( $resource_id, $this -> FontVariant ) ;
 				break ;
 
-			case	self::FONT_ENCODING_IDENTITY_H :
-				$this -> CharacterMap	=  new PdfTexterIdentityHMap (  $resource_id ) ;
+			case	self::FONT_ENCODING_CID_IDENTITY_H :
+				$this -> CharacterMap	=  new PdfTexterIdentityHCIDMap (  $resource_id ) ;
+				break ;
+
+			case	self::FONT_ENCODING_CID_EASTERN :
+				$this -> CharacterMap	=  new PdfTexterEasternCIDMap (  $resource_id ) ;
 				break ;
 		    }
 	    }
@@ -5561,7 +5576,7 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
 		    }
 
 		$this -> MapFile	=  $file ;
-		$this -> Map		=  $map ;
+		$this -> Map		=  ( isset ( $map ) ) ?  $map :  array ( ) ;
 
 		// Since alternate characters can be apparently prefixed by 0x0000 or 0x0001, two calls to the array access operator 
 		// will be needed to retrieve the exact character in such cases
@@ -5646,148 +5661,33 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
 
 /*==============================================================================================================
 
-    PdfTexterIdentityHMap -
+    PdfTexterIdentityHCIDMap -
         A class for mapping IDENTITY-H CID fonts (or trying to...).
 
   ==============================================================================================================*/
-class  PdfTexterIdentityHMap		extends  PdfTexterCIDMap
+class  PdfTexterIdentityHCIDMap		extends  PdfTexterCIDMap
    {
-	private static		$CIDMap		=  array
-	   (
-		0 => '*0*',				// Seems to be a prefix for accentuated characters
-		1 => '*1*',				// Same 
-		2 => self::UNKNOWN_CID,
-		3 => ' ',
-		4 => self::UNKNOWN_CID,
-		5 => '"',
-		6 => self::UNKNOWN_CID,
-		7 => self::UNKNOWN_CID,
-		8 => '%',
-		9 => self::UNKNOWN_CID,
-		10 => self::UNKNOWN_CID,
-		11 => '(',
-		12 => ')',
-		13 => self::UNKNOWN_CID,
-		14 => '+',
-		15 => ',',
-		16 => '-',
-		17 => '.',
-		18 => '/',
-		19 => '0',
-		20 => '1',
-		21 => '2',
-		22 => '3',
-		23 => '4',
-		24 => '5',
-		25 => '6',
-		26 => '7',
-		27 => '8',
-		28 => '9',
-		29 => ':',
-		30 => ';',
-		31 => self::UNKNOWN_CID,
-		32 => '=',
-		33 => self::UNKNOWN_CID,
-		34 => '?',
-		35 => '@',
-		36 => 'A',
-		37 => 'B',
-		38 => 'C',
-		39 => 'D',
-		40 => 'E',
-		41 => 'F',
-		42 => 'G',
-		43 => 'H',
-		44 => 'I',
-		45 => 'J',
-		46 => 'K',
-		47 => 'L',
-		48 => 'M',
-		49 => 'N',
-		50 => 'O',
-		51 => 'P',
-		52 => 'Q',
-		53 => 'R',
-		54 => 'S',
-		55 => 'T',
-		56 => 'U',
-		57 => 'V',
-		58 => 'W',
-		59 => 'X',
-		60 => 'Y',
-		61 => 'Z',
-		62 => '[',
-		63 => self::UNKNOWN_CID,
-		64 => ']',
-		65 => self::UNKNOWN_CID,
-		66 => self::UNKNOWN_CID,
-		67 => '`',
-		68 => 'a',
-		69 => 'b',
-		70 => 'c',
-		71 => 'd',
-		72 => 'e',
-		73 => 'f',
-		74 => 'g',
-		75 => 'h',
-		76 => 'i',
-		77 => 'j',
-		78 => 'k',
-		79 => 'l',
-		80 => 'm',
-		81 => 'n',
-		82 => 'o',
-		83 => 'p',
-		84 => 'q',
-		85 => 'r',
-		86 => 's',
-		87 => 't',
-		88 => 'u',
-		89 => 'v',
-		90 => 'w',
-		91 => 'x',
-		92 => 'y',
-		93 => 'z',
-		94 => self::UNKNOWN_CID,
-		95 => self::UNKNOWN_CID,
-		96 => self::UNKNOWN_CID,
-		97 => self::UNKNOWN_CID,
-		98 => self::UNKNOWN_CID,
-		99 => self::UNKNOWN_CID,
-		100 => self::UNKNOWN_CID,
-		101 => self::UNKNOWN_CID,
-		102 => self::UNKNOWN_CID,
-		103 => self::UNKNOWN_CID,
-		104 => self::UNKNOWN_CID,
-		105 => self::UNKNOWN_CID,
-		106 => self::UNKNOWN_CID,
-		107 => self::UNKNOWN_CID,
-		108 => self::UNKNOWN_CID,
-		109 => self::UNKNOWN_CID,
-		110 => self::UNKNOWN_CID,
-		111 => self::UNKNOWN_CID,
-		112 => self::UNKNOWN_CID,
-		113 => self::UNKNOWN_CID,
-		114 => self::UNKNOWN_CID,
-		115 => self::UNKNOWN_CID,
-		116 => self::UNKNOWN_CID,
-		117 => self::UNKNOWN_CID,
-		118 => self::UNKNOWN_CID,
-		119 => self::UNKNOWN_CID,
-		120 => self::UNKNOWN_CID,
-		121 => 'ó',
-		122 => self::UNKNOWN_CID,
-		123 => self::UNKNOWN_CID,
-		124 => 'ö',
-		125 => self::UNKNOWN_CID,
-		126 => 'ú',
-		127 => self::UNKNOWN_CID
-	    ) ;
-
-
 	public function  __construct ( $object_id )
 	   {
 		parent::__construct ( $object_id, 'IDENTITY-H' ) ;
+	    }
+    }
+
+
+
+/*==============================================================================================================
+
+    PdfTexterEasternCIDMap -
+        A class for mapping CID fonts related to languages from eastern Europe (or trying to...).
+
+  ==============================================================================================================*/
+class  PdfTexterEasternCIDMap		extends  PdfTexterCIDMap
+   {
+	// Files to be tested against regressions :
+	// - dominiksz/1097.pdf
+	public function  __construct ( $object_id )
+	   {
+		parent::__construct ( $object_id, 'EASTERN' ) ;
 	    }
     }
 
