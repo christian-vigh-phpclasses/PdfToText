@@ -1,3 +1,8 @@
+    [Version : 1.4.5]	[Date : 2017/03/05]     [Author : CV]
+	. Implemented Cyrillic fonts (ISO-8859-5).
+	. Created the PdfTexterAdobe*Map classes, to implement the WinAnsi and Mac Roman encodings, instead of
+	  implementing them as tables at the PdfTexterFont class level.
+	
     [Version : 1.4.4]	[Date : 2017/03/04]     [Author : CV]
 	. Fixed several issues that affected text output :
 	  - Completely changed the way "beginbfrange..endbfrange" constructs are handled ; some interpretation
