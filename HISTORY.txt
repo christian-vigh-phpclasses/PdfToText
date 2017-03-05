@@ -1,3 +1,7 @@
+    [Version : 1.4.6]	[Date : 2017/03/04]     [Author : CV]
+	. Fixed errors regarding undefined PdfTexterFont::$WinAnsiCharacterMap and $MacRomanCharacter map, which
+	  had been moved to the PdfTexterAdobeWinAnsiMap and PdfTexterAdobeMacRomanMap classes, respectively.
+
     [Version : 1.4.5]	[Date : 2017/03/05]     [Author : CV]
 	. Implemented Cyrillic fonts (ISO-8859-5).
 	. Created the PdfTexterAdobe*Map classes, to implement the WinAnsi and Mac Roman encodings, instead of
