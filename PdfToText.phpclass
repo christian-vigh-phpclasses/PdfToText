@@ -22,10 +22,9 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.5]	[Date : 2017/03/05]     [Author : CV]
-	. Implemented Cyrillic fonts (ISO-8859-5).
-	. Created the PdfTexterAdobe*Map classes, to implement the WinAnsi and Mac Roman encodings, instead of
-	  implementing them as tables at the PdfTexterFont class level.
+    [Version : 1.4.6]	[Date : 2017/03/04]     [Author : CV]
+	. Fixed errors regarding undefined PdfTexterFont::$WinAnsiCharacterMap and $MacRomanCharacter map, which
+	  had been moved to the PdfTexterAdobeWinAnsiMap and PdfTexterAdobeMacRomanMap classes, respectively.
 	
     (...)
 
@@ -543,7 +542,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.5" ;
+	const		VERSION					=  "1.4.6" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -5055,8 +5054,6 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		'udblacute'		=>  array ( 0x171, 0x171, 0x171, 0x171 ),
 		'Odblacute'		=>  array ( 0x150, 0x150, 0x150, 0x150 ),
 		'Udblacute'		=>  array ( 0x170, 0x170, 0x170, 0x170 ),
-
-
 	   ) ;
 
 
@@ -5177,10 +5174,10 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 			$ord		=  $offset ;
 
 		// Check for final character translations (concerns only a few number of characters)
-		if  ( $this -> Encoding  ==  self::PDF_WIN_ANSI_ENCODING  &&  isset ( PdfTexterFont::$WinAnsiCharacterMap [ $ord ] ) )
-			$ord	=  PdfTexterFont::$WinAnsiCharacterMap [ $ord ] ;
-		else if  ( $this -> Encoding  ==  self::PDF_MAC_ROMAN_ENCODING  &&  isset ( PdfTexterFont::$MacRomanCharacterMap [ $ord ] ) )
-			$ord	=  PdfTexterFont::$MacRomanCharacterMap [ $ord ] ;
+		if  ( $this -> Encoding  ==  self::PDF_WIN_ANSI_ENCODING  &&  isset ( PdfTexterAdobeWinAnsiMap::$WinAnsiCharacterMap [0] [ $ord ] ) )
+			$ord	=  PdfTexterAdobeWinAnsiMap::$WinAnsiCharacterMap [0] [ $ord ] ;
+		else if  ( $this -> Encoding  ==  self::PDF_MAC_ROMAN_ENCODING  &&  isset ( PdfTexterAdobeMacRomanMap::$MacRomanCharacterMap [0] [ $ord ] ) )
+			$ord	=  PdfTexterAdobeMacRomanMap::$MacRomanCharacterMap [0] [ $ord ] ;
 		// As far as I have been able to see, the values expressed by the /Differences tag were the only ones used within the
 		// Pdf document ; however, handle the case where some characters do not belong to the characters listed by /Differences,
 		// and use the official Adobe encoding maps when necessary
@@ -5254,7 +5251,7 @@ class	PdfTexterAdobeWinAnsiMap		extends		PdfTexterAdobeMap
 	// Windows Ansi mapping to Unicode. Only substitutions that have no direct equivalent are listed here
 	// Source : https://msdn.microsoft.com/en-us/goglobal/cc305145.aspx
 	// Only characters from 0x80 to 0x9F have no direct translation
-	private static	$MyMap	=  array
+	public static	$WinAnsiCharacterMap	=  array
 	   (
 		// Normal WinAnsi mapping
 		0	=>  array 
@@ -5361,7 +5358,7 @@ class	PdfTexterAdobeWinAnsiMap		extends		PdfTexterAdobeMap
 
 	public function  __construct ( $object_id, $font_variant )
 	   {
-		parent::__construct ( $object_id, $font_variant, self::$MyMap ) ;
+		parent::__construct ( $object_id, $font_variant, self::$WinAnsiCharacterMap ) ;
 	    }
     }
 
@@ -5376,7 +5373,7 @@ class	PdfTexterAdobeMacRomanMap		extends		PdfTexterAdobeMap
    {
 	// Mac roman to Unicode encoding
 	// Source : ftp://ftp.unicode.org/Public/MAPPINGS/VENDORS/APPLE/ROMAN.TXT
-	public static	$MyMap	=  array
+	public static	$MacRomanCharacterMap	=  array
 	   (
 		0	=>  array
 		   (
@@ -5514,7 +5511,7 @@ class	PdfTexterAdobeMacRomanMap		extends		PdfTexterAdobeMap
 
 	public function  __construct ( $object_id, $font_variant )
 	   {
-		parent::__construct ( $object_id, $font_variant, self::$MyMap ) ;
+		parent::__construct ( $object_id, $font_variant, self::$MacRomanCharacterMap ) ;
 	    }
     }
 
@@ -5603,7 +5600,7 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
 					if  ( ! PdfToText::$DEBUG )
 						return ( '' ) ;
 					else 
-						return ( "[UID: $offset]" ) ;
+						return ( '[UID:' . sprintf ( '%04x', $offset ) . "]" ) ;
 
 				case	self::ALT_CID :
 					$this -> LastAltOffset		=  ( integer ) $offset ;
