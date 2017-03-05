@@ -1,3 +1,8 @@
+    [Version : 1.4.7]	[Date : 2017/03/05]     [Author : CV]
+	. First (and partial) implementation of CID fonts for the eastern Europe languages (currently tested on
+	  Polish).
+	. Fixed a warning about an undefined $map variable in class PdfTexterIdentityHCIDFont.
+	
     [Version : 1.4.6]	[Date : 2017/03/04]     [Author : CV]
 	. Fixed errors regarding undefined PdfTexterFont::$WinAnsiCharacterMap and $MacRomanCharacter map, which
 	  had been moved to the PdfTexterAdobeWinAnsiMap and PdfTexterAdobeMacRomanMap classes, respectively.
