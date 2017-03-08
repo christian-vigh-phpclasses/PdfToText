@@ -1,3 +1,14 @@
+    [Version : 1.4.8]	[Date : 2017/03/05]     [Author : CV]
+	. The new PdfTexterAdobeMap classes did not specify the width of character codes, which caused bad
+	  interpretation of characters expressed as octal escaped sequences.
+	. Fixed a regression, where the numeric value of octal escape sequences was displayed as is
+	. Fixed a warning issued when an empty date is specified in Author information
+	. Fixed a warning issued when instantianting objects of class PdfTexterFont with a missing 4th argument.
+	. Object streams (compound objects) are now discarded from the object list after processing their 
+	  embedded objects
+	. Fixed bad interpretation of font sizes less than 1 with no leading zero (eg, '.93')
+	. Better process text contents using characters escaped in octal notation
+	
     [Version : 1.4.7]	[Date : 2017/03/05]     [Author : CV]
 	. First (and partial) implementation of CID fonts for the eastern Europe languages (currently tested on
 	  Polish).

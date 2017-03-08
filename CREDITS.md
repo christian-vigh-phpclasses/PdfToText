@@ -43,6 +43,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Jens Kirk and Roshayne Jaimon, who sent me samples containing compound objects, which incited me to entirely review the way I was handling them. As a side-effect, this new way of handling PDF objects solved as a miracle 3 other bugs !
 - Youen Toupin, with a sample containing embedded binary images in regular PDF object streams, which is a feature I was not aware of
 - Javier Diez, who submitted a sample created by Quark XPress and helped me solve basic problems not seen so far
+- Thomas Bourgeois, who sent me a very comprehensive set of small PDF samples showing issues, some of them were existing for long
 - And much more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
