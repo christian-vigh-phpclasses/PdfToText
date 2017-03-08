@@ -24,10 +24,16 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.7]	[Date : 2017/03/05]     [Author : CV]
-	. First (and partial) implementation of CID fonts for the eastern Europe languages (currently tested on
-	  Polish).
-	. Fixed a warning about an undefined $map variable in class PdfTexterIdentityHCIDFont.
+    [Version : 1.4.8]	[Date : 2017/03/08]     [Author : CV]
+	. The new PdfTexterAdobeMap classes did not specify the width of character codes, which caused bad
+	  interpretation of characters expressed as octal escaped sequences.
+	. Fixed a regression, where the numeric value of octal escape sequences was displayed as is
+	. Fixed a warning issued when an empty date is specified in Author information
+	. Fixed a warning issued when instantianting objects of class PdfTexterFont with a missing 4th argument.
+	. Object streams (compound objects) are now discarded from the object list after processing their 
+	  embedded objects
+	. Fixed bad interpretation of font sizes less than 1 with no leading zero (eg, '.93')
+	. Better process text contents using characters escaped in octal notation
 	
     (...)
 
@@ -375,11 +381,14 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  GetUTCDate ( $date )
 	   {
-		if  ( ( $date [0]  ==  'D'  ||  $date [0]  ==  'd' )  &&  $date [1]  ==  ':' )
-			$date	=  substr ( $date, 2 ) ;
+		if  ( $date )
+		   {
+			if  ( ( $date [0]  ==  'D'  ||  $date [0]  ==  'd' )  &&  $date [1]  ==  ':' )
+				$date	=  substr ( $date, 2 ) ;
 
-		if  ( ( $index  =  strpos ( $date, "'" ) )  !==  false )
-			$date	=  substr ( $date, 0, $index ) ;
+			if  ( ( $index  =  strpos ( $date, "'" ) )  !==  false )
+				$date	=  substr ( $date, 0, $index ) ;
+		    }
 
 		return ( $date ) ;
 	    }
@@ -545,7 +554,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.7" ;
+	const		VERSION					=  "1.4.8" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1114,9 +1123,10 @@ class  PdfToText 	extends PdfObjectBase
 			$object_number			=  $matches [ 'object_id' ] [$i] ;
 			$object_data			=  $matches [ 'object'    ] [$i] ;
 
-			$pdf_objects [ $object_number ]	=  $object_data ;
-	
-			// Handle the special case of object streams
+			// Handle the special case of object streams (compound objects)
+			// They are not added in the $pdf_objects array, because they could be mistakenly processed as relevant information,
+			// such as font definitions, etc.
+			// Instead, only the objects they are embedding are stored in this array.
 			if  ( $this -> IsObjectStream ( $object_data ) )
 			   {
 				// Ignore ill-formed object streams
@@ -1127,7 +1137,9 @@ class  PdfToText 	extends PdfObjectBase
 				for  ( $j = 0, $object_stream_count = count ( $object_stream_matches [ 'object_id' ] ) ; $j  <  $object_stream_count ; $j ++ )
 					$pdf_objects [ $object_stream_matches [ 'object_id' ] [$j] ]	=  $object_stream_matches [ 'object' ] [$j] ;
 			    }
-
+			// Normal (non-compound) object
+			else
+				$pdf_objects [ $object_number ]	=  $object_data ;
 		    }
 
 		// Extract trailer information, which may contain the ID of an object specifying encryption flags
@@ -2364,26 +2376,52 @@ class  PdfToText 	extends PdfObjectBase
 							// one character. In this case, we fall back to the "if ( ! $handled )" condition
 							else if  ( $current_font_map_width  ==  4  )
 							   {
-								$unknown_character_met	=  false ;
 								$temp_result		=  '' ;
 
-								for  ( $i = 1 ; $i  <  $length ; $i += 2 )
+								for  ( $i = 1 ; $i  <  $length ; $i ++ )
 								   {
 									// Each character in the pair may be a backslash, which escapes the next character so we must skip it
+									// This code needs to be reviewed ; the same code is duplicated to handle escaped characters in octal notation
 									if  ( $text [$i]  !=  '\\' )
 										$ch1	=  $text [$i] ;
 									else 
 									   {
 										$i ++ ;
-										$ch1	=  $this -> __process_escaped_character ( $text [$i] ) ;
+
+										if  ( $text [$i]  <  '0'  ||  $text [$i]  >  '7' )
+											$ch1	=  $this -> __process_escaped_character ( $text [$i] ) ;
+										else
+										   {
+											$oct	=  '' ;
+
+											while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+												$oct	.=  $text [$i ++] ;
+
+											$ch1	=  chr ( octdec ( $oct ) ) ;
+											$i -- ;
+										    }
 									    }
 
-									if  ( $text [$i + 1]  != '\\' )
-										$ch2	=  $text [$i + 1] ;
+									$i ++ ;
+
+									if  ( $text [$i]  != '\\' )
+										$ch2	=  $text [$i] ;
 									else
 									   {
 										$i ++ ;
-										$ch2	=  $this -> __process_escaped_character ( $text [$i + 1] ) ;
+
+										if  ( $text [$i]  <  '0'  ||  $text [$i]  >  '7' )
+											$ch2	=  $this -> __process_escaped_character ( $text [$i] ) ;
+										else
+										   {
+											$oct	=  '' ;
+
+											while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+												$oct	.=  $text [$i ++] ;
+
+											$ch2	=  chr ( octdec ( $oct ) ) ;
+											$i -- ;
+										    }
 									    }
 
 									// Build the 2-bytes character code
@@ -2395,12 +2433,6 @@ class  PdfToText 	extends PdfObjectBase
 									   {
 										$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch, true ) ;
 										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]		=  $newchar ;
-									    }
-
-									// No mapping found for this pair of characters ; process them individually
-									if  ( $newchar  ===  false )
-									   {
-										$unknown_character_met	=  true ;
 									    }
 
 									// Yes !!! for characters encoded with two bytes, we can find the following construct :
@@ -2442,7 +2474,7 @@ class  PdfToText 	extends PdfObjectBase
 				   		   				$ch 	=  $text [++$i] ;
 
 										// Escaped character
-										if  ( $ch  !=  '0' )
+										if  ( $ch  <  '0'  ||  $ch  >  '7' )
 											$ch		=  $this -> __process_escaped_character ( $ch ) ;
 										// However, an octal form can also be specified ; in this case we have to take into account
 										// the character width for the current font (if the character width is 4 hex digits, then we
@@ -2976,7 +3008,7 @@ class  PdfToText 	extends PdfObjectBase
 				if  ( isset ( $data [ $index ] ) )
 				   {
 		   			if ( ( isset ( self::$CharacterClass [ $ch ]  ) &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_DIGIT ) )  ||  
-							$ch  ==  '-'  ||  $ch  ==  '+' )
+							$ch  ==  '-'  ||  $ch  ==  '+'  ||  $ch  ==  '.' )
 		   			   {
 		   				while  ( $index  <  $data_length  &&
 		   						( ( isset ( self::$CharacterClass [ $data [ $index ] ]  ) &&  ( self::$CharacterClass [ $data [ $index ] ] & self::CTYPE_DIGIT )  ||  
@@ -4425,7 +4457,7 @@ class  PdfTexterFont		extends PdfObjectBase
 
 	// Constructor -
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
-	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id )
+	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null )
 	   {
 		parent::__construct ( ) ;
 		$this -> Id				=  $resource_id ;
@@ -5222,6 +5254,7 @@ abstract class  PdfTexterAdobeMap	extends  PdfTexterCharacterMap
 	   {
 		parent::__construct ( $object_id ) ;
 
+		$this -> HexCharWidth	=  2 ;
 		$this -> Variant	=  $font_variant ;
 		$this -> Map		=  $map ;
 
