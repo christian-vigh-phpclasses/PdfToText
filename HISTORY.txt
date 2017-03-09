@@ -1,3 +1,8 @@
+    [Version : 1.4.10]	[Date : 2017/03/09]     [Author : CV]
+	. Fixed an issue when decoding object streams : a lack of whitespace after the list of object number/
+	  offset pairs implied a shift of one character in object data extraction, making most of the objects
+	  contained in the object stream to be missed.
+	
     [Version : 1.4.9]	[Date : 2017/03/09]     [Author : CV]
 	. Handle the case where character mappings specified through the /Differences keyword can contain
 	  constructs such as '/uniabcd', where 'abcd' is a sequence of hex digits representing a Unicode code
