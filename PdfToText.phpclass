@@ -24,13 +24,10 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.9]	[Date : 2017/03/09]     [Author : CV]
-	. Handle the case where character mappings specified through the /Differences keyword can contain
-	  constructs such as '/uniabcd', where 'abcd' is a sequence of hex digits representing a Unicode code
-	  point.
-	. Found rare cases where a Unicode map mapped character IDs to a value between 0xF000 and 0xF0FF, which
-	  do not correspond to any Unicode codepoint, but rather to an undocumented font. The class
-	  PdfTexterAdobeUndocumentedFont has been designed to handle such mappings.
+    [Version : 1.4.10]	[Date : 2017/03/09]     [Author : CV]
+	. Fixed an issue when decoding object streams : a lack of whitespace after the list of object number/
+	  offset pairs implied a shift of one character in object data extraction, making most of the objects
+	  contained in the object stream to be missed.
 	
     (...)
 
@@ -551,7 +548,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.9" ;
+	const		VERSION					=  "1.4.10" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -561,7 +558,7 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_DECODE_IMAGE_DATA		=  0x0004 ;		// Creates a jpeg resource for each image
 	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x0008 ;		// Ignore text leading values
 	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x0010 ;		// Join hyphenated words that are split on two lines
-	const		PDFOPT_AUTOSAVE_IMAGES			=  0x0020 ;		// Autosave images ; the ImageFileTemplate will need to be defined
+	const		PDFOPT_AUTOSAVE_IMAGES			=  0x0020 ;		// Autosave images ; the ImageFileTemplate property will need to be defined
 
 	// Encryption standards (to be completed, as more crazy PDF samples arise...)
 	const		PDFCRYPT_NONE				=  0 ;			// PDF file is not encrypted 
@@ -2029,7 +2026,7 @@ class  PdfToText 	extends PdfObjectBase
 		// so you have to enable the following lines in your http.ini file to set a stack size of 8Mb, as for Unix systems :
 		//	Include conf/extra/httpd-mpm.conf
 		//	ThreadStackSize 8388608
-		if  ( ! preg_match ( '/^ \s* (?P<series> (\d+ \s+)+ )/x', $decoded_data, $series_match ) )
+		if  ( ! preg_match ( '/^ \s* (?P<series> (\d+ \s* )+ )/x', $decoded_data, $series_match ) )
 		   {
 			if  ( self::$DEBUG  >  1 )
 				error ( new PdfToTextException ( "Object stream does not start with integer object id/offset pairs.", $object_id ) ) ;
