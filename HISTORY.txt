@@ -1,4 +1,12 @@
-    [Version : 1.4.8]	[Date : 2017/03/05]     [Author : CV]
+    [Version : 1.4.9]	[Date : 2017/03/09]     [Author : CV]
+	. Handle the case where character mappings specified through the /Differences keyword can contain
+	  constructs such as '/uniabcd', where 'abcd' is a sequence of hex digits representing a Unicode code
+	  point.
+	. Found rare cases where a Unicode map mapped character IDs to a value between 0xF000 and 0xF0FF, which
+	  do not correspond to any Unicode codepoint, but rather to an undocumented font. The class
+	  PdfTexterAdobeUndocumentedFont has been designed to handle such mappings.
+
+    [Version : 1.4.8]	[Date : 2017/03/08]     [Author : CV]
 	. The new PdfTexterAdobeMap classes did not specify the width of character codes, which caused bad
 	  interpretation of characters expressed as octal escaped sequences.
 	. Fixed a regression, where the numeric value of octal escape sequences was displayed as is
