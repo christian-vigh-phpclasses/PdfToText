@@ -1,3 +1,17 @@
+    [Version : 1.4.11]	[Date : 2017/03/11]     [Author : CV]
+	. Corrected decoding of Ascii85 data (the original version from the 'unknown developer' did consider
+	  that the '%' character was the start of a comment, which is not the case in Ascii85 encoded data)
+	. Handle the case where data using Ascii85 encoding contains in turn gzipped data
+	. Optimized the __decode_ascii85() method
+	. Characters using octal escape sequences were not correctly interpreted when followed by digits after
+	  the 3rd one of the escape sequence. This so&metimes caused incorrect character decoding.
+	. Added timeout handling features ; when the PDFOPT_ENFORCE_EXECUTION_TIME or 
+	  PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME are specified, the $MaxExecutionTime property and 
+	  $MaxGlobalExecutionTime static property (respectively) will be used to prevent exceeding the PHP setting
+	  'max_execution_time'. If such a situation happens, a PdfToTextTimeoutException exception will be
+	  thrown.
+	. Added the $MaxExtractedImages property, to limit the number of extracted images.
+
     [Version : 1.4.10]	[Date : 2017/03/09]     [Author : CV]
 	. Fixed an issue when decoding object streams : a lack of whitespace after the list of object number/
 	  offset pairs implied a shift of one character in object data extraction, making most of the objects
