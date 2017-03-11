@@ -24,10 +24,19 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.10]	[Date : 2017/03/09]     [Author : CV]
-	. Fixed an issue when decoding object streams : a lack of whitespace after the list of object number/
-	  offset pairs implied a shift of one character in object data extraction, making most of the objects
-	  contained in the object stream to be missed.
+    [Version : 1.4.11]	[Date : 2017/03/11]     [Author : CV]
+	. Corrected decoding of Ascii85 data (the original version from the 'unknown developer' did consider
+	  that the '%' character was the start of a comment, which is not the case in Ascii85 encoded data)
+	. Handle the case where data using Ascii85 encoding contains in turn gzipped data
+	. Optimized the __decode_ascii85() method
+	. Characters using octal escape sequences were not correctly interpreted when followed by digits after
+	  the 3rd one of the escape sequence. This sometimes caused incorrect character decoding.
+	. Added timeout handling features ; when the PDFOPT_ENFORCE_EXECUTION_TIME or 
+	  PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME are specified, the $MaxExecutionTime property and 
+	  $MaxGlobalExecutionTime static property (respectively) will be used to prevent exceeding the PHP setting
+	  'max_execution_time'. If such a situation happens, a PdfToTextTimeoutException exception will be
+	  thrown.
+	. Added the $MaxExtractedImages property, to limit the number of extracted images.
 	
     (...)
 
@@ -43,10 +52,13 @@
         Implements an exception thrown when an error is encountered while decoding PDF files.
 
   ==============================================================================================================*/
-class  PdfToTextException		extends  Exception
-   { 
+class  PdfToTextException			extends  Exception 
+   {
 	public static	$IsObject		=  false ;
+    } ;
 
+class  PdfToTextDecodingException		extends  PdfToTextException 
+   { 
 	public function  __construct ( $message, $object_id = false )
 	   {
 		$text	=  "Pdf decoding error" ;
@@ -55,6 +67,26 @@ class  PdfToTextException		extends  Exception
 			$text	.=  " (object #$object_id)" ;
 
 		$text	.=  " : $message" ;
+
+	    }
+    }
+
+class  PdfToTextTimeoutException		extends  PdfToTextException
+   { 
+	// Set to true if the reason why the max execution time was reached because of too many invocations of the Load() method
+	// Set to false if the max execution time was reached by simply processing one PDF file
+	public		$GlobalTimeout ;
+
+	public function  __construct ( $message, $global, $php_setting, $class_setting )
+	   {
+		$text	=  "PdfToText max execution time reached " ;
+
+		if  ( ! $global )
+			$text	.=  "for one single file " ;
+
+		$text	.=  "(php limit = {$php_setting}s, class limit = {$class_setting}s) : $message" ;
+
+		$this -> Global		=  $global ;
 
 		parent::__construct ( $text ) ;
 	    }
@@ -548,7 +580,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.10" ;
+	const		VERSION					=  "1.4.11" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -559,6 +591,11 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x0008 ;		// Ignore text leading values
 	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x0010 ;		// Join hyphenated words that are split on two lines
 	const		PDFOPT_AUTOSAVE_IMAGES			=  0x0020 ;		// Autosave images ; the ImageFileTemplate property will need to be defined
+	const		PDFOPT_ENFORCE_EXECUTION_TIME		=  0x0040 ;		// Enforces the max_execution_time PHP setting when processing a file. A PdfTexterTimeoutException
+											// will be thrown if processing of a single file reaches (time_limit - 1 second) by default
+											// The MaxExecutionTime property can be set to modify this default value.
+	const		PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME	=  0x0080 ;		// Same as PDFOPT_ENFORCE_EXECUTION_TIME, but for all calls to the Load() method of the PdfToText class
+											// The MaxGlobalExecutionTime static property can be set to modify the default time limit
 
 	// Encryption standards (to be completed, as more crazy PDF samples arise...)
 	const		PDFCRYPT_NONE				=  0 ;			// PDF file is not encrypted 
@@ -641,6 +678,9 @@ class  PdfToText 	extends PdfObjectBase
 	// If this number is negative, then the pages to be extract start from the last page. For example, a value of -2
 	// extracts the last two pages
 	public		$MaxSelectedPages		=  false ;
+	// Maximum number of images to be extracted. A value of zero means "extract everything". A non-zero value gives
+	// the number of images to extract.
+	public		$MaxExtractedImages		=  false ;
 	// Location of the CID tables directory
 	public static	$CIDTablesDirectory ;
 	// Author information 
@@ -670,6 +710,20 @@ class  PdfToText 	extends PdfObjectBase
 	public		$DocumentStartOffset ;
 	// Debug statistics
 	public		$Statistics			=  array ( ) ;
+	// Max execution time settings. A positive value means "don't exceed that number of seconds".
+	// A negative value means "Don't exceed PHP setting max_execution_time - that number of seconds". If the result
+	// is negative, then the default will be "max_execution_time - 1".
+	// For those limits to be enforced, you need to specify either the PDFOPT_ENFORCE_EXECUTION_TIME or
+	// PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME options, or both
+	public		$MaxExecutionTime		=  -1 ;
+	public static	$MaxGlobalExecutionTime		=  -1 ;
+	
+	// Internal variables used when the PDFOPT_ENFORCE_* options are specified
+	private static	$PhpMaxExecutionTime ;
+	private static	$GlobalExecutionStartTime ;
+	private static	$AllowedGlobalExecutionTime ;
+	private		$ExecutionStartTime ;
+	private		$AllowedExecutionTime ;
 
 	// Font mappings
 	protected 	$FontTable			=  false ;
@@ -931,6 +985,23 @@ class  PdfToText 	extends PdfObjectBase
 			// The string that contains all the Rtl character prefixes in UTF-8 - An optimization used by the __rtl_process() method
 			self::$RtlCharacterPrefixes	=  implode ( '', array_keys ( self::$RtlCharacterPrefixLengths ) ) ;
 
+			// Global execution time limit
+			self::$PhpMaxExecutionTime	=  ( integer ) ini_get ( 'max_execution_time' ) ;
+
+			if  ( ! self::$PhpMaxExecutionTime )					// Paranoia : default max script execution time to 120 seconds
+				self::$PhpMaxExecutionTime	=  120 ;
+
+			self::$GlobalExecutionStartTime		=  microtime ( true ) ;		// Set the start of the first execution
+
+			if  ( self::$MaxGlobalExecutionTime  >  0 )
+				self::$AllowedGlobalExecutionTime	=  self::$MaxGlobalExecutionTime ;
+			else
+				self::$AllowedGlobalExecutionTime	=  self::$PhpMaxExecutionTime + self::$MaxGlobalExecutionTime ;
+
+			// Adjust in case of inconsistent values
+			if  ( self::$AllowedGlobalExecutionTime  <  0  ||  self::$AllowedGlobalExecutionTime  >  self::$PhpMaxExecutionTime )
+				self::$AllowedGlobalExecutionTime	=  self::$PhpMaxExecutionTime - 1 ;
+
 			self::$StaticInitialized	=  true ;
 		    }
 
@@ -983,7 +1054,7 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Check if the file exists
 		if  ( ! file_exists ( $filename ) )
-			error ( new  PdfToTextException ( "File \"$filename\" does not exist." ) ) ;
+			error ( new  PdfToTextDecodingException ( "File \"$filename\" does not exist." ) ) ;
 
 		// Load its contents
 		$contents 	=  file_get_contents ( $filename, FILE_BINARY ) ;
@@ -992,7 +1063,7 @@ class  PdfToText 	extends PdfObjectBase
 		$start_offset	=  strpos ( $contents, '%PDF' ) ;
 
 		if  ( $start_offset  ===  false )		// Not a pdf document !
-			error ( new PdfToTextException ( "File \"$filename\" is not a valid PDF file." ) ) ;
+			error ( new PdfToTextDecodingException ( "File \"$filename\" is not a valid PDF file." ) ) ;
 		else						// May be a PDF document
 		   {
 			$this -> DocumentStartOffset	=  $start_offset ;
@@ -1004,7 +1075,7 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Check that this is a PDF file with a valid version number
 		if  ( ! preg_match ( '/^ %PDF- (?P<version> \d+ (\. \d+)*) /ix', $contents, $match ) )
-			error ( new PdfToTextException ( "File \"$filename\" is not a valid PDF file." ) ) ;
+			error ( new PdfToTextDecodingException ( "File \"$filename\" is not a valid PDF file." ) ) ;
 
 		$this -> PdfVersion 		=  $match [ 'version' ] ;
 
@@ -1055,6 +1126,18 @@ class  PdfToText 	extends PdfObjectBase
 			'OptimizedTextSize'		=>  0				// Optimized text size, with useless instructions removed
 		    ) ;
 
+		// Per-instance execution time limit
+		$this -> ExecutionStartTime		=  microtime ( true ) ;
+
+		if  ( $this -> MaxExecutionTime  >  0 )
+			$this -> AllowedExecutionTime		=  $this -> MaxExecutionTime ;
+		else
+			$this -> AllowedExecutionTime		=  self::$PhpMaxExecutionTime + $this -> MaxExecutionTime ;
+
+		// Adjust in case of inconsistent values
+		if  ( $this -> AllowedExecutionTime  <  0  ||  $this -> AllowedExecutionTime  >  self::$PhpMaxExecutionTime )
+			$this -> AllowedExecutionTime		=  self::$PhpMaxExecutionTime - 1 ;
+
 		// Systematically set the DECODE_IMAGE_DATA flag if the AUTOSAVE_IMAGES flag has been specified
 		if  ( $this -> Options  &  self::PDFOPT_AUTOSAVE_IMAGES )
 			$this -> Options	|=  self::PDFOPT_DECODE_IMAGE_DATA ;
@@ -1082,28 +1165,28 @@ class  PdfToText 	extends PdfObjectBase
 					return ( false ) ;
 
 				case  PREG_INTERNAL_ERROR :
-					error ( new PdfToTextException ( "PDF object extraction : the preg_match_all() function encountered an internal error." ) ) ;
+					error ( new PdfToTextDecodingException ( "PDF object extraction : the preg_match_all() function encountered an internal error." ) ) ;
 
 				case  PREG_BACKTRACK_LIMIT_ERROR :
-					error ( new PdfToTextException ( "PDF object extraction : backtrack limit reached (you may have to modify the pcre.backtrack_limit " .
+					error ( new PdfToTextDecodingException ( "PDF object extraction : backtrack limit reached (you may have to modify the pcre.backtrack_limit " .
 							"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.backtrack_limit' ) . ")." ) ) ;
 
 				case  PREG_JIT_STACKLIMIT_ERROR :
-					error ( new PdfToTextException ( "PDF object extraction : JIT stack limit reached (you may disable this feature by setting the pcre.jit " .
+					error ( new PdfToTextDecodingException ( "PDF object extraction : JIT stack limit reached (you may disable this feature by setting the pcre.jit " .
 							"setting of your PHP.ini file to 0)." ) ) ;
 
 				case  PREG_RECURSION_LIMIT_ERROR :
-					error ( new PdfToTextException ( "PDF object extraction : recursion limit reached (you may have to modify the pcre.recursion_limit " .
+					error ( new PdfToTextDecodingException ( "PDF object extraction : recursion limit reached (you may have to modify the pcre.recursion_limit " .
 							"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.recursion_limit' ) . ")." ) ) ;
 
 				case  PREG_BAD_UTF8_ERROR :
-					error ( new PdfToTextException ( "PDF object extraction : bad UTF8 character encountered." ) ) ;
+					error ( new PdfToTextDecodingException ( "PDF object extraction : bad UTF8 character encountered." ) ) ;
 
 				case PREG_BAD_UTF8_OFFSET_ERROR :
-					error ( new PdfToTextException ( "PDF object extraction : the specified offset does not start at the beginning of a valid UTF8 codepoint." ) ) ;
+					error ( new PdfToTextDecodingException ( "PDF object extraction : the specified offset does not start at the beginning of a valid UTF8 codepoint." ) ) ;
 
 				default :
-					error ( new PdfToTextException ( "PDF object extraction : unkown PREG error #$preg_error" ) ) ;
+					error ( new PdfToTextDecodingException ( "PDF object extraction : unkown PREG error #$preg_error" ) ) ;
 
 			    }
 		    }
@@ -1670,7 +1753,8 @@ class  PdfToText 	extends PdfObjectBase
 		     }
 
 
-		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
+		if  ( $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA  &&
+			( ! $this -> MaxExtractedImages  ||  $this -> ImageCount  <  $this -> MaxExtractedImages ) )
 		   {
 			$image	=  $this -> DecodeImage ( $object_id, $stream_data, $type, $object_data, $this -> Options  &  self::PDFOPT_AUTOSAVE_IMAGES ) ;
 
@@ -1743,11 +1827,11 @@ class  PdfToText 	extends PdfObjectBase
 						if  ( $decoded_stream_data  ===  false )
 						   {
 							if  ( self::$DEBUG  >  1 )
-								warning ( new PdfToTextException ( "Unable to decrypt object contents.", $object_id ) ) ;
+								warning ( new PdfToTextDecodingException ( "Unable to decrypt object contents.", $object_id ) ) ;
 						    }
 					    }
 					else if  ( self::$DEBUG  >  1 )
-						error ( new PdfToTextException ( "Invalid gzip data.", $object_id ) ) ;
+						error ( new PdfToTextDecodingException ( "Invalid gzip data.", $object_id ) ) ;
 				    }
 
 		   		break ;
@@ -1758,6 +1842,12 @@ class  PdfToText 	extends PdfObjectBase
 
 			case 	self::PDF_ASCII85_ENCODING :
 				$decoded_stream_data 	=  $this -> __decode_ascii_85 ( $stream_data ) ;
+
+				// Dumbly check if this could not be gzipped data after decoding (normally, the object flags should also specify
+				// the /FlateDecode flag) 
+				if  ( $decoded_stream_data  !==  false  &&  ( $result = @gzuncompress ( $decoded_stream_data ) )  !==  false )
+					$decoded_stream_data  =  $result ;
+
 				break ;
 
 			case	self::PDF_TEXT_ENCODING :
@@ -1831,69 +1921,74 @@ class  PdfToText 	extends PdfObjectBase
 
 	// __decode_ascii_85 -
 	//	Decoder for /Ascii85Decode streams.
-	private function  __decode_ascii_85 ( $input )
-	    {
-	    	$output 	=  "" ;
-	    	$is_comment 	=  false ;
-	    	$ords 		=  array ( ) ;
+	private function  __decode_ascii_85 ( $data )
+	   {
+		// Ordinal value of the first character used in Ascii85 encoding
+		static	$first_ord	=  33 ;
+		// "A 'z' in the input data means "sequence of 4 nuls"
+		static	$z_exception	=  "\0\0\0\0" ;
+		// Powers of 85, from 4 to 0
+		static	$exp85		=  array ( 52200625, 614125, 7225, 85, 1 ) ;
 
-	    	for  ( $i = 0, $state = 0  ; $i  <  strlen ( $input )  &&  $input [ $i ]  !=  '~'  ; $i ++ )
-	    	   {
-	    		$c 	=  $input [ $i ] ;
+		// Ignore empty data
+		if  ( $data  ===  '' )
+			return ( false ) ;
 
-	    		if ( $is_comment )
-	    		   {
-	    			if  ( $c  ==  '\r'  ||  $c  ==  '\n' )
-	    				$is_comment 	=  false ;
+		$data_length	=  strlen ( $data ) ;
+		$ords		=  array ( ) ;
+		$ord_count	=  0 ;
+		$result		=  '' ;
 
-	    			continue ;
-	    		    }
+		// Paranoia : Ascii85 data may start with '<~' (but it always end with '~>'). Anyway, we must start past this construct if present
+		if  ( $data [0]  ==  '<'  &&  $data [1]  ==  '~' )
+			$start	=  2 ;
+		else
+			$start	=  0 ;
 
-	    		if  ( $c  ==  '\0'  ||  $c  ==  '\t'  ||  $c  ==  '\r'  ||  $c  ==  '\f'  ||  $c  ==  '\n'  ||  $c  ==  ' ' )
-	    			continue ;
+		// Loop through nput characters
+		for  ( $i = $start ; $i  <  $data_length  &&  $data [$i]  !=  '~' ; $i ++ )
+		   {
+			$ch	=  $data [$i] ;
 
-    			if  ( $c  ==  '%' )
-    			   {
-    				$is_comment 	=  true ;
-    				continue ;
-    			    }
+			// Most common case : current character is in the range of the Ascii85 encoding ('!'..'u')
+			if  ( $ch  >=  '!'  &&  $ch  <=  'u' )
+				$ords [ $ord_count ++ ]		=  ord ( $ch ) - $first_ord ;
+			// 'z' is replaced with a sequence of null bytes
+			else if  ( $ch  ==  'z'  &&  ! $ord_count )
+				$result		.=  $z_exception ;
+			// Spaces are ignored
+			else if  ( $ch  !==  "\0"  &&  $ch  !==  "\t"  &&  $ch  !==  ' '  &&  $ch  !==  "\r"  &&  $ch  !==  "\n"  &&  $ch  !==  "\f" )
+				continue ;
+			// Other characters : corrupted data...
+			else
+				return ( false ) ;
 
-    			if  ( $c  ==  'z'  &&  $state  ===  0 )
-    			   {
-    				$output 	.= str_repeat ( chr ( 0 ), 4 ) ;
-    				continue ;
-    			    }
+			// We have collected 5 characters in base 85 : convert their 32-bits value to base 2 (3 characters)
+			if  ( $ord_count  ==  5 )
+			   {
+				$ord_count	=  0 ;
 
-    			if  ( $c  <  '!'  ||  $c  >  'u' )
-    				return ( '' ) ;
+    				for  ( $sum = 0, $j = 0  ; $j  <  5  ; $j ++ )
+    					$sum 	=  ( $sum * 85 ) + $ords [ $j ] ;
 
-    			$code = ord ( $input [ $i ] ) & 0xff ;
-    			$ords [ $state++  ] = $code - ord ( '!' ) ;
+    				for ( $j = 3  ; $j  >=  0  ; $j -- )
+    					$result 	.=  chr ( $sum >> ( $j * 8 ) ) ;
+			    }
+		    }
 
-    			if  ( $state  ==  5 )
-    			   {
-    				$state 	=  0 ;
-
-    				for  ( $sum = 0, $j = 0  ; $j < 5  ; $j++ )
-    					$sum 	=  $sum * 85 + $ords [ $j ] ;
-
-    				for ( $j = 3  ; $j >= 0  ; $j-- )
-    					$output 	.=  chr ( $sum >> ( $j * 8 ) ) ;
-    			    }
-	    	    }
-
-	    	if  ( $state === 1 )
-	    		return ( '' ) ;
-    		elseif  ( $state > 1 )
+		// A last processing for the potential remaining bytes
+		// Notes : this situation has never been tested
+		if  ( $ord_count )
     		   {
-    			for  ( $i = 0, $sum = 0  ; $i  <  $state  ; $i++ )
-    				$sum 	+= ( $ords [ $i ] + ( $i == $state - 1 ) ) * pow ( 85, 4 - $i ) ;
+    			for  ( $i = 0, $sum = 0  ; $i  <  $ord_count  ; $i++ )
+    				$sum 	+= ( $ords [ $i ] + ( $i == $ord_count - 1 ) ) * $exp85 [$i] ;
 
-    			for  ( $i = 0  ; $i  <  $state - 1  ; $i++ )
-    				$output 	.=  chr ( $sum >> ( ( 3 - $i ) * 8 ) ) ;
+    			for  ( $i = 0  ; $i  <  $ord_count - 1  ; $i++ )
+    				$result 	.=  chr ( $sum >> ( ( 3 - $i ) * 8 ) ) ;
     		    }
 
-    		return ( $output ) ;
+		// All done, return
+		return ( $result ) ;
 	    }
 
 
@@ -2015,7 +2110,7 @@ class  PdfToText 	extends PdfObjectBase
 		else
 		   {
 			if  ( self::$DEBUG  >  1 )
-				error ( new PdfToTextException ( "Found object stream without gzipped data", $object_id ) ) ;
+				error ( new PdfToTextDecodingException ( "Found object stream without gzipped data", $object_id ) ) ;
 
 			return ( false ) ;
 		    }
@@ -2029,7 +2124,7 @@ class  PdfToText 	extends PdfObjectBase
 		if  ( ! preg_match ( '/^ \s* (?P<series> (\d+ \s* )+ )/x', $decoded_data, $series_match ) )
 		   {
 			if  ( self::$DEBUG  >  1 )
-				error ( new PdfToTextException ( "Object stream does not start with integer object id/offset pairs.", $object_id ) ) ;
+				error ( new PdfToTextDecodingException ( "Object stream does not start with integer object id/offset pairs.", $object_id ) ) ;
 
 			return ( false ) ;
 		    }
@@ -2042,7 +2137,7 @@ class  PdfToText 	extends PdfObjectBase
 		if  ( count ( $series ) % 2 )
 		   {
 			if  ( self::$DEBUG  >  1 )
-				error ( new PdfToTextException ( "Object stream should start with an even number of integer values.", $object_id ) ) ;
+				error ( new PdfToTextDecodingException ( "Object stream should start with an even number of integer values.", $object_id ) ) ;
 
 			return ( false ) ;
 		    }
@@ -2279,9 +2374,36 @@ class  PdfToText 	extends PdfObjectBase
 		// A flag that tells whether the Separator and BlockSeparator properties are identical
 		$same_separators		=  ( $this -> Separator  ==  $this -> BlockSeparator ) ;
 
+		// Instruction count (used for handling execution timeouts)
+		$instruction_count		=  0 ;
+
 		// Loop through instructions
 		while  ( ( $instruction =  $this -> __next_instruction ( $page_number, $data, $data_length, $data_index, $current_template ) )  !==  false )
 		   {
+			$instruction_count ++ ;
+
+			// Timeout handling - don't test for every instruction processed
+			if  ( ! ( $instruction_count % 100 ) )
+			   {
+				// Global timeout handling
+				if  ( $this -> Options  &  self::PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME )
+				   {
+					$now	=  microtime ( true ) ;
+
+					if  ( $now - self::$GlobalExecutionStartTime  >  self::$MaxGlobalExecutionTime )
+						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", true, self::$PhpMaxExecutionTime, self::$MaxGlobalExecutionTime ) ) ;
+				    }
+
+				// Per-instance timeout handling
+				if  ( $this -> Options  &  self::PDFOPT_ENFORCE_EXECUTION_TIME )
+				   {
+					$now	=  microtime ( true ) ;
+
+					if  ( $now - $this -> ExecutionStartTime  >  $this -> MaxExecutionTime )
+						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", false, self::$PhpMaxExecutionTime, $this -> MaxExecutionTime ) ) ;
+				    }
+			    }
+
 			// Character position after the current instruction
 			$data_index 	=  $instruction [ 'next' ] ;
 
@@ -2386,10 +2508,14 @@ class  PdfToText 	extends PdfObjectBase
 											$ch1	=  $this -> __process_escaped_character ( $text [$i] ) ;
 										else
 										   {
-											$oct	=  '' ;
+											$oct		=  '' ;
+											$digit_count	=  0 ;
 
-											while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+											while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7'  &&  $digit_count  <  3 )
+											   {
 												$oct	.=  $text [$i ++] ;
+												$digit_count ++ ;
+											    }
 
 											$ch1	=  chr ( octdec ( $oct ) ) ;
 											$i -- ;
@@ -2408,10 +2534,14 @@ class  PdfToText 	extends PdfObjectBase
 											$ch2	=  $this -> __process_escaped_character ( $text [$i] ) ;
 										else
 										   {
-											$oct	=  '' ;
+											$oct		=  '' ;
+											$digit_count	=  0 ;
 
-											while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+											while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7'  &&  $digit_count  <  3 )
+											   {
 												$oct	.=  $text [$i ++] ;
+												$digit_count ++ ;
+											    }
 
 											$ch2	=  chr ( octdec ( $oct ) ) ;
 											$i -- ;
@@ -3126,7 +3256,7 @@ class  PdfToText 	extends PdfObjectBase
 
 			default :
 				if  ( self::$DEBUG  >  1 )
-					error ( new PdfToTextException ( "Unhandled encryption mode '{$encryption_data [ 'mode' ]}'", $encrypt_object_id ) ) ;
+					error ( new PdfToTextDecodingException ( "Unhandled encryption mode '{$encryption_data [ 'mode' ]}'", $encrypt_object_id ) ) ;
 				
 		    }
 
@@ -4568,10 +4698,10 @@ abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
 
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  offsetSet ( $offset, $value )
-	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
+	   { error ( new PdfToTextDecodingException ( "Unsupported operation." ) ) ; }
 
 	public function  offsetUnset ( $offset )
-	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
+	   { error ( new PdfToTextDecodingException ( "Unsupported operation." ) ) ; }
     }
 
 
@@ -5272,7 +5402,7 @@ abstract class  PdfTexterAdobeMap	extends  PdfTexterCharacterMap
 		$this -> Map		=  $map ;
 
 		if  ( ! isset ( $map [ $font_variant ] ) )
-			error ( new  PdfToTextException ( "Undefined font variant #$font_variant." ) ) ;
+			error ( new  PdfToTextDecodingException ( "Undefined font variant #$font_variant." ) ) ;
 	    }
 
 
@@ -5710,7 +5840,7 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
 			if  ( ! file_exists ( $file ) )
 			   {
 				if  ( PdfToText::$DEBUG )
-					warning ( new PdfToTextException ( "Could not find CID table \"$map_name\" in directory \"" . PdfToText::$CIDTablesDirectory . "\"." ) ) ;
+					warning ( new PdfToTextDecodingException ( "Could not find CID table \"$map_name\" in directory \"" . PdfToText::$CIDTablesDirectory . "\"." ) ) ;
 			    }
 			else
 				require ( $file ) ;
@@ -6601,7 +6731,7 @@ abstract class  PdfImage			extends  PdfObjectBase
 			if  ( $this -> NoResourceCreated  &&  $image_type  ==  IMG_JPEG )
 				file_put_contents ( $output_file, $this -> ImageData ) ;
 			else
-				warning ( new PdfToTextException ( "No image resource allocated." ) ) ;
+				warning ( new PdfToTextDecodingException ( "No image resource allocated." ) ) ;
 
 			return ;
 		    }
@@ -6613,41 +6743,41 @@ abstract class  PdfImage			extends  PdfObjectBase
 			case	IMG_JPEG :
 			case	IMG_JPG :
 				if  ( ! ( $image_types & IMG_JPEG )  &&  ! ( $image_types & IMG_JPG ) )
-					error ( new PdfToTextException ( "Your current PHP version does not support JPG images." ) ) ;
+					error ( new PdfToTextDecodingException ( "Your current PHP version does not support JPG images." ) ) ;
 
 				imagejpeg ( $this -> ImageResource, $output_file, 100 ) ;
 				break ;
 
 			case	IMG_GIF :
 				if  ( ! ( $image_types & IMG_GIF ) )
-					error ( new PdfToTextException ( "Your current PHP version does not support GIF images." ) ) ;
+					error ( new PdfToTextDecodingException ( "Your current PHP version does not support GIF images." ) ) ;
 
 				imagegif ( $this -> ImageResource, $output_file ) ;
 				break ;
 
 			case	IMG_PNG :
 				if  ( ! ( $image_types & IMG_PNG ) )
-					error ( new PdfToTextException ( "Your current PHP version does not support PNG images." ) ) ;
+					error ( new PdfToTextDecodingException ( "Your current PHP version does not support PNG images." ) ) ;
 
 				imagepng ( $this -> ImageResource, $output_file, 0 ) ;
 				break ;
 				
 			case	IMG_WBMP :
 				if  ( ! ( $image_types & IMG_WBMP ) )
-					error ( new PdfToTextException ( "Your current PHP version does not support WBMP images." ) ) ;
+					error ( new PdfToTextDecodingException ( "Your current PHP version does not support WBMP images." ) ) ;
 
 				imagewbmp ( $this -> ImageResource, $output_file ) ;
 				break ;
 				
 			case	IMG_XPM :
 				if  ( ! ( $image_types & IMG_XPM ) )
-					error ( new PdfToTextException ( "Your current PHP version does not support XPM images." ) ) ;
+					error ( new PdfToTextDecodingException ( "Your current PHP version does not support XPM images." ) ) ;
 
 				imagexbm ( $this -> ImageResource, $output_file ) ;
 				break ;
 
 			default :
-				error ( new PdfToTextException ( "Unknown image type #$image_type." ) ) ;
+				error ( new PdfToTextDecodingException ( "Unknown image type #$image_type." ) ) ;
 		    }
 	    }
 
@@ -6774,11 +6904,11 @@ class  PdfInlinedImage		extends  PdfImage
 			if  ( isset ( self::$Decoders [ $color_scheme ] [ $bits_per_component ] ) )
 				$this -> DecodingFunction	=  self::$Decoders [ $color_scheme ] [ $bits_per_component ] ;
 			else
-				error ( new PdfToTextException ( "No decoding function has been implemented for image objects having the " .
+				error ( new PdfToTextDecodingException ( "No decoding function has been implemented for image objects having the " .
 						self::$DecoderNames [ $color_scheme ] . " color scheme with $bits_per_component bits per color component." ) ) ;
 		    }
 		else
-			error ( new PdfToTextException ( "Unknown color scheme $color_scheme." ) ) ;
+			error ( new PdfToTextDecodingException ( "Unknown color scheme $color_scheme." ) ) ;
 
 		parent::__construct ( $image_data ) ;
 	    }
@@ -6876,7 +7006,7 @@ class  PdfInlinedImage		extends  PdfImage
 				break ;
 
 			default :
-				warning ( new PdfToTextException ( "Unsupported color space \"$color_space_name\"." ) ) ;
+				warning ( new PdfToTextDecodingException ( "Unsupported color space \"$color_space_name\"." ) ) ;
 				return ( false ) ;
 		    }
 
@@ -6887,7 +7017,7 @@ class  PdfInlinedImage		extends  PdfImage
 				break ;
 
 			default :
-				warning ( new PdfToTextException ( "Unsupported bits per component : $bits_per_component." ) ) ;
+				warning ( new PdfToTextDecodingException ( "Unsupported bits per component : $bits_per_component." ) ) ;
 				return ( false ) ;
 		    }
 
@@ -7094,7 +7224,7 @@ class  PdfFaxImage		extends  PdfImage
 
 	protected function  CreateImageResource ( $image_data )
 	   {
-		warning ( new PdfToTextException ( "Decoding of CCITT Fax image format is not yet implemented." ) ) ;
+		warning ( new PdfToTextDecodingException ( "Decoding of CCITT Fax image format is not yet implemented." ) ) ;
 		//return ( imagecreatefromstring ( $image_data ) ) ;
 	    }
     }
