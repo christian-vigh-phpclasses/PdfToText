@@ -62,7 +62,21 @@ Here is a list about known issues for the **PdfToText** class ;  I'm working on 
 
 - Unwanted line breaks may occur within text lines. This is due to the fact that the pdf file contains drawing instructions that use relative positioning. This is especially true for file created with generators such as **PdfCreator**. However, some provisions have been made to try to track put text with roughly the same y-coordinates onto the same line
 - Encrypted PDF files are not supported 
-- Protected regions are not supported. This can pause a problem in text rendering if a referenced font declaration is located in a protected region, because the **PdfToText** class will not be aware that such a font exists, and therefore won't be able to perform character translations because it could not associate a character map with it (by "protected regions", I mean "Binary PDF object data that I really don't know how to interpret"). However, you can still use tools such as *PdfCreator*, *PrimoPdf* or *PDF Pro* to print the PDF file, then run  the **PdfToText** class to extract textual contents, which will this time be fully accessible.
+
+# A NOTE FOR WINDOWS USERS #
+
+An Apache server on Linux platforms allocates a default stack size of 8Mb for its threads. This value is set to 1Mb on Windows platforms.
+
+However, some regular expressions used by the **PdfToText** class may cause the PHP PCRE extension to require a little bit more than 1Mb of stack space when processing certain PDF files.
+
+Such a situation will cause your Windows Apache server to crash and your browser to display a message such as : *Connection reset*. This behavior affect several products such as EasyPHP, XAMPP or Wamp.
+
+To solve this issue, you will have to enable the **mpm** module in your *httpd.conf* file and define a new stack size, as in the following example, given for a Wamp server :
+
+		Include conf/extra/httpd-mpm.conf
+		ThreadStackSize 8388608
+  
+
 
 # TESTING #
 
@@ -70,7 +84,7 @@ I have tested this class against dozens of documents from various origins, and t
 
 I also compared the output of the **PdfToText** class with that of *Acrobat Reader*, when you choose the *Save as...Text* option. In many situations, the class performs better in positioning the final text than *Acrobat Reader* does.  
 
-However, all of that will not guarantee that it will work in every situation ; so, if you find something weird or not functioning properly using the **PdfToText** class, feel free to contact me on this class' blog, and send me a sample PDF file at the following email address :
+However, all of that will not guarantee that it will work in every situation ; so, if you find something weird or not functioning properly using the **PdfToText** class, feel free to contact me on this class' blog, and/or send me a sample PDF file at the following email address :
 
 		christian.vigh@wuthering-bytes.com
 
@@ -80,7 +94,7 @@ This class can also be found here :
 
 [http://www.phpclasses.org/package/9732-PHP-Extract-text-contents-from-PDF-files.html](http://www.phpclasses.org/package/9732-PHP-Extract-text-contents-from-PDF-files.html "http://www.phpclasses.org/package/9732-PHP-Extract-text-contents-from-PDF-files.html")
   
-and here :
+and here, where you will also find a FAQ section and be able to upload your PDF file samples for live testing :
 
 [http://www.pdftotext.eu](http://www.pdftotext.eu "http://www.pdftotext.eu")
 
@@ -102,7 +116,7 @@ See the *Options* property for a description of the *$options* parameter.
 
 The *$user\_password* and *$owner\_password* parameters specify the user/owner password to be used for decrypting a password-protected file (note that this class is not a password cracker !).
 
-In the current version (1.2.43), decryption of password-protected files is not yet supported.
+In the current version, decryption of password-protected files is not yet supported.
 
 ### Load ( $filename, $user\_password = false, $owner\_password = false ) ###
 
@@ -367,6 +381,28 @@ Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is e
 
 This property is set to *true* if the Pdf file is password-protected.
 
+### MaxExecutionTime ###
+
+Specifies a maximum execution time in seconds for processing a single file. If this limit is reached, a **PdfToTextTimeoutException** exception will be thrown before PHP terminates the script. This allows the script to gracefully handle the error instead of PHP itself.
+
+Positive values are indicated in seconds. Negative values are subtracted from the *max\_execution\_time* PHP setting to compute the maximum execution time allowed.
+
+If the computed timeout value is out of range, the retained execution time will be *max\_execution\_time* minus one second.
+
+The value of this property is taken into account only if the *PDFOPT\_ENFORCE\_EXECUTION\_TIME* option has been specified.
+
+### MaxExtractedImages ###
+
+Maximum number of images to be extracted. The default is the value 0, meaning that all images will be selected for output if the *PDFOPT\_GET\_IMAGE\_DATA* or *PDFOPT\_AUTOSAVE\_IMAGES* option is set.
+
+
+### MaxGlobalExecutionTime ###
+
+This static property is the same as **MaxExecutionTime**, except that it works globally. If you have to process *x* files, then it will ensure that the global execution time does not exceed the value of this property.
+
+The value of this property is taken into account only if the *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* option has been specified.
+ 
+
 ### MaxSelectedPages ###
 
 Maximum number of pages to be selected. The default is the value 0, meaning that all pages will be selected for output.
@@ -415,6 +451,8 @@ will be rendered as :
 		words that can split
 		over several lines.
 
+- *PDFOPT\_ENFORCE\_EXECUTION\_TIME* : when specified, the **MaxExecutionTime** property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process a single file may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
+- *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### OwnerEncryptionKey ###
@@ -507,6 +545,8 @@ The PDFOPT\_\* constants are a set of flags which can be combined when either in
 		text using hyphenated
 		words that can split
 		over several lines.
+- *PDFOPT\_ENFORCE\_EXECUTION\_TIME* : when specified, the **MaxExecutionTime** property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process a single file may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
+- *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### PDFPERM\_\* ###
@@ -525,3 +565,22 @@ A set of flags that indicates which operations are authorized on the PDF file. A
 ### VERSION ###
 
 Current version of the **PdfToText** class, as a string containing a major, minor and release version numbers. For example : "1.2.19".
+
+## Exceptions ##
+
+The **PdfToText** class can throw any of the following exceptions :
+
+### PdfToTextException ###
+
+This is the base class for all exceptions thrown by the **PdfToText** class.
+
+### PdfToTextDecodingException ###
+
+This exception is thrown if an error occurs when decoding a PDF object. Normally, most of these exceptions are thrown only if debug mode is activated.
+
+### PdfToTextTimeoutException ###
+
+This exception is thrown only if one of the following conditions occur :
+
+- The *PDFOPT\_ENFORCE\_EXECUTION\_TIME* option has been set, and processing one file took more time than the number of seconds computed from	the **$MaxExecutionTime** property
+- The *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* option has been set, and processing all the files your script had to process took more than the number of seconds computed from the **$MaxGlobalExecutionTime** static property
