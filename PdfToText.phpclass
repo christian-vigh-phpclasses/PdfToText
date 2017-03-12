@@ -24,19 +24,14 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.11]	[Date : 2017/03/11]     [Author : CV]
-	. Corrected decoding of Ascii85 data (the original version from the 'unknown developer' did consider
-	  that the '%' character was the start of a comment, which is not the case in Ascii85 encoded data)
-	. Handle the case where data using Ascii85 encoding contains in turn gzipped data
-	. Optimized the __decode_ascii85() method
-	. Characters using octal escape sequences were not correctly interpreted when followed by digits after
-	  the 3rd one of the escape sequence. This sometimes caused incorrect character decoding.
-	. Added timeout handling features ; when the PDFOPT_ENFORCE_EXECUTION_TIME or 
-	  PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME are specified, the $MaxExecutionTime property and 
-	  $MaxGlobalExecutionTime static property (respectively) will be used to prevent exceeding the PHP setting
-	  'max_execution_time'. If such a situation happens, a PdfToTextTimeoutException exception will be
-	  thrown.
-	. Added the $MaxExtractedImages property, to limit the number of extracted images.
+    [Version : 1.4.12]	[Date : 2017/03/12]     [Author : CV]
+	. Added the LoadFromString() method, which allows to process PDF contents directly from a string.
+	. Changed the Load() method to be able to handle remote urls.
+	. Fixed a bug in the __next_token() method which caused contents following a regular square bracket
+	  character to be wrongly interpreted.
+	. Integrated a modification resolving the interpretation of escaped octal sequences, that was missed
+	  in version 1.4.11.
+	. Fixed : The new PdfToTextDecodingException class did not report the supplied error message.
 	
     (...)
 
@@ -57,6 +52,7 @@ class  PdfToTextException			extends  Exception
 	public static	$IsObject		=  false ;
     } ;
 
+
 class  PdfToTextDecodingException		extends  PdfToTextException 
    { 
 	public function  __construct ( $message, $object_id = false )
@@ -68,8 +64,10 @@ class  PdfToTextDecodingException		extends  PdfToTextException
 
 		$text	.=  " : $message" ;
 
+		parent::__construct ( $text ) ;
 	    }
     }
+
 
 class  PdfToTextTimeoutException		extends  PdfToTextException
    { 
@@ -580,7 +578,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.11" ;
+	const		VERSION					=  "1.4.12" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1033,32 +1031,65 @@ class  PdfToText 	extends PdfObjectBase
 	/*--------------------------------------------------------------------------------------------------------------
 
 	    NAME
-	        Load - Loads text contents from a PDF file.
+	        Load		- Loads text contents from a PDF file.
+		LoadFromString	- Loads PDF contents from a string.
 
 	    PROTOTYPE
-	        $pdf -> Load ( $filename ) ;
+	        $text	=  $pdf -> Load ( $filename, $user_password = false, $owner_password = false ) ;
+	        $text	=  $pdf -> LoadFromString ( $contents, $user_password = false, $owner_password = false ) ;
 
 	    DESCRIPTION
-	        Extracts text contents from the specified PDF file. Once processed, text contents will be available
-		through the "Text" property.
+	        The Load() method extracts text contents from the specified PDF file. Once processed, text contents will 
+		be available through the "Text" property.
+		The LoadFromString() method performs the same operation on PDF contents already loaded into memory.
 
 	    PARAMETERS
 	        $filename (string) -
 	                Optional PDF filename whose text contents are to be extracted.
 
-	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  Load ( $filename, $user_password = false, $owner_password = false )
-	   {
-		$memory_usage_start		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
-		$memory_peak_usage_start	=  ( self::$HasMemoryGetPeakUsage ) ?  memory_get_peak_usage ( true ) : 0 ;
+		$contents (string) -
+			String containing PDF contents.
 
-		// Check if the file exists
-		if  ( ! file_exists ( $filename ) )
+		$user_password (string) -
+			User password used for decrypting PDF contents.
+
+		$owner_password (string) -
+			Owner password.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	private		$__memory_peak_usage_start,
+			$__memory_usage_start ;
+
+	public function  Load  ( $filename, $user_password = false, $owner_password = false )
+	   {
+		$this -> __memory_usage_start		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
+		$this -> __memory_peak_usage_start	=  ( self::$HasMemoryGetPeakUsage ) ?  memory_get_peak_usage ( true ) : 0 ;
+
+		// Check if the file exists, but only if the file is on a local filesystem
+		if  ( ! preg_match ( '#^ [^:]+ ://#ix', $filename )  && ! file_exists ( $filename ) )
 			error ( new  PdfToTextDecodingException ( "File \"$filename\" does not exist." ) ) ;
 
 		// Load its contents
-		$contents 	=  file_get_contents ( $filename, FILE_BINARY ) ;
+		$contents 	=  @file_get_contents ( $filename, FILE_BINARY ) ;
 
+		if  ( $contents  ===  false ) 
+			error ( new  PdfToTextDecodingException ( "Unable to open \"$filename\"." ) ) ;
+
+		return ( $this -> __load ( $filename, $contents, $user_password, $owner_password ) ) ;		
+	    }
+
+
+	public function  LoadFromString ( $contents, $user_password = false, $owner_password = false )
+	   {
+		$this -> __memory_usage_start		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
+		$this -> __memory_peak_usage_start	=  ( self::$HasMemoryGetPeakUsage ) ?  memory_get_peak_usage ( true ) : 0 ;
+
+		return ( $this -> __load ( '', $contents, $user_password, $owner_password ) ) ;				
+	    }
+
+
+	private function  __load ( $filename, $contents, $user_password = false, $owner_password = false )
+	   {
 		// Search for the start of the document ("%PDF-x.y")
 		$start_offset	=  strpos ( $contents, '%PDF' ) ;
 
@@ -1448,8 +1479,11 @@ class  PdfToText 	extends PdfObjectBase
 		$memory_usage_end		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
 		$memory_peak_usage_end		=  ( self::$HasMemoryGetPeakUsage ) ?  memory_get_peak_usage ( true ) : 0 ;
 
-		$this -> MemoryUsage		=  $memory_usage_end      - $memory_usage_start ;
-		$this -> MemoryPeakUsage	=  $memory_peak_usage_end - $memory_peak_usage_start ;
+		$this -> MemoryUsage		=  $memory_usage_end      - $this -> __memory_usage_start ;
+		$this -> MemoryPeakUsage	=  $memory_peak_usage_end - $this -> __memory_peak_usage_start ;
+
+		// All done, return
+		return ( $this -> Text ) ;
 	    }
 
 
@@ -2609,7 +2643,7 @@ class  PdfToText 	extends PdfObjectBase
 										   {
 											$width		=  $current_font_map_width / 2 ;	// Convert to byte count
 											$subtext	=  substr ( $text, $i - 1 ) ;
-											$regex		=  "#^ (\\\\ [0-7]+){1,$width} #imsx" ;
+											$regex		=  "#^ (\\\\ [0-7]{3}){1,$width} #imsx" ;
 
 											$status		=  preg_match ( $regex, $subtext, $octal_matches ) ;
 
@@ -3007,7 +3041,7 @@ class  PdfToText 	extends PdfObjectBase
 		   	case 	"[" :
 		   		$pos 		=  $index + 1 ;
 		   		$parent 	=  0 ;
-		   		$angle 	=  0 ;
+		   		$angle 		=  0 ;
 		   		$result		=  $ch ;
 
 		   		while  ( $pos  <  $data_length )
@@ -3027,12 +3061,19 @@ class  PdfToText 	extends PdfObjectBase
 		   			   		break ;
 
 		   			   	case 	'<' :
-		   			   		$angle ++ ;
+							// Although the array notation can contain hex digits between angle brackets, we have to
+							// take care that we do not have an angle bracket between two parentheses such as :
+							// [ (<) ... ]
+							if  ( ! $parent )
+		   			   			$angle ++ ;
+
 		   			   		$result 	.=  $nch ;
 		   			   		break ;
 
 		   			   	case 	'>' :
-		   			   		$angle -- ;
+							if  ( ! $parent )
+		   			   			$angle -- ;
+
 		   			   		$result 	.=  $nch ;
 		   			   		break ;
 
