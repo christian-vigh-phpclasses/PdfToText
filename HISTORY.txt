@@ -1,3 +1,12 @@
+    [Version : 1.4.12]	[Date : 2017/03/12]     [Author : CV]
+	. Added the LoadFromString() method, which allows to process PDF contents directly from a string.
+	. Changed the Load() method to be able to handle remote urls.
+	. Fixed a bug in the __next_token() method which caused contents following a regular square bracket
+	  character to be wrongly interpreted.
+	. Integrated a modification resolving the interpretation of escaped octal sequences, that was missed
+	  in version 1.4.11.
+	. Fixed : The new PdfToTextDecodingException class did not report the supplied error message.
+
     [Version : 1.4.11]	[Date : 2017/03/11]     [Author : CV]
 	. Corrected decoding of Ascii85 data (the original version from the 'unknown developer' did consider
 	  that the '%' character was the start of a comment, which is not the case in Ascii85 encoded data)

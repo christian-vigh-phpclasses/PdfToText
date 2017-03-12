@@ -124,7 +124,20 @@ Loads the text contents of the specified filename.
 
 The *$user\_password* and *$owner\_password* parameters specify the user/owner password to be used for decrypting a password-protected file (note that this class is not a password cracker !).
 
-In the current version (1.2.43), decryption of password-protected files is not yet supported.
+In the current version, decryption of password-protected files is not yet supported.
+
+The method returns the decoded text contents, which are also available through the *Text* property.
+
+### LoadFromString ( $contents, $user\_password = false, $owner\_password = false ) ###
+
+Loads the text contents of the specified PDF contents.
+
+The *$user\_password* and *$owner\_password* parameters specify the user/owner password to be used for decrypting a password-protected file (note that this class is not a password cracker !).
+
+In the current version, decryption of password-protected files is not yet supported.
+
+The method returns the decoded text contents, which are also available through the *Text* property.
+
 
 ### GetPageFromOffset ( $offset ) ###
 
@@ -293,7 +306,8 @@ The string to be used for line breaks. The default is PHP\_EOL.
 
 ### Filename ###
 
-Name of the file whose text contents have been extracted.
+Name of the file whose text contents have been extracted. This value will be an empty string if the
+**LoadFromString()** method has been called instead of **Load()**.
 
 ### ID, ID2 ###
 
