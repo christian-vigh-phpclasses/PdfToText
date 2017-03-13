@@ -24,14 +24,14 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.12]	[Date : 2017/03/12]     [Author : CV]
-	. Added the LoadFromString() method, which allows to process PDF contents directly from a string.
-	. Changed the Load() method to be able to handle remote urls.
-	. Fixed a bug in the __next_token() method which caused contents following a regular square bracket
-	  character to be wrongly interpreted.
-	. Integrated a modification resolving the interpretation of escaped octal sequences, that was missed
-	  in version 1.4.11.
-	. Fixed : The new PdfToTextDecodingException class did not report the supplied error message.
+    [Version : 1.4.13]	[Date : 2017/03/13]     [Author : CV]
+	. Updated IDENTITY-H CID font mapping to add more characters.
+	. Handle the case where a character map states that it handles 2-bytes character codes (using the 
+	  begincoderange/endcoderange constructs) while the map itself only contains 1-byte character codes...
+	. Changed character maps that are secondary to a Unicode map to handle only the characters listed in
+	  the /Differences parameter.
+	. Updated the offical Adobe WinAnsi character map to include UTF8 codes which have no Windows
+	  equivalent (PdfTexterEncodingMap::$Encodings array).
 	
     (...)
 
@@ -578,7 +578,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.12" ;
+	const		VERSION					=  "1.4.13" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -2601,7 +2601,7 @@ class  PdfToText 	extends PdfObjectBase
 									// for the next quirk to happen...
 									if  ( $newchar  ==  '\\' )
 									   {
-										$ch	=  $this -> __process_escaped_character ( $text [ $i + 2 ] ) ;
+										$newchar		=  $this -> __process_escaped_character ( $text [ $i + 2 ] ) ;
 										$i ++ ;		// this time we processed 3 bytes, not 2
 									    }
 
@@ -4488,6 +4488,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			    }
 			else if  ( $font -> SecondaryCharacterMapId  ==  $cmap -> ObjectId )
 			   {
+				$cmap -> Secondary		=  true ;
 				$font -> SecondaryCharacterMap	=  $cmap ;
 				$status				=  true ;
 			    }
@@ -4819,6 +4820,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		preg_match ( '# begincodespacerange \s+ <\s* (?P<low> [0-9a-f]+) \s*> \s* <\s* (?P<high> [0-9a-f]+) \s*> \s*endcodespacerange #ix', $definitions, $match ) ;
 
 		$this -> HexCharWidth 	=  max ( strlen ( $match [ 'low' ] ), strlen ( $match [ 'high' ] ) ) ;
+		$max_found_char_width	=  0 ;
 
 		// Process beginbfchar/endbfchar constructs
 		if  ( preg_match_all ( '/ beginbfchar \s* (?P<chars> .*?) endbfchar /imsx', $definitions, $char_matches ) )
@@ -4841,7 +4843,11 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 				for  ( $i = 0, $item_count = count ( $item_matches [ 'item' ] ) ; $i  <  $item_count ; $i += 2 )
 				   {
 					$char		=  hexdec ( $item_matches [ 'item' ] [$i] ) ;
+					$char_width	=  strlen ( $item_matches [ 'item' ] [$i] ) ;
 					$map		=  explode ( ' ', preg_replace ( '/\s+/', ' ', $item_matches [ 'item' ] [ $i + 1 ] ) ) ;
+
+					if  ( $char_width  >  $max_found_char_width )
+						$max_found_char_width	=  $char_width ;
 
 					for  ( $j = 0, $map_count = count ( $map ) ; $j  <  $map_count ; $j ++ )
 					   {
@@ -4879,6 +4885,10 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 					$to			=  hexdec ( $range_match [ 'to'   ] [0] ) ;
 					$next_char		=  $range_match [ 'nextchar' ] [0] ;
 					$next_char_index	=  $range_match [ 'nextchar' ] [1] ;
+					$char_width		=  strlen ( $range_match [ 'from' ] [0] ) ;
+
+					if  ( $char_width  >  $max_found_char_width )
+						$max_found_char_width	=  $char_width ;
 
 					// Form 1) : catch the third hex value after <x> and <y>
 					if  ( $next_char  ==  '<' )
@@ -4942,6 +4952,14 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 			   {
 				usort ( $this -> RangeMap, array ( $this, '__rangemap_cmpfunc' ) ) ;
 			    }
+		    }
+
+		if ( $max_found_char_width  !=  $this -> HexCharWidth )
+		   {
+			if  ( PdfToText::$DEBUG )
+				warning ( "Character map #$object_id : specified code width ({$this -> HexCharWidth}) differs from actual width ($max_found_char_width)." ) ;
+
+			$this -> HexCharWidth	=  $max_found_char_width ;
 		    }
 	     }
 
@@ -5144,7 +5162,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		'divide' 		=>  array (    0, 0326, 0367, 0367 ),
 		'dollar' 		=>  array ( 0044, 0044, 0044, 0044 ),
 		'dotaccent' 		=>  array ( 0307, 0372,    0, 0033 ),
-		'dotlessi'		=>  array ( 0365, 0365,    0, 0232 ),
+		'dotlessi'		=>  array ( 0365, 0365, 0x131, 0232 ),
 		'e' 			=>  array ( 0145, 0145, 0145, 0145 ),
 		'eacute'		=>  array (    0, 0216, 0351, 0351 ),
 		'ecircumflex'		=>  array (    0, 0220, 0352, 0352 ),
@@ -5282,8 +5300,16 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 	// Encoding type (one of the PDF_*_ENCODING constants)
 	public 		$Encoding ;
+	// Indicates whether this character map is a secondary one used for Unicode maps ; this must be set at
+	// a higher level by the PdfTexterFont because at the time a character map is instantiated, we do not know
+	// yet whether it will be a primary (normal) map, or a map secondary to an existing Unicode map
+	public		$Secondary ;
 	// Differences array (a character substitution table to the standard encodings)
 	protected 	$Map 		=  array ( ) ;
+	// A secondary map for the Differences array, which only contains the differences ; this is used
+	// for Unicode fonts that also have an associated /Differences parameter, which should not include the
+	// whole standard Adobe character map but only the differences of encodings
+	protected	$SecondaryMap	=  array ( ) ;
 
 
    	// Constructor -
@@ -5351,7 +5377,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 			   	// Keyword (character name) exists in the encoding table
 				if  ( isset ( self::$Encodings [ $item ] ) )
 				   {
-					$this -> Map [ $index ] 	=  self::$Encodings [ $item ] [ $this -> Encoding ] ;
+					$this -> Map [ $index ] 		=  
+					$this -> SecondaryMap [ $index ]	=  self::$Encodings [ $item ] [ $this -> Encoding ] ;
 				    }
 				// Not defined ; check if this is the "/gxx" notation, where "xx" is a number
 				else if  ( preg_match ( '/g (?P<value> \d+)/x', $item, $match ) )
@@ -5364,7 +5391,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 					// This has to be carefully watched before revision
 					$value	+=  29 ;
 
-					$this -> Map [ $index ]		=  $value ;
+					$this -> Map [ $index ]			=  
+					$this -> SecondaryMap [ $index ]	=  $value ;
 				    }
 				// Some characters can be specified by the "/uni" prefix followed by a sequence of hex digits,
 				// which is not described by the PDF specifications. This sequence gives a Unicode code point.
@@ -5372,7 +5400,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 				   {
 					$value		=  hexdec ( $match [ 'value' ] ) ;
 
-					$this -> Map [ $index ]		=  ( integer ) $value ;
+					$this -> Map [ $index ]			=  
+					$this -> SecondaryMap [ $index ]	=  ( integer ) $value ;
 				    }
 				// Otherwise, put a quotation mark instead
 				else
@@ -5394,28 +5423,43 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 
 	public function  offsetExists ( $offset )
-	   { return ( isset ( $this -> Map [ $offset ] ) ) ; }
+	   { 
+		return ( ( ! $this -> Secondary ) ?  
+				isset ( $this -> Map [ $offset ] ) :
+				isset ( $this -> SecondaryMap [ $offset ] ) ) ; 
+	    }
 
 
 	public function  offsetGet ( $offset )
 	   {
-		if  ( isset ( $this -> Map [ $offset ] ) )
-			$ord		=  $this -> Map [ $offset ] ;
-		else
-			$ord		=  $offset ;
+		if  ( ! $this -> Secondary )
+		   {
+			if  ( isset ( $this -> Map [ $offset ] ) )
+				$ord		=  $this -> Map [ $offset ] ;
+			else
+				$ord		=  $offset ;
 
-		// Check for final character translations (concerns only a few number of characters)
-		if  ( $this -> Encoding  ==  self::PDF_WIN_ANSI_ENCODING  &&  isset ( PdfTexterAdobeWinAnsiMap::$WinAnsiCharacterMap [0] [ $ord ] ) )
-			$ord	=  PdfTexterAdobeWinAnsiMap::$WinAnsiCharacterMap [0] [ $ord ] ;
-		else if  ( $this -> Encoding  ==  self::PDF_MAC_ROMAN_ENCODING  &&  isset ( PdfTexterAdobeMacRomanMap::$MacRomanCharacterMap [0] [ $ord ] ) )
-			$ord	=  PdfTexterAdobeMacRomanMap::$MacRomanCharacterMap [0] [ $ord ] ;
-		// As far as I have been able to see, the values expressed by the /Differences tag were the only ones used within the
-		// Pdf document ; however, handle the case where some characters do not belong to the characters listed by /Differences,
-		// and use the official Adobe encoding maps when necessary
-		else if  ( isset ( self::$Encodings [ $ord ] [ $this -> Encoding ] ) )
-			$ord	=  self::$Encodings [ $ord ] [ $this -> Encoding ] ;
+			// Check for final character translations (concerns only a few number of characters)
+			if  ( $this -> Encoding  ==  self::PDF_WIN_ANSI_ENCODING  &&  isset ( PdfTexterAdobeWinAnsiMap::$WinAnsiCharacterMap [0] [ $ord ] ) )
+				$ord	=  PdfTexterAdobeWinAnsiMap::$WinAnsiCharacterMap [0] [ $ord ] ;
+			else if  ( $this -> Encoding  ==  self::PDF_MAC_ROMAN_ENCODING  &&  isset ( PdfTexterAdobeMacRomanMap::$MacRomanCharacterMap [0] [ $ord ] ) )
+				$ord	=  PdfTexterAdobeMacRomanMap::$MacRomanCharacterMap [0] [ $ord ] ;
+			// As far as I have been able to see, the values expressed by the /Differences tag were the only ones used within the
+			// Pdf document ; however, handle the case where some characters do not belong to the characters listed by /Differences,
+			// and use the official Adobe encoding maps when necessary
+			else if  ( isset ( self::$Encodings [ $ord ] [ $this -> Encoding ] ) )
+				$ord	=  self::$Encodings [ $ord ] [ $this -> Encoding ] ;
 		
-		return ( $this -> CodePointToUtf8 ( $ord ) ) ;
+			return ( $this -> CodePointToUtf8 ( $ord ) ) ;
+		    }
+		else if  ( isset ( $this -> SecondaryMap [ $offset ] ) )
+		   {
+			$ord		=   $this -> SecondaryMap [ $offset ] ;
+
+			return ( $this -> CodePointToUtf8 ( $ord ) ) ;
+		    }
+		else
+			return ( false ) ;
 	    }
     }
 
@@ -5884,9 +5928,11 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
 					warning ( new PdfToTextDecodingException ( "Could not find CID table \"$map_name\" in directory \"" . PdfToText::$CIDTablesDirectory . "\"." ) ) ;
 			    }
 			else
+			   {
 				require ( $file ) ;
 
-			self::$CachedMaps [ $map_name ]		=  array ( 'file' => $file, 'map' => $map ) ;
+				self::$CachedMaps [ $map_name ]		=  array ( 'file' => $file, 'map' => $map ) ;
+			    }
 		    }
 
 		$this -> MapFile	=  $file ;
