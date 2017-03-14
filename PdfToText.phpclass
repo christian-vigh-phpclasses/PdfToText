@@ -24,14 +24,9 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.13]	[Date : 2017/03/13]     [Author : CV]
-	. Updated IDENTITY-H CID font mapping to add more characters.
-	. Handle the case where a character map states that it handles 2-bytes character codes (using the 
-	  begincoderange/endcoderange constructs) while the map itself only contains 1-byte character codes...
-	. Changed character maps that are secondary to a Unicode map to handle only the characters listed in
-	  the /Differences parameter.
-	. Updated the offical Adobe WinAnsi character map to include UTF8 codes which have no Windows
-	  equivalent (PdfTexterEncodingMap::$Encodings array).
+    [Version : 1.4.14]	[Date : 2017/03/14]     [Author : CV]
+	. Fixed a regression in text decoding when compound text contained angle brackets and right square 
+	  brackets (originally fixed in 1.4.12, but regressed in 1.4.13). 
 	
     (...)
 
@@ -578,7 +573,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.13" ;
+	const		VERSION					=  "1.4.14" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -3084,7 +3079,7 @@ class  PdfToText 	extends PdfObjectBase
 		   			   	case 	']' :
 		   					$result 	.=  ']' ;
 
-		   					if  ( ! $parent  ||  ! $angle )
+		   					if  ( ! $parent  )
 		   						break  2 ;
 		   					else
 		   						break ;
@@ -4954,7 +4949,7 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 			    }
 		    }
 
-		if ( $max_found_char_width  !=  $this -> HexCharWidth )
+		if ( $max_found_char_width  &&  $max_found_char_width  !=  $this -> HexCharWidth )
 		   {
 			if  ( PdfToText::$DEBUG )
 				warning ( "Character map #$object_id : specified code width ({$this -> HexCharWidth}) differs from actual width ($max_found_char_width)." ) ;
