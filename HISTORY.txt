@@ -1,3 +1,16 @@
+    [Version : 1.4.14]	[Date : 2017/03/14]     [Author : CV]
+	. Fixed a regression in text decoding when compound text contained angle brackets and right square 
+	  brackets (originally fixed in 1.4.12, but regressed in 1.4.13).
+	
+    [Version : 1.4.13]	[Date : 2017/03/13]     [Author : CV]
+	. Updated IDENTITY-H CID font mapping to add more characters.
+	. Handle the case where a character map states that it handles 2-bytes character codes (using the 
+	  begincoderange/endcoderange constructs) while the map itself only contains 1-byte character codes...
+	. Changed character maps that are secondary to a Unicode map to handle only the characters listed in
+	  the /Differences parameter.
+	. Updated the offical Adobe WinAnsi character map to include UTF8 codes which have no Windows
+	  equivalent (PdfTexterEncodingMap::$Encodings array).
+	
     [Version : 1.4.12]	[Date : 2017/03/12]     [Author : CV]
 	. Added the LoadFromString() method, which allows to process PDF contents directly from a string.
 	. Changed the Load() method to be able to handle remote urls.
