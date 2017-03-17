@@ -391,9 +391,9 @@ An array of associative arrays that contain the following entries :
 
 Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is enabled. 
 
-### IsPasswordProtected ###
+### IsEncrypted ###
 
-This property is set to *true* if the Pdf file is password-protected.
+This property is set to *true* if the Pdf file is encrypted through some kind of password protection scheme.
 
 ### MaxExecutionTime ###
 
@@ -469,14 +469,6 @@ will be rendered as :
 - *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
-### OwnerEncryptionKey ###
-
-A 32-byte string used in determining whether a valid owner password was specified.
-
-### OwnerPassword ###
-
-Owner password to be specified if the PDF file is password-protected.
-
 ### Pages ###
 
 Associative array containing individual page contents. The array key is the page number, starting from 1.
@@ -510,14 +502,6 @@ A string containing the whole text extracted from the underlying pdf file. Note 
 
 Document title, as specified in the author information object.
 
-### UserEncryptionKey ###
-
-A 32-byte string used in determining whether a valid user password was specified.
-
-### UserPassword ###
-
-User password to be specified if the PDF file is password-protected.
-
 ### Utf8Placeholder ###
 
 When a Unicode character cannot be correctly recognized, the Utf8Placeholder property will be used as a substitution.
@@ -529,13 +513,6 @@ The default value is the empty string, or the string '[Unknown character 0x%08X]
 Note that if you change the *PdfToText::$DEBUG** variable **after** the first instantiation of the class, then you will need to manually set the value of the *PdfToText::Utf8PlaceHolder* static property.
 
 ## CONSTANTS ##
-
-### PDFCRYPT\_\* ###
-
-Indicates whether the PDF file is password protected and the encryption mechanism used in this case :
-
-- *PDFCRYPT\_NONE* : file is not password-protected.
-- *PDFCRYPT\_STANDARD* : file is password-protected using the standard security handler. 
 
 ### PDFOPT\_\* ###
 
@@ -561,20 +538,8 @@ The PDFOPT\_\* constants are a set of flags which can be combined when either in
 		over several lines.
 - *PDFOPT\_ENFORCE\_EXECUTION\_TIME* : when specified, the **MaxExecutionTime** property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process a single file may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
+- *PDFOPT\_IGNORE\_HEADERS\_AND\_FOOTERS* : when specified, headers and footers will not be included in the output.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
-
-### PDFPERM\_\* ###
-
-A set of flags that indicates which operations are authorized on the PDF file. All the descriptions below come from the PDF specification :
-
-- PDFPERM\_PRINT *(bit 3)* : *(Revision 2)* Print the document. *(Revision 3 or greater)* Print the document (possibly not at the highest quality level, depending on whether bit 12 is also set).
-- PDFPERM\_MODIFY *(bit 4)* : Modify the contents of the document by operations other than those controlled by bits 6, 9, and 11.
-- PDFPERM\_COPY *(bit 5)* : *(Revision 2)* Copy or otherwise extract text and graphics from the document, including extracting text and graphics (in support of accessibility to users with disabilities or for other purposes). *(Revision 3 or greater)* Copy or otherwise extract text and graphics from the document by operations other than that controlled by bit 10.
-- PDFPERM\_MODIFY\_EXTRA *(bit 6)* : Add or modify text annotations, fill in interactive form fields, and, if bit 4 is also set, create or modify interactive form fields (including signature fields).
-- PDFPERM\_FILL\_FORM *(bit 9)* : *(Revision 3 or greater)* Fill in existing interactive form fields (including signature fields), even if bit 6 is clear.
-- PDFPERM\_EXTRACT *(bit 10)* : *(Revision 3 or greater)* Fill in existing interactive form fields (including signature fields), even if bit 6 is clear.
-- PDFPERM\_ASSEMBLE *(bit 11)* : *(Revision 3 or greater)* Assemble the document (insert, rotate, or delete pages and create bookmarks or thumbnail images), even if bit 4 is clear.
-- PDFPERM\_HIGH\_QUALITY\_PRINT *(bit 12)* : *(Revision 3 or greater)* Print the document to a representation from which a faithful digital copy of the PDF content could be generated. When this bit is clear (and bit 3 is set), printing is limited to a low-level representation of the appearance, possibly of degraded quality. 
 
 ### VERSION ###
 
@@ -591,6 +556,10 @@ This is the base class for all exceptions thrown by the **PdfToText** class.
 ### PdfToTextDecodingException ###
 
 This exception is thrown if an error occurs when decoding a PDF object. Normally, most of these exceptions are thrown only if debug mode is activated.
+
+### PdfToTextDecryptionException ###
+
+Occurs when decryption failed on an encrypted file.
 
 ### PdfToTextTimeoutException ###
 

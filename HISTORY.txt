@@ -1,3 +1,15 @@
+    [Version : 1.4.15]	[Date : 2017/03/17]     [Author : CV]
+	. Added the PDFOPT_IGNORE_HEADERS_AND_FOOTERS option. The previous behavior was to ignore them
+	  systematically.
+	. Changed the PdfTexterFont object to handle basic encodings
+	. Refactored class for decryption support :
+	  - Moved some functions to the PfTexterObjectBase object
+	  - Created the PdfEncryptionData class to hold encryption data defined in the PDF file, by
+	    transfering all the encryption-related properties from the PdfToText class to PdfEncryptionData
+	  - Added the EncryptionData property, which currently has the "protected" visibility
+	  - Renamed the IsPasswordProtected property to IsEncrypted
+	  Note : processing of encrypted files is not yet functional
+
     [Version : 1.4.14]	[Date : 2017/03/14]     [Author : CV]
 	. Fixed a regression in text decoding when compound text contained angle brackets and right square 
 	  brackets (originally fixed in 1.4.12, but regressed in 1.4.13).
