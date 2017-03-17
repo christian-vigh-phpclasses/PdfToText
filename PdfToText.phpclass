@@ -24,9 +24,19 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.14]	[Date : 2017/03/14]     [Author : CV]
-	. Fixed a regression in text decoding when compound text contained angle brackets and right square 
-	  brackets (originally fixed in 1.4.12, but regressed in 1.4.13). 
+    [Version : 1.4.15]	[Date : 2017/03/17]     [Author : CV]
+	. Added the PDFOPT_IGNORE_HEADERS_AND_FOOTERS option. The previous behavior was to ignore them
+	  systematically.
+	. Changed the PdfTexterFont object to handle basic encodings
+	. Refactored class for decryption support :
+	  - Moved some functions to the PfTexterObjectBase object
+	  - Created the PdfEncryptionData class to hold encryption data defined in the PDF file, by
+	    transfering all the encryption-related properties from the PdfToText class to PdfEncryptionData
+	  - Added the EncryptionData property, which currently has the "protected" visibility
+	  - Renamed the IsPasswordProtected property to IsEncrypted
+	  Note : processing of encrypted files is not yet functional
+
+
 	
     (...)
 
@@ -38,7 +48,7 @@
 
 /*==============================================================================================================
 
-    class PdfToTextException -
+    class PdfToTextException et al -
         Implements an exception thrown when an error is encountered while decoding PDF files.
 
   ==============================================================================================================*/
@@ -53,6 +63,22 @@ class  PdfToTextDecodingException		extends  PdfToTextException
 	public function  __construct ( $message, $object_id = false )
 	   {
 		$text	=  "Pdf decoding error" ;
+
+		if  ( $object_id  !==  false )
+			$text	.=  " (object #$object_id)" ;
+
+		$text	.=  " : $message" ;
+
+		parent::__construct ( $text ) ;
+	    }
+    }
+
+
+class  PdfToTextDecryptionException		extends  PdfToTextException
+   {
+	public function  __construct ( $message, $object_id = false )
+	   {
+		$text	=  "Pdf decryption error" ;
 
 		if  ( $object_id  !==  false )
 			$text	.=  " (object #$object_id)" ;
@@ -141,7 +167,6 @@ if  ( ! function_exists ( 'hex2bin' ) )
 	    } 
 
     }
-
 
 
 /*==============================================================================================================
@@ -561,6 +586,127 @@ abstract class  PdfObjectBase		// extends  Object
 
 		return ( false ) ;
 	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        ProcessEscapedCharacter - Interprets a character after a backslash in a string.
+	
+	    PROTOTYPE
+	        $ch		=  $this -> ProcessEscapedCharacter ( $ch ) ;
+	
+	    DESCRIPTION
+	        Interprets a character after a backslash in a string and returns the interpreted value.
+	
+	    PARAMETERS
+	        $ch (char) -
+	                Character to be escaped.
+	
+	    RETURN VALUE
+	        The escaped character.
+
+	    NOTES
+		This method does not process octal sequences.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  ProcessEscapedCharacter ( $ch )
+	   {
+		switch ( $ch ) 
+		   {
+			// Normally, only a few characters should be escaped...
+			case	'('	:  $newchar =  "("		; break ;
+			case	')'	:  $newchar =  ")"		; break ;
+			case	'['	:  $newchar =  "["		; break ;
+			case	']'	:  $newchar =  "]"		; break ;
+			case	'\\'	:  $newchar =  "\\"		; break ;
+			case 	'n' 	:  $newchar =  "\n"		; break ;
+			case 	'r' 	:  $newchar =  "\r"		; break ;
+			case 	'f' 	:  $newchar =  "\f"		; break ;
+			case 	't' 	:  $newchar =  "\t"		; break ;
+			case 	'b' 	:  $newchar =  chr (  8 )	; break ;
+			case 	'v' 	:  $newchar =  chr ( 11 )	; break ;
+
+			// ... but should we consider that it is a heresy to escape other characters ?
+			// For the moment, no.
+			default		:  $newchar =  $ch  ; break ;
+		    }
+
+		return ( $newchar ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        ProcessEscapedString - Processes a string which can have escaped characters.
+	
+	    PROTOTYPE
+	        $result		=  $this -> ProcessEscapedString ( $str, $process_octal_escapes = false ) ;
+	
+	    DESCRIPTION
+	        Processes a string which may contain escape sequences.
+	
+	    PARAMETERS
+	        $str (string) -
+	                String to be processed.
+
+		$process_octal_escapes (boolean) -
+			When true, octal escape sequences such as \037 are processed.
+	
+	    RETURN VALUE
+	        The processed input string.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  ProcessEscapedString ( $str, $process_octal_escapes = false )
+	   {
+		$length		=  strlen ( $str ) ;
+		$offset		=  0 ;
+		$result		=  '' ;
+		$ord0		=  ord ( '0' ) ;
+
+		while  ( ( $backslash_index = strpos ( $str, '\\', $offset ) )  !==  false )
+		   {
+			if  ( $backslash_index + 1  <  $length )
+			   {
+				$ch		 =  $str [ ++ $backslash_index ] ;
+
+				if  ( ! $process_octal_escapes )
+				   {
+					$result		.=  substr ( $str, $offset, $backslash_index - $offset - 1 ) . $this -> ProcessEscapedCharacter ( $ch ) ;
+					$offset		 =  $backslash_index + 1 ;
+				    }
+				else if  ( $ch  <  '0'  ||  $ch  >  '7' )
+				   {
+					$result		.=  substr ( $str, $offset, $backslash_index - $offset - 1 ) . $this -> ProcessEscapedCharacter ( $ch ) ;
+					$offset		 =  $backslash_index + 1 ;
+				    }
+				else
+				   {
+					$result		.=  substr ( $str, $offset, $backslash_index - $offset - 1 ) ;
+					$ord		 =  ord ( $ch ) - $ord0 ;
+					$count		 =  0 ;
+					$backslash_index ++ ;
+
+					while  ( $backslash_index  <  $length  &&  $count  <  2  &&
+							$str [ $backslash_index ]  >=  '0'  &&  $str [ $backslash_index ]  <=  '7' )
+					   {
+						$ord	=  ( $ord * 8 ) + ( ord ( $str [ $backslash_index ++ ] ) - $ord0 ) ;
+						$count ++ ;
+					    }
+
+					$result		.=  chr ( $ord ) ;
+					$offset		 =  $backslash_index ;
+				    }
+			    }
+			else
+				break ;
+		    }
+
+		$result		.=  substr ( $str, $offset ) ;
+
+		return ( $result ) ;
+	    }
     }
 
 
@@ -573,7 +719,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.14" ;
+	const		VERSION					=  "1.4.15" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -589,42 +735,7 @@ class  PdfToText 	extends PdfObjectBase
 											// The MaxExecutionTime property can be set to modify this default value.
 	const		PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME	=  0x0080 ;		// Same as PDFOPT_ENFORCE_EXECUTION_TIME, but for all calls to the Load() method of the PdfToText class
 											// The MaxGlobalExecutionTime static property can be set to modify the default time limit
-
-	// Encryption standards (to be completed, as more crazy PDF samples arise...)
-	const		PDFCRYPT_NONE				=  0 ;			// PDF file is not encrypted 
-	const		PDFCRYPT_STANDARD			=  1 ;			// Standard security handler
-
-	// A 32-bytes hardcoded padding used when computing encryption keys
-	const		PDF_ENCRYPTION_PADDING			=  "\x28\xBF\x4E\x5E\x4E\x75\x8A\x41\x64\x00\x4E\x56\xFF\xFA\x01\x08\x2E\x2E\x00\xB6\xD0\x68\x3E\x80\x2F\x0C\xA9\xFE\x64\x53\x69\x7A" ;
-
-	// Permission bits for encrypted files. Comments come from the PDF specification
-	const		PDFPERM_PRINT				=  0x0004 ;		// bit 3 :
-											//	(Revision 2) Print the document.
-											//	(Revision 3 or greater) Print the document (possibly not at the highest quality level, 
-											//	depending on whether bit 12 is also set).
-	const		PDFPERM_MODIFY				=  0x0008 ;		// bit 4 :
-											//	Modify the contents of the document by operations other than those controlled by bits 6, 9, and 11.
-	const		PDFPERM_COPY				=  0x0010 ;		// bit 5 :
-											//	(Revision 2) Copy or otherwise extract text and graphics from the document, including extracting text 
-											//	and graphics (in support of accessibility to users with disabilities or for other purposes).
-											//	(Revision 3 or greater) Copy or otherwise extract text and graphics from the document by operations  
-											//	other than that controlled by bit 10.
-	const		PDFPERM_MODIFY_EXTRA			=  0x0020 ;		// bit 6 :
-											//	Add or modify text annotations, fill in interactive form fields, and, if bit 4 is also set, 
-											//	create or modify interactive form fields (including signature fields).
-	const		PDFPERM_FILL_FORM			=  0x0100 ;		// bit 9 :
-											//	(Revision 3 or greater) Fill in existing interactive form fields (including signature fields), 
-											//	even if bit 6 is clear.
-	const		PDFPERM_EXTRACT				=  0x0200 ;		// bit 10 :
-											//	(Revision 3 or greater) Fill in existing interactive form fields (including signature fields), 
-											//	even if bit 6 is clear.
-	const		PDFPERM_ASSEMBLE			=  0x0400 ;		// bit 11 :
-											//	(Revision 3 or greater) Assemble the document (insert, rotate, or delete pages and create bookmarks 
-											//	or thumbnail images), even if bit 4 is clear.
-	const		PDFPERM_HIGH_QUALITY_PRINT		=  0x0800 ;		// bit 12 :
-											//	(Revision 3 or greater) Print the document to a representation from which a faithful digital copy of 
-											//	the PDF content could be generated. When this bit is clear (and bit 3 is set), printing is limited to 
-											//	a low-level representation of the appearance, possibly of degraded quality. 
+	const		PDFOPT_IGNORE_HEADERS_AND_FOOTERS	=  0x0300 ;		// Ignore headers and footers
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -688,10 +799,6 @@ class  PdfToText 	extends PdfObjectBase
 	// Well, in fact, there are two IDs, but the PDF specification does not mention the goal of the second one
 	public		$ID				=  '' ;
 	public		$ID2				=  '' ; 
-	//Encryption-related properties 
-	public		$UserPassword			=  false ;
-	public		$OwnerPassword			=  false ;
-	public		$IsPasswordProtected		=  false ;	// Will be set to true is encryption information has been found
 	// End of line string
 	public		$EOL				=  PHP_EOL ;
 	// String to be used when no Unicode translation is possible
@@ -724,6 +831,9 @@ class  PdfToText 	extends PdfObjectBase
 	protected	$PageMap ;
 	// Page locations (start and end offsets)
 	protected	$PageLocations ;
+	// Encryption data
+	public		$IsEncrypted			=  false ;
+	protected	$EncryptionData			=  false ;
 
 	// Indicates whether global static initializations have been made
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
@@ -875,19 +985,6 @@ class  PdfToText 	extends PdfObjectBase
 	// As usual, caching a little bit the results of the IsRtlCharacter() method is welcome. Each item will have the value true if the
 	// character is RTL, or false if LTR.
 	private		$RtlCharacterBuffer		=  array ( ) ;
-
-	// Encryption information coming from the PDF file
-	public		$EncryptionMode			=  self::PDFCRYPT_NONE ;	// NONE means : file is not encrypted
-	public		$EncryptionAlgorithm		=  false ;			// Encryption algorithm version (/V flag)
-	public		$EncryptionAlgorithmRevision	=  false ;			// Encryption algorithm revision (/R flag)
-	public		$UserEncryptionKey		=  false ;			// Encryption key for the user password (/U flag)
-	public		$OwnerEncryptionKey		=  false ;			// Encryption key for the owner password (/O flag)
-	public		$EncryptionFlags		=  false ;			// Encryption flags (/P flags, a combination of PDFPERM_* bits)
-	public		$EncryptionKeyLength		=  false ;			// Encryption key length (/Length flag)
-	public		$EncryptMetadata		=  false ;			// Tells whether metadata has been encrypted or not (/EncryptMetadata flag)
-
-	// Computed encryption key
-	protected	$EncryptionKey			=  false ;		
 
 	// A subset of a character classification array that avoids too many calls to the ctype_* functions or too many
 	// character comparisons.
@@ -1125,20 +1222,7 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> GotAuthorInformation		=  false ;
 		$this -> ID				=  '' ;
 		$this -> ID2				=  '' ; 
-		$this -> UserPassword			=  $user_password ;
-		$this -> OwnerPassword			=  $owner_password ;
-		$this -> EncryptedUserPassword		=  false ;
-		$this -> EncryptedOwnerPassword		=  false ;
-		$this -> IsPasswordProtected		=  false ;
-		$this -> EncryptionMode			=  self::PDFCRYPT_NONE ;
-		$this -> EncryptionAlgorithm		=  false ;
-		$this -> EncryptionAlgorithmRevision	=  false ;
-		$this -> UserEncryptionKey		=  false ;
-		$this -> OwnerEncryptionKey		=  false ;
-		$this -> EncryptionFlags		=  false ;
-		$this -> EncryptionKeyLength		=  false ;
-		$this -> EncryptMetadata		=  false ;
-		$this -> EncryptionKey			=  false ;
+		$this -> EncryptionData			=  false ;
 
 		// Also reset cached information that may come from previous runs
 		$this -> MapIdBuffer			=  array ( ) ;
@@ -1246,7 +1330,7 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		// Extract trailer information, which may contain the ID of an object specifying encryption flags
-		$this -> GetTrailerInformation ( $contents ) ;
+		$this -> GetTrailerInformation ( $contents, $pdf_objects ) ;
 
 		// Character maps encountered so far
 		$cmaps			=  array ( ) ;
@@ -1289,7 +1373,7 @@ class  PdfToText 	extends PdfObjectBase
 				// We process here the unencoded ones
 				if  ( $this -> IsFont ( $object_data ) )
 				   {
-					$this -> FontTable -> Add ( $object_number, $object_data ) ;
+					$this -> FontTable -> Add ( $object_number, $object_data, $pdf_objects ) ;
 					continue ;
 				    }
 				// Some character maps may also be in clear text
@@ -1367,31 +1451,38 @@ class  PdfToText 	extends PdfObjectBase
 			// Font definitions
 			else if  ( $this -> IsFont ( $decoded_stream_data ) )
 			   {
-				$this -> FontTable -> Add ( $object_number, $decoded_stream_data ) ;
+				$this -> FontTable -> Add ( $object_number, $decoded_stream_data, $pdf_objects ) ;
 			    }
 			// Plain text (well, in fact PDF drawing instructions)
 			else if  ( $this -> IsText ( $object_data, $decoded_stream_data ) )
 			   {
 				$text_data	=  false ;
 
-				// We currently ignore page headers and footers
-				if  ( ! $this -> IsPageHeaderOrFooter ( $decoded_stream_data ) )
+				// Check if we need to ignore page headers and footers
+				if  ( $this -> Options  &  self::PDFOPT_IGNORE_HEADERS_AND_FOOTERS )
 				   {
-					$text [ $object_number ]	=  
-					$text_data			=  $decoded_stream_data ;
-				    }
-				// However, they may be mixed with actual text contents so we need to separate them...
-				else
-				   {
-					$this -> ExtractTextData ( $object_number, $decoded_stream_data, $remainder, $header, $footer ) ;
-
-					// We still need to check again that the extracted text portion contains something useful
-					if  ( $this -> IsText ( $object_data, $remainder ) )
+					if  ( ! $this -> IsPageHeaderOrFooter ( $decoded_stream_data ) )
 					   {
 						$text [ $object_number ]	=  
-						$text_data			=  $remainder ;
+						$text_data			=  $decoded_stream_data ;
+					    }
+					// However, they may be mixed with actual text contents so we need to separate them...
+					else
+					   {
+						$this -> ExtractTextData ( $object_number, $decoded_stream_data, $remainder, $header, $footer ) ;
+
+						// We still need to check again that the extracted text portion contains something useful
+						if  ( $this -> IsText ( $object_data, $remainder ) )
+						   {
+							$text [ $object_number ]	=  
+							$text_data			=  $remainder ;
+						    }
 					    }
 				    }
+				else
+					$text [ $object_number ]	=  
+					$text_data			=  $decoded_stream_data ;
+					
 
 				// The current object may be a text object that have been defined as an XObject in some other object
 				// In this case, we have to keep it since it may be referenced by a /TPLx construct from within 
@@ -1849,9 +1940,9 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( $decoded_stream_data  ===  false )
 				   {
-					if  ( $this -> IsPasswordProtected )
+					if  ( $this -> IsEncrypted )
 					   {
-						$decoded_stream_data	=  $this -> Decrypt ( $object_id, $stream_data ) ;
+						$decoded_stream_data	=  $this -> EncryptionData -> Decrypt ( $object_id, $stream_data ) ;
 
 						if  ( $decoded_stream_data  ===  false )
 						   {
@@ -2197,34 +2288,6 @@ class  PdfToText 	extends PdfObjectBase
 	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
-	        Decrypt - Decrypts object data.
-	
-	    PROTOTYPE
-	        $data		=  $this -> Decrypt ( $object_id, $object_data ) ;
-	
-	    DESCRIPTION
-	        Decrypts object data, when the PDF file is password-protected.
-	
-	    PARAMETERS
-	        $object_id (integer) -
-	                Pdf object number.
-
-		$object_data (string) -
-			Object data.
-		
-	    RETURN VALUE
-	        Returns the decrypted object data, or false if the encrypted object could not be decrypted.
-	
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  Decrypt ( $object_id, $object_data ) 
-	   {
-		return ( false ) ;
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    NAME
 	        ExtractTextData - Extracts text, header & footer information from a text object.
 	
 	    PROTOTYPE
@@ -2534,7 +2597,7 @@ class  PdfToText 	extends PdfObjectBase
 										$i ++ ;
 
 										if  ( $text [$i]  <  '0'  ||  $text [$i]  >  '7' )
-											$ch1	=  $this -> __process_escaped_character ( $text [$i] ) ;
+											$ch1	=  $this -> ProcessEscapedCharacter ( $text [$i] ) ;
 										else
 										   {
 											$oct		=  '' ;
@@ -2560,7 +2623,7 @@ class  PdfToText 	extends PdfObjectBase
 										$i ++ ;
 
 										if  ( $text [$i]  <  '0'  ||  $text [$i]  >  '7' )
-											$ch2	=  $this -> __process_escaped_character ( $text [$i] ) ;
+											$ch2	=  $this -> ProcessEscapedCharacter ( $text [$i] ) ;
 										else
 										   {
 											$oct		=  '' ;
@@ -2596,7 +2659,7 @@ class  PdfToText 	extends PdfObjectBase
 									// for the next quirk to happen...
 									if  ( $newchar  ==  '\\' )
 									   {
-										$newchar		=  $this -> __process_escaped_character ( $text [ $i + 2 ] ) ;
+										$newchar		=  $this -> ProcessEscapedCharacter ( $text [ $i + 2 ] ) ;
 										$i ++ ;		// this time we processed 3 bytes, not 2
 									    }
 
@@ -2628,7 +2691,7 @@ class  PdfToText 	extends PdfObjectBase
 
 										// Escaped character
 										if  ( $ch  <  '0'  ||  $ch  >  '7' )
-											$ch		=  $this -> __process_escaped_character ( $ch ) ;
+											$ch		=  $this -> ProcessEscapedCharacter ( $ch ) ;
 										// However, an octal form can also be specified ; in this case we have to take into account
 										// the character width for the current font (if the character width is 4 hex digits, then we
 										// will encounter constructs such as "\000\077").
@@ -3198,34 +3261,6 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
-	// __process_escaped_character -
-	//	Text specified between parentheses, either as plain text or as codes using a Unicode CMAP, can be escaped through a backslash ;
-	//	For example, closing parentheses will be expressed as "\)", newlines as "\n", etc.
-	//	This function returns the appropriate code corresponding to the character after the backslash.
-	private function  __process_escaped_character ( $ch )
-	   {
-		switch ( $ch ) 
-		   {
-			// Normally, only a few characters should be escaped...
-			case	'('	:  $newchar =  "("		; break ;
-			case	')'	:  $newchar =  ")"		; break ;
-			case	'\\'	:  $newchar =  "\\"		; break ;
-			case 	'n' 	:  $newchar =  "\n"		; break ;
-			case 	'r' 	:  $newchar =  "\r"		; break ;
-			case 	'f' 	:  $newchar =  "\f"		; break ;
-			case 	't' 	:  $newchar =  "\t"		; break ;
-			case 	'b' 	:  $newchar =  chr (  8 )	; break ;
-			case 	'v' 	:  $newchar =  chr ( 11 )	; break ;
-
-			// ... but should we consider that it is a heresy to escape other characters ?
-			// For the moment, no.
-			default		:  $newchar =  $ch  ; break ;
-		    }
-
-		return ( $newchar ) ;
-	    }
-
-
 	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
@@ -3245,7 +3280,7 @@ class  PdfToText 	extends PdfObjectBase
 	                PDF file contents.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  GetTrailerInformation ( $contents )
+	protected function  GetTrailerInformation ( $contents, $pdf_objects )
 	   {
 		// Be paranoid : check if there is trailer information
 		if  ( ! preg_match ( '/trailer \s* << (?P<trailer> .+?) >>/imsx', $contents, $trailer_match ) )
@@ -3273,238 +3308,19 @@ class  PdfToText 	extends PdfObjectBase
 			return ;
 
 		$encrypt_object_id	=  $encrypt_match [ 'object' ] ;
-
-		// Retrieve the encryption dictionary contents
-		if  ( ! preg_match ( '#' . $encrypt_object_id . ' \s+ 0 \s+ obj (?P<encrypt> .*?) \s* endobj#imsx', $contents, $encryption_match ) )
-			return ;
-
-		$encryption_data	=  $encryption_match [ 'encrypt' ] ;
 		
-		// Encryption mode
-		if  ( ! preg_match ( '#/Filter \s* / (?P<mode> \w+)#ix', $encryption_data, $encryption_data_match ) )
+		if  ( ! isset ( $pdf_objects [ $encrypt_object_id ] ) )
+		   {
+			if  ( self::$DEBUG )
+				error ( new PdfToTextDecodingException ( "Object #$encrypt_object_id, which should contain encryption data, is missing." ) ) ;
+
 			return ;
-
-		switch ( strtolower ( $encryption_data_match [ 'mode' ] ) )
-		   {
-			case	'standard' :
-				$this -> EncryptionMode		=  self::PDFCRYPT_STANDARD ;
-				break ;
-
-			default :
-				if  ( self::$DEBUG  >  1 )
-					error ( new PdfToTextDecodingException ( "Unhandled encryption mode '{$encryption_data [ 'mode' ]}'", $encrypt_object_id ) ) ;
-				
 		    }
 
-		// Other encryption data
-		preg_match ( '#/V \s+ (?P<value> \d+)#ix', $encryption_data, $algorithm_match ) ;
-		$this -> EncryptionAlgorithm		=  ( integer ) $algorithm_match [ 'value' ] ;
-
-		preg_match ( '#/R \s+ (?P<value> \d+)#ix', $encryption_data, $algorithm_revision_match ) ;
-		$this -> EncryptionAlgorithmRevision	=  ( integer ) $algorithm_revision_match [ 'value' ] ;
-
-		preg_match ( '#/P \s+ (?P<value> \-? \d+)#ix', $encryption_data, $flags_match ) ;
-		$this -> EncryptionFlags		=  ( integer) $flags_match [ 'value' ] ;
-
-		// Key length (40 bits, if not specified)
-		if  ( preg_match ( '#/Length \s+ (?P<value> \d+)#ix', $encryption_data, $key_length_match ) )
-			$this -> EncryptionKeyLength		=  $key_length_match [ 'value' ] ;
-		else 
-			$this -> EncryptionKeyLength		=  40 ;
-
-		// Hashed user and owner passwords
-		preg_match ( '#/U \s* \( \s* (?P<value> [^)]+) \)#ix', $encryption_data, $user_match ) ;
-		$this -> UserEncryptionKey		=  $user_match [ 'value' ] ;
-
-		preg_match ( '#/O \s* \( \s* (?P<value> [^)]+) \)#ix', $encryption_data, $owner_match ) ;
-		$this -> OwnerEncryptionKey		=  $owner_match [ 'value' ] ;
-
-		// EncryptMetadata flag
-		if  ( preg_match ( '# /EncryptMetadata (?P<value> (true) | (1) | (false) | (0) )#imsx', $encryption_data, $encryption_match ) )
-		   {
-			if  ( ! strcasecmp ( $encryption_match [ 'value' ], 'true' )  ||  ! strcasecmp ( $encryption_match [ 'value' ], 'false' ) )
-				$this -> EncrypMetadata		=  true ;
-			else
-				$this -> EncrypMetadata		=  false ;
-		    }
-		else
-			$this -> EncryptMetadata	=  false ;
-
-		// Say that the file is password-protected
-		$this -> IsPasswordProtected		=  true ;
-
-		// Paranoia : owner password defaults to user password
-		if  ( ! $this -> OwnerPassword )
-			$this -> OwnerPassword		=  $this -> UserPassword ;
-
-		// Generate encryption key
-		$this -> GenerateEncryptionKey ( ) ;
+		// Parse encryption information
+		$this -> EncryptionData		=  PdfEncryptionData::GetInstance ( $this -> ID, $encrypt_object_id, $pdf_objects [ $encrypt_object_id ] ) ;
+		$this -> IsEncrypted		=  ( $this -> EncryptionData  !==  false ) ;
 	    }
-
-
-	protected function  GenerateEncryptionKey ( ) 
-	   {
-		
-		static	$ImplementedAlgorithms		=  array
-		   (
-			'2'	=>  array
-			   (
-				//'2'	=>  array ( 'self', '__generate_encryption_key_v2_r23' ),
-				'3'	=>  array ( 'self', '__generate_encryption_key_v2_r23' ),
-			    )
-		    ) ;
-
-		if  ( isset ( $ImplementedAlgorithms [ $this -> EncryptionAlgorithm ] [ $this -> EncryptionAlgorithmRevision ] ) )
-		   {
-			$callback	=  $ImplementedAlgorithms [ $this -> EncryptionAlgorithm ] [ $this -> EncryptionAlgorithmRevision ] ;
-			$key		=  call_user_func ( $callback ) ;
-		    }
-		else
-		   {
-			if  ( self::$DEBUG  >  1 )
-				warning ( "Encryption algorithm version {$this -> EncryptionAlgorithm} revision {$this -> EncryptionAlgorithmRevision} is not yet implemented." ) ;
-			else
-				$key	=  false ;
-		    }
-
-		$this -> EncryptionKey	=  $key ;
-	    }
-
-
-	private function  __generate_encryption_key_v2_r23 ( )
-	   {
-		$key_byte_length	=  $this -> EncryptionKeyLength / 8 ;
-
-		// If no user password has been defined, use the padding string as the start of the value to be hashed
-		if (  $this -> UserPassword )
-			$buffer		=  substr ( $this -> UserPassword . self::PDF_ENCRYPTION_PADDING, 0, 32 ) ;
-		else
-			$buffer		=  self::PDF_ENCRYPTION_PADDING ;
-
-		// Add the owner password encryption key
-		$buffer		.=  $this -> OwnerEncryptionKey ;
-
-		// Add the permission flags, considered as a 32-bit integer, LSB first
-		$buffer		.=  chr ( ( $this -> EncryptionFlags         ) & 0xFF ) .
-				    chr ( ( $this -> EncryptionFlags  >>   8 ) & 0xFF ) .
-				    chr ( ( $this -> EncryptionFlags  >>  16 ) & 0xFF ) .
-				    chr ( ( $this -> EncryptionFlags  >>  24 ) & 0xFF ) ;
-
-		// Append the first file id
-		$buffer		.=  $this -> ID ;
-
-		// If metadata is not encrypted, append four 0xFF bytes
-		if  ( ! $this -> EncryptMetadata )
-			$buffer		.=  "\xFF\xFF\xFF\xFF" ;
-
-		// That was the first step ; now we need to compute the md5 hash of this stuff
-		$md5_hash	=  md5 ( $buffer, true ) ;
-
-		// For enryption alogrithm 2 revision 3, we need to iterate 50 times over the same hash
-		if  ( $this -> EncryptionAlgorithmRevision  ==  '3' )
-		   {
-			for  ( $i = 0 ; $i  <  50 ; $i ++ )
-				$md5_hash	=  md5 ( substr ( $md5_hash, 0, $key_byte_length ), true ) ;
-		    }
-
-		// Now verify that the generated encryption key matches the user key found in the pdf file
-		if  ( $this -> EncryptionAlgorithmRevision  ==  '3' )
-		   {
-			$salt		=  md5 ( self::PDF_ENCRYPTION_PADDING . $this -> ID, true ) ;
-			$salt_length	=  strlen ( $salt ) ;
-			$encrypted	=  mcrypt_encrypt ( MCRYPT_ARCFOUR, $md5_hash, $salt, MCRYPT_MODE_STREAM, '') ;
-
-			for  ( $i = 1 ; $i  <=  19 ; $i ++ )
-			   {
-				$tmp_key	=  '' ;
-
-				for  ( $j = 0 ; $j  <  $salt_length ; $j ++ )
-					$tmp_key	.=  chr ( ord ( $md5_hash [$j] ) ^ $i ) ;
-
-				$encrypted	=  mcrypt_encrypt ( MCRYPT_ARCFOUR, $tmp_key, $encrypted, MCRYPT_MODE_STREAM, '' ) ;
-			    }
-
-			/*
-			dump ( $encrypted ) ;
-			dump ( md5 ( $salt, true ) );
-			dump ( $this -> UserEncryptionKey ) ;
-			dump ( $this -> OwnerEncryptionKey ) ;
-			exit ;
-			*/
-		    }
-
-		// All done, return
-		return ( $md5_hash ) ;
-	    }	
-
-/*
-			$tmp = TCPDF_STATIC::_md5_16(TCPDF_STATIC::$enc_padding.$this->encryptdata['fileid']);
-			$enc = TCPDF_STATIC::_RC4($this->encryptdata['key'], $tmp, $this->last_enc_key, $this->last_enc_key_c);
-			$len = strlen($tmp);
-			for ($i = 1; $i <= 19; ++$i) {
-				$ek = '';
-				for ($j = 0; $j < $len; ++$j) {
-					$ek .= chr(ord($this->encryptdata['key'][$j]) ^ $i);
-				}
-				$enc = TCPDF_STATIC::_RC4($ek, $enc, $this->last_enc_key, $this->last_enc_key_c);
-			}
-			$enc .= str_repeat("\x00", 16);
-			return substr($enc, 0, 32);
-*/
-
-/*
-   memcpy(test, userKey->getCString(), 32);
-    for (i = 19; i >= 0; --i) {
-      for (j = 0; j < keyLength; ++j) {
-	tmpKey[j] = fileKey[j] ^ i;
-      }
-      rc4InitKey(tmpKey, keyLength, fState);
-      fx = fy = 0;
-      for (j = 0; j < 32; ++j) {
-	test[j] = rc4DecryptByte(fState, &fx, &fy, test[j]);
-      }
-    }
-    memcpy(buf, passwordPad, 32);
-    memcpy(buf + 32, fileID->getCString(), fileID->getLength());
-    md5(buf, 32 + fileID->getLength(), buf);
-    ok = memcmp(test, buf, 16) == 0;
-
-
-static void rc4InitKey(Guchar *key, int keyLen, Guchar *state) {
-  Guchar index1, index2;
-  Guchar t;
-  int i;
-
-  for (i = 0; i < 256; ++i)
-    state[i] = i;
-
-  if (unlikely(keyLen == 0))
-    return;
-
-  index1 = index2 = 0;
-  for (i = 0; i < 256; ++i) {
-    index2 = (key[index1] + state[i] + index2) % 256;
-    t = state[i];
-    state[i] = state[index2];
-    state[index2] = t;
-    index1 = (index1 + 1) % keyLen;
-  }
-}
-
-static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
-  Guchar x1, y1, tx, ty;
-
-  x1 = *x = (*x + 1) % 256;
-  y1 = *y = (state[*x] + *y) % 256;
-  tx = state[x1];
-  ty = state[y1];
-  state[x1] = ty;
-  state[y1] = tx;
-  return c ^ state[(tx + ty) % 256];
-}
-
-
-*/
 
 
 	// __build_ignored_instructions :
@@ -3725,7 +3541,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 
 		if  ( ! isset ( $parts [ 'filename' ] ) )	// for PHP versions < 5.2
 		   {
-			$index		=  strrchr ( $parts [ 'basename' ], '.' ) ;
+			$index		=  strpos ( $parts [ 'basename' ], '.' ) ;
 
 			if  ( $index  ===  false )
 				$parts [ 'filename' ]	=  $parts [ 'basename' ] ;
@@ -4351,7 +4167,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	// Add -
 	//	Adds the current font declaration to the font table. Handles special cases where font id is not
 	//	given by the object id, but rather by <</Rx...>> constructs
-	public function  Add ( $object_id, $font_definition )
+	public function  Add ( $object_id, $font_definition, $pdf_objects )
 	   {
 		if  ( PdfToText::$DEBUG )
 		   {
@@ -4419,7 +4235,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$font_type	=  PdfTexterFont::FONT_ENCODING_CID_IDENTITY_H ;
 		    }
 	
-		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id ) ;
+		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id, $pdf_objects ) ;
 
 		// Arbitrarily set the default font to the first font encountered in the pdf file
 		if  ( $this -> DefaultFont  ===  false )
@@ -4618,9 +4434,10 @@ class  PdfTexterFont		extends PdfObjectBase
 
 	// Constructor -
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
-	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null )
+	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null, $pdf_objects = null )
 	   {
 		parent::__construct ( ) ;
+
 		$this -> Id				=  $resource_id ;
 		$this -> CharacterMapId			=  $cmap_id ;
 		$this -> SecondaryCharacterMapId	=  $secondary_cmap_id ;
@@ -4644,6 +4461,14 @@ class  PdfTexterFont		extends PdfObjectBase
 			case	self::FONT_ENCODING_CID_EASTERN :
 				$this -> CharacterMap	=  new PdfTexterEasternCIDMap (  $resource_id ) ;
 				break ;
+
+			case	self::FONT_ENCODING_PDF_MAP :
+				$this -> CharacterMap	=  new  PdfTexterEncodingMap ( $cmap_id, $this -> FontVariant ) ;
+				break ;
+
+			default :
+				if  ( PdfToText::$DEBUG )
+					warning ( "Unknown font type encountered for object #$resource_id, character map #$cmap_id." ) ;
 		    }
 	    }
 
@@ -5347,6 +5172,10 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 		// Extract the Differences array
 	   	preg_match ( '/ \[ \s* (?P<contents> [^\]]*?)  \s* \] /x', $definitions, $match ) ;
+
+		if (  ! isset ( $match [ 'contents' ] ) ) 
+			return ;
+
 		$data 		=  trim ( preg_replace ( '/\s+(\d+)/', '/$1', $match [ 'contents' ] ) ) ;
 		$items 		=  explode ( '/', $data ) ;
 
@@ -5445,16 +5274,17 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 			else if  ( isset ( self::$Encodings [ $ord ] [ $this -> Encoding ] ) )
 				$ord	=  self::$Encodings [ $ord ] [ $this -> Encoding ] ;
 		
-			return ( $this -> CodePointToUtf8 ( $ord ) ) ;
+			$result		=  $this -> CodePointToUtf8 ( $ord ) ;
 		    }
 		else if  ( isset ( $this -> SecondaryMap [ $offset ] ) )
 		   {
 			$ord		=   $this -> SecondaryMap [ $offset ] ;
-
-			return ( $this -> CodePointToUtf8 ( $ord ) ) ;
+			$result		=   $this -> CodePointToUtf8 ( $ord ) ;
 		    }
 		else
-			return ( false ) ;
+			$result		=  false ;
+
+		return ( $result ) ;
 	    }
     }
 
@@ -7310,3 +7140,425 @@ class  PdfFaxImage		extends  PdfImage
 		//return ( imagecreatefromstring ( $image_data ) ) ;
 	    }
     }
+
+
+
+/*==============================================================================================================
+
+    class EncryptionData -
+        Holds encryption data and allows for decryption.
+
+  ==============================================================================================================*/
+class  PdfEncryptionData		extends  PdfObjectBase
+   {
+	// Encryption modes 
+	const		PDFMODE_UNKNOWN				=  0 ;
+	const		PDFMODE_STANDARD			=  1 ;
+
+	// Encryption algorithms
+	const		PDFCRYPT_ALGORITHM_RC4			=  0 ;
+	const		PDFCRYPT_ALGORITHM_AES			=  1 ;
+	const		PDFCRYPT_ALGORITHM_AES256		=  2 ;
+
+	// A 32-bytes hardcoded padding used when computing encryption keys
+	const		PDF_ENCRYPTION_PADDING			=  "\x28\xBF\x4E\x5E\x4E\x75\x8A\x41\x64\x00\x4E\x56\xFF\xFA\x01\x08\x2E\x2E\x00\xB6\xD0\x68\x3E\x80\x2F\x0C\xA9\xFE\x64\x53\x69\x7A" ;
+
+	// Permission bits for encrypted files. Comments come from the PDF specification
+	const		PDFPERM_PRINT				=  0x0004 ;		// bit 3 :
+											//	(Revision 2) Print the document.
+											//	(Revision 3 or greater) Print the document (possibly not at the highest quality level, 
+											//	depending on whether bit 12 is also set).
+	const		PDFPERM_MODIFY				=  0x0008 ;		// bit 4 :
+											//	Modify the contents of the document by operations other than those controlled by bits 6, 9, and 11.
+	const		PDFPERM_COPY				=  0x0010 ;		// bit 5 :
+											//	(Revision 2) Copy or otherwise extract text and graphics from the document, including extracting text 
+											//	and graphics (in support of accessibility to users with disabilities or for other purposes).
+											//	(Revision 3 or greater) Copy or otherwise extract text and graphics from the document by operations  
+											//	other than that controlled by bit 10.
+	const		PDFPERM_MODIFY_EXTRA			=  0x0020 ;		// bit 6 :
+											//	Add or modify text annotations, fill in interactive form fields, and, if bit 4 is also set, 
+											//	create or modify interactive form fields (including signature fields).
+	const		PDFPERM_FILL_FORM			=  0x0100 ;		// bit 9 :
+											//	(Revision 3 or greater) Fill in existing interactive form fields (including signature fields), 
+											//	even if bit 6 is clear.
+	const		PDFPERM_EXTRACT				=  0x0200 ;		// bit 10 :
+											//	(Revision 3 or greater) Fill in existing interactive form fields (including signature fields), 
+											//	even if bit 6 is clear.
+	const		PDFPERM_ASSEMBLE			=  0x0400 ;		// bit 11 :
+											//	(Revision 3 or greater) Assemble the document (insert, rotate, or delete pages and create bookmarks 
+											//	or thumbnail images), even if bit 4 is clear.
+	const		PDFPERM_HIGH_QUALITY_PRINT		=  0x0800 ;		// bit 12 :
+											//	(Revision 3 or greater) Print the document to a representation from which a faithful digital copy of 
+											//	the PDF content could be generated. When this bit is clear (and bit 3 is set), printing is limited to 
+											//	a low-level representation of the appearance, possibly of degraded quality. 
+
+	public		$FileId ;							// File ID, as specified by the /ID flag
+	public		$ObjectId ;							// Object id and text contents
+	private		$ObjectData ;
+	public		$Mode ;								// Encryption mode - currently, only the "Standard" keyword is accepted
+	public		$EncryptionAlgorithm ;						// Encryption algorithm - one of the PDFCRYPT_* constants
+	public		$AlgorithmVersion,						// Encryption algorithm version & revision
+			$AlgorithmRevision ;
+	public		$Flags ;							// Protection flags, when an owner password has been specified - one of the PDFPERM_* constants
+	public		$KeyLength ;							// Encryption key length
+	public		$UserKey,							// User and owner password keys
+			$OwnerKey ;
+	public		$UserEncryptionString,						// Not sure yet of the real usage of these ones
+			$OwnerEncryptionString ;
+	public		$EncryptMetadata ;						// True if metadata is also encrypted
+	public		$FileKeyLength ;						// Key length / 5
+
+	protected	$Decrypter ;							// Decrypter object
+
+	private		$UnsupportedEncryptionAlgorithm		=  false ;		// True if the encryption algorithm used in the PDF file is not yet supported
+
+
+	/**************************************************************************************************************
+	
+	    NAME
+	        Constructor
+	
+	    PROTOTYPE
+	        obj	=  new  PdfEncryptionData ( $mode, $object_id, $object_data ) ;
+
+	    DESCRIPTION
+		Creates an instance of a PdfEncryptionData class, using the information parsed from the supplied object
+		data.
+
+	    PARAMETERS
+		$mode (integer) -
+			One of the PDFMODE_* constants.
+
+		$object_id (integer) -
+			Id of the object containing enryption parameters.
+
+		$object_data (string) -
+			Encryption parameters.
+	
+	    AUTHOR
+	        Christian Vigh, 03/2017.
+	
+	    HISTORY
+	    [Version : 1.0]	[Date : 2017-03-14]     [Author : CV]
+	        Initial version.
+	
+	 **************************************************************************************************************/
+	public function  __construct ( $file_id, $mode, $object_id, $object_data )
+	   {
+		$this -> FileId			=  $file_id ;
+		$this -> ObjectId		=  $object_id ;
+		$this -> ObjectData		=  $object_data ;
+		$this -> Mode			=  $mode ;
+
+		// Encryption algorithm version & revision
+		preg_match ( '#/V \s+ (?P<value> \d+)#ix', $object_data, $algorithm_match ) ;
+		$this -> AlgorithmVersion	=  ( integer ) $algorithm_match [ 'value' ] ;
+
+		preg_match ( '#/R \s+ (?P<value> \d+)#ix', $object_data, $algorithm_revision_match ) ;
+		$this -> AlgorithmRevision	=  ( integer ) $algorithm_revision_match [ 'value' ] ;
+
+		// Encryption flags
+		preg_match ( '#/P \s+ (?P<value> \-? \d+)#ix', $object_data, $flags_match ) ;
+		$this -> Flags			=  ( integer) $flags_match [ 'value' ] ;
+
+		// Key length (40 bits, if not specified)
+		if  ( preg_match ( '#/Length \s+ (?P<value> \d+)#ix', $object_data, $key_length_match ) )
+			$this -> KeyLength	=  $key_length_match [ 'value' ] ;
+		else 
+			$this -> KeyLength	=  40 ;
+
+		// Owner and user passwords
+		preg_match ( '#/U \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $user_match ) ;
+		$this -> UserKey		=  $this -> ProcessEscapedString ( $user_match [ 'value' ] ) ;
+
+		preg_match ( '#/O \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $owner_match ) ;
+		$this -> OwnerKey		=  $this -> ProcessEscapedString ( $owner_match [ 'value' ] ) ;
+
+		// Owner and user encryption strings
+		preg_match ( '#/UE \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $user_match ) ;
+		$this -> UserEncryptionString	=  ( isset ( $user_match  [ 'value' ] ) ) ?  $this -> ProcessEscapedString ( $user_match  [ 'value' ] ) : false ;
+
+		preg_match ( '#/OE \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $owner_match ) ;
+		$this -> OwnerEncryptionString	=  ( isset ( $owner_match [ 'value' ] ) ) ?  $this -> ProcessEscapedString ( $owner_match [ 'value' ] ) : false ;
+
+		// EncryptMetadata flag
+		if  ( preg_match ( '# /EncryptMetadata (?P<value> (true) | (1) | (false) | (0) )#imsx', $object_data, $encryption_match ) )
+		   {
+			if  ( ! strcasecmp ( $encryption_match [ 'value' ], 'true' )  ||  ! strcasecmp ( $encryption_match [ 'value' ], 'false' ) )
+				$this -> EncryptionMetadata		=  true ;
+			else
+				$this -> EncryptionMetadata		=  false ;
+		    }
+		else
+			$this -> EncryptMetadata	=  false ;
+
+		// Now, try to determine the encryption algorithm to be used
+		$user_key_length		=  strlen ( $this -> UserKey ) ;
+		$owner_key_length		=  strlen ( $this -> OwnerKey ) ;
+		$user_encryption_string_length	=  strlen ( $this -> UserEncryptionString ) ;
+		$owner_encryption_string_length	=  strlen ( $this -> OwnerEncryptionString ) ;
+
+		$error_unhandled_version	=  false ;
+		$error_unhandled_revision	=  false ;
+
+		switch  ( $this -> AlgorithmVersion )
+		   {
+			case	1 :
+				switch  ( $this -> AlgorithmRevision )
+				   {
+					case	2 :
+						if  ( $user_key_length  !=  32  &&  $owner_key_length  !=  32 )
+						   {
+							if  ( PdfToText::$DEBUG )
+								error ( new PdfToTextDecryptionException ( "Invalid user and/or owner key length ($user_key_length/$owner_key_length)", $object_id ) ) ;
+						    }
+
+						$this -> EncryptionAlgorithm	=  self::PDFCRYPT_ALGORITHM_RC4 ;
+						$this -> FileKeyLength		=  5 ;
+						break ;
+
+					default :
+						$error_unhandled_revision	=  true ;
+				    }
+				break ;
+
+			default :
+				$error_unhandled_version	=  true ;
+		    }
+
+		// Report unsupported versions/revisions
+		if  ( $error_unhandled_version  ||  $error_unhandled_revision )
+		   {
+			if  ( PdfToText::$DEBUG )
+				error ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
+						$object_id ) ) ;
+			else
+				warning ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
+						$object_id ) ) ;
+
+			$this -> UnSupportedEncryptionAlgorithm		=  true ;
+
+			return ;
+		    }
+
+		// Build the object key
+		$this -> Decrypter		=  PdfDecryptionAlgorithm::GetInstance ( $this ) ;
+
+		if  ( $this -> Decrypter  ===  false )
+		   {
+			if  ( PdfToText::$DEBUG )
+				error ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm #{$this -> EncryptionAlgorithm}, " .
+						"version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
+						$object_id ) ) ;
+			else
+				warning ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm #{$this -> EncryptionAlgorithm}, " .
+						"version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
+						$object_id ) ) ;
+
+			$this -> UnsupportedEncryptionAlgorithm		=  true ;
+
+			return ;
+		    }
+		//dump ( $this ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetInstance - Creates an instance of a PdfEncryptionData object.
+	
+	    PROTOTYPE
+	        $obj		=  PdfEncryptionData::GetInstance ( $object_id, $object_data ) ;
+	
+	    DESCRIPTION
+	        Returns an instance of encryption data
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  GetInstance ( $file_id, $object_id, $object_data )
+	   {
+		// Encryption mode
+		if  ( ! preg_match ( '#/Filter \s* / (?P<mode> \w+)#ix', $object_data, $object_data_match ) )
+			return  (false ) ;
+
+		switch ( strtolower ( $object_data_match [ 'mode' ] ) )
+		   {
+			case	'standard' :
+				$mode		=  self::PDFMODE_STANDARD ;
+				break ;
+
+			default :
+				if  ( self::$DEBUG  >  1 )
+					error ( new PdfToTextDecodingException ( "Unhandled encryption mode '{$object_data [ 'mode' ]}'", $object_id ) ) ;
+
+				return ( false ) ;
+
+		    }
+
+		// Basic checks have been performed, return an instance of encryption data
+		return ( new PdfEncryptionData ( $file_id, $mode, $object_id, $object_data ) ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Decrypt - Decrypts object data.
+	
+	    PROTOTYPE
+	        $data		=  $this -> Decrypt ( $object_id, $object_data ) ;
+	
+	    DESCRIPTION
+	        Decrypts object data, when the PDF file is password-protected.
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Pdf object number.
+
+		$object_data (string) -
+			Object data.
+		
+	    RETURN VALUE
+	        Returns the decrypted object data, or false if the encrypted object could not be decrypted.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  Decrypt ( $object_id, $object_data ) 
+	   {
+		if  ( $this -> UnsupportedEncryptionAlgorithm )
+			return ( false ) ;
+
+		return ( false ) ;
+		//return ( "BT (coucou)Tj ET" ) ;
+	    }
+
+
+    }
+
+
+/*==============================================================================================================
+
+    class PdfDecryptionAlgorithm -
+        Base class for algorithm decrypters.
+
+  ==============================================================================================================*/
+abstract class	PdfDecryptionAlgorithm		//extends  Object
+   {
+	protected		$EncryptionData ;
+	protected		$ObjectKey ;
+	protected		$ObjectKeyBytes ;
+	protected		$ObjectKeyLength ;
+
+
+	public function  __construct ( $encryption_data )
+	   {
+		$this -> EncryptionData		=  $encryption_data ;
+	    }
+
+
+	public static function  GetInstance  ( $encryption_data )
+	   {
+		switch  ( $encryption_data -> EncryptionAlgorithm ) 
+		   {
+			case	PdfEncryptionData::PDFCRYPT_ALGORITHM_RC4 :
+				return ( new PdfRC4DecryptionAlgorithm ( $encryption_data ) ) ;
+
+			default :
+				return ( false ) ;
+		    }
+	    }
+
+
+	public function  Reset ( )
+	   {
+		$objkey		=  array ( ) ;
+
+		for  ( $i = 0 ; $i  <  $this -> EncryptionData -> FileKeyLength ; $i ++ )
+			$objkey 	.=  $this -> EncryptionData -> FileId ;
+
+		$objkey 			.=  chr ( ( $this -> EncryptionData -> ObjectId ) & 0xFF ) ;
+		$objkey 			.=  chr ( ( $this -> EncryptionData -> ObjectId  >>   8 )  &  0xFF ) ;
+		$objkey 			.=  chr ( ( $this -> EncryptionData -> ObjectId  >>  16 )  &  0xFF ) ;
+		$objkey 			.=  chr ( 0 ) ;		// obj generation number & 0xFF
+		$objkey 			.=  chr ( 0 ) ;		// obj generation number >> 8  &  0xFF
+			
+		$md5				=  md5 ( $objkey, true ) ;
+		$this -> ObjectKey		=  $md5 ;
+		$this -> ObjectKeyLength	=  16 ;
+
+		$this -> ObjectKeyBytes		=  array ( ) ;
+
+		for  ( $i = 0 ; $i  <  $this -> ObjectKeyLength ; $i ++ )
+			$this -> ObjectKeyBytes  []	=  ord ( $this -> ObjectKey [$i] ) ;
+	    }
+
+
+	abstract public function  Decrypt  ( $data ) ;
+
+    }
+
+
+/*==============================================================================================================
+
+    class PdfRC4DecryptionAlgorithm -
+        A decrypter class for RC4 encoding.
+
+  ==============================================================================================================*/
+class	PdfRC4DecryptionAlgorithm		extends  PdfDecryptionAlgorithm
+   {
+	private	static		$InitialState		=  false ;
+	protected		$State ;
+
+
+	public function  __construct ( $encryption_data )
+	   {
+		parent::__construct ( $encryption_data ) ;
+
+		if  ( self::$InitialState  ===  false )
+			self::$InitialState	=  range ( 0, 255 ) ;
+	    }
+
+
+	public function  Reset ( )
+	   {
+		$this -> State		=  self::$InitialState ;
+		$index1			=
+		$index2			=  0 ;
+
+		for  ( $i = 0 ; $i  <  256 ; $i ++ )
+		   {
+			$index2		=  ( $this -> ObjectKeyBytes [ $index1 ] + $this -> State [$i] + $index2 )  &  0xFF ;
+
+			// Swap elements $index2 and $i from $State
+			$x				=  $this -> State [$i] ;
+			$this -> State [$i]		=  $this -> State [ $index2 ] ;
+			$this -> State [ $index2 ]	=  $x ;
+
+			$index1  =  ( $index1 + 1 ) % $this -> ObjectKeyLength ;
+		    }
+	    }
+
+
+	public function  Decrypt ( $data )
+	   {
+		$length		=  strlen ( $data ) ;
+		$x		=  0 ;
+		$y		=  0 ;
+		$result		=  '' ;
+
+		//for  ( $i = 0 ; 
+	    }
+    }
+
+    /*
+static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
+  Guchar x1, y1, tx, ty;
+
+  x1 = *x = (*x + 1) % 256;
+  y1 = *y = (state[*x] + *y) % 256;
+  tx = state[x1];
+  ty = state[y1];
+  state[x1] = ty;
+  state[y1] = tx;
+  return c ^ state[(tx + ty) % 256];
+}
+*/
