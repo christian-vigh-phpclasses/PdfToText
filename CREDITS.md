@@ -10,6 +10,7 @@ My first thanks go to the following people :
 - The phpclasses.org site, which allowed me to publish this class and provided me with a medium to help new users of my class to solve issues
 - The "*unknown developer*" ; when I have been asked for the first time at work to extract text from pdf files, I have been provided with the code referenced here : [contributions/pdftotext.php](contributions/pdftotext.php "contributions/pdftotext.php"). I don't know who this developer is (the source code did not contain any name), but I would like to really thank him, because his works were able to rapidly give me some knowledge of the PDF file format. Although I developed my class my own way, I borrowed from him the **decodeAsciiHex** and **decodeAscii85** functions.
 - I also would like to thank Adeel Ahmad Khan whose works gave me further understanding of the Pdf file format ([https://github.com/adeel/php-pdf-parser](https://github.com/adeel/php-pdf-parser "https://github.com/adeel/php-pdf-parser")).
+- The author of the TCPDF package
 
 # USERS OF PDFTOTEXT #
 
@@ -44,6 +45,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Youen Toupin, with a sample containing embedded binary images in regular PDF object streams, which is a feature I was not aware of
 - Javier Diez, who submitted a sample created by Quark XPress and helped me solve basic problems not seen so far
 - Thomas Bourgeois, who sent me a very comprehensive set of small PDF samples showing issues, some of them were existing for long
+- Rob Webster, who sent me my first sample using the LZW compression algorithm
 - And much more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
