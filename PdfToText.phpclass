@@ -24,19 +24,11 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.15]	[Date : 2017/03/17]     [Author : CV]
-	. Added the PDFOPT_IGNORE_HEADERS_AND_FOOTERS option. The previous behavior was to ignore them
-	  systematically.
-	. Changed the PdfTexterFont object to handle basic encodings
-	. Refactored class for decryption support :
-	  - Moved some functions to the PfTexterObjectBase object
-	  - Created the PdfEncryptionData class to hold encryption data defined in the PDF file, by
-	    transfering all the encryption-related properties from the PdfToText class to PdfEncryptionData
-	  - Added the EncryptionData property, which currently has the "protected" visibility
-	  - Renamed the IsPasswordProtected property to IsEncrypted
-	  Note : processing of encrypted files is not yet functional
-
-
+    [Version : 1.4.16]	[Date : 2017/03/19]     [Author : CV]
+	. Completely reviewed the way PDF objects are parsed ; the original code sometimes forced the user to
+	  change the pcre.backtrack_limit PHP setting to abnormal values (14 000 000 for parsing the Adobe
+	  PDF Specifications document itself !)
+	. Implemented the LZW decompression algorithm for text objects.
 	
     (...)
 
@@ -331,10 +323,10 @@ abstract class  PdfObjectBase		// extends  Object
 		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING   ) ;
 		    	case	'flatedecode'		:  return ( self::PDF_FLATE_ENCODING     ) ;
 			case    'dctdecode'		:  return ( self::PDF_DCT_ENCODING       ) ;
+			case	'lzwdecode'		:  return ( self::PDF_LZW_ENCODING       ) ; 
 
 			case	'ccittfaxdecode'	:  // return ( self::PDF_CCITT_FAX_ENCODING ) ;
 
-			case	'lzwdecode'		:
 			case	'runlengthdecode'	: 
 			case	'jbig2decode'		: 
 			case	'jpxdecode'		:
@@ -446,10 +438,8 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsCharacterMap  ( $decoded_data )
 	   {
-		return ( stripos ( $decoded_data, 'begincmap' )  	!==  false  ||
-			 stripos ( $decoded_data, 'beginbfchar' )  	!==  false  ||		// "begincmap" does not seem to be mandatory...
-			 stripos ( $decoded_data, 'beginbfrange' )  	!==  false  ||	
-			 stripos ( $decoded_data, '/Differences' )	!==  false ) ;
+		// preg_match is faster than calling strpos several times
+		return ( preg_match ( '#(begincmap)|(beginbfrange)|(beginbfchar)|(/Differences)#ix', $decoded_data ) ) ;
 	    }
 
 
@@ -571,12 +561,8 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsText ( $object_data, $decoded_stream_data )
 	   {
-
-		if  ( stripos ( $object_data, '/Filter'  )  !==  false  &&
-		      stripos ( $object_data, '/Length'  )  !==  false  &&
-		      stripos ( $object_data, '/Length1' )  ===  false  &&
-		      stripos ( $object_data, '/Type'    )  ===  false  &&
-		      stripos ( $object_data, '/Subtype' )  ===  false )
+		if  ( preg_match ( '# / (Filter) | (Length) #ix', $object_data )  &&
+		      ! preg_match ( '# / (Type) | (Subtype) | (Length1) #ix', $object_data ) )
 		   {
 		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm|Do)\\b/', $decoded_stream_data ) )
 				return ( true ) ;
@@ -719,7 +705,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.15" ;
+	const		VERSION					=  "1.4.16" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -1188,13 +1174,7 @@ class  PdfToText 	extends PdfObjectBase
 		if  ( $start_offset  ===  false )		// Not a pdf document !
 			error ( new PdfToTextDecodingException ( "File \"$filename\" is not a valid PDF file." ) ) ;
 		else						// May be a PDF document
-		   {
 			$this -> DocumentStartOffset	=  $start_offset ;
-
-			// Remove the garbage at the beginning of the file contents if the "%PDF" string is not positioned at the beginning
-			if  ( $start_offset )
-				$contents	=  substr ( $contents, $start_offset ) ;
-		    }
 
 		// Check that this is a PDF file with a valid version number
 		if  ( ! preg_match ( '/^ %PDF- (?P<version> \d+ (\. \d+)*) /ix', $contents, $match ) )
@@ -1260,55 +1240,16 @@ class  PdfToText 	extends PdfObjectBase
 		$author_information_object_id		=  false ;
 
 		// Extract pdf objects that are enclosed by the "obj" and "endobj" keywords
-		$matches	=  null ;
-		$status		=  preg_match_all ( '/(?P<object_id> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj/imsx', $contents, $matches ) ;
+		$pdf_objects		=  array ( ) ;
+		$contents_offset	=  $this -> DocumentStartOffset ;
+		$contents_length	=  strlen ( $contents ) ;
 
-		// We put a particular attention in treating errors returned by preg_match_all() here, since we need to be really sure why we did not
-		// find any PDF object in the supplied contents
-		if  ( ! $status ) 
+
+		while  ( $contents_offset  <  $contents_length  &&  
+				preg_match ( '/(?P<re> (?P<object_id> \d+) \s+ \d+ \s+ obj (?P<object> .*?) endobj )/imsx', $contents, $match, PREG_OFFSET_CAPTURE, $contents_offset ) )
 		   {
-			$preg_error	=  preg_last_error ( ) ;
-
-			switch  ( $preg_error )
-			   {
-				case  PREG_NO_ERROR :
-					return ( false ) ;
-
-				case  PREG_INTERNAL_ERROR :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : the preg_match_all() function encountered an internal error." ) ) ;
-
-				case  PREG_BACKTRACK_LIMIT_ERROR :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : backtrack limit reached (you may have to modify the pcre.backtrack_limit " .
-							"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.backtrack_limit' ) . ")." ) ) ;
-
-				case  PREG_JIT_STACKLIMIT_ERROR :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : JIT stack limit reached (you may disable this feature by setting the pcre.jit " .
-							"setting of your PHP.ini file to 0)." ) ) ;
-
-				case  PREG_RECURSION_LIMIT_ERROR :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : recursion limit reached (you may have to modify the pcre.recursion_limit " .
-							"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.recursion_limit' ) . ")." ) ) ;
-
-				case  PREG_BAD_UTF8_ERROR :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : bad UTF8 character encountered." ) ) ;
-
-				case PREG_BAD_UTF8_OFFSET_ERROR :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : the specified offset does not start at the beginning of a valid UTF8 codepoint." ) ) ;
-
-				default :
-					error ( new PdfToTextDecodingException ( "PDF object extraction : unkown PREG error #$preg_error" ) ) ;
-
-			    }
-		    }
-
-		// Build an object id/object data associative array ; this will later be used by the PdfTexterPageMap -> Peek() method
-		// to retrieve additional resources that may be local to a page
-		$pdf_objects	=  array ( ) ;
-
-		for  ( $i = 0, $count = count ( $matches [ 'object_id' ] ) ; $i  <  $count ; $i ++ )
-		   {
-			$object_number			=  $matches [ 'object_id' ] [$i] ;
-			$object_data			=  $matches [ 'object'    ] [$i] ;
+			$object_number		=  $match [ 'object_id' ] [0] ;
+			$object_data		=  $match [ 'object' ] [0] ;
 
 			// Handle the special case of object streams (compound objects)
 			// They are not added in the $pdf_objects array, because they could be mistakenly processed as relevant information,
@@ -1327,22 +1268,17 @@ class  PdfToText 	extends PdfObjectBase
 			// Normal (non-compound) object
 			else
 				$pdf_objects [ $object_number ]	=  $object_data ;
+
+			// Update current offset through PDF contents
+			$contents_offset	=  $match [ 're' ] [1] + strlen ( $match [ 're' ] [0] ) ;
 		    }
 
 		// Extract trailer information, which may contain the ID of an object specifying encryption flags
 		$this -> GetTrailerInformation ( $contents, $pdf_objects ) ;
+		unset ( $contents ) ;
 
 		// Character maps encountered so far
 		$cmaps			=  array ( ) ;
-
-		// Objects can be object streams which in turn contains objects (don't know if more than one nesting level could be encountered, however)
-		// It could seem elegant to use recursion to handle that ; however, this method was not designed with recursion in mind, and it would
-		// maybe require additional parameters to be passed to the recursive function, as well as putting some local variables here as private
-		// properties.
-		// The $object_stack array allows us to "flatten" the recursivity and keep track of the series of objects we are currently processing
-		// (objects coming pfrom the pdf file and object streams)
-		$object_stack		=  array ( ) ;
-		array_push ( $object_stack,  array ( 'index' => 0, 'matches' => $matches ) ) ;
 
 		// An array that will store object ids as keys and text contents as values
 		$text			=  array ( ) ;
@@ -1956,6 +1892,10 @@ class  PdfToText 	extends PdfObjectBase
 
 		   		break ;
 
+			case	self::PDF_LZW_ENCODING :
+				$decoded_stream_data	=  $this -> __decode_lzw ( $stream_data ) ;
+				break ;
+
 		   	case 	self::PDF_ASCIIHEX_ENCODING :
 		   		$decoded_stream_data 	=  $this -> __decode_ascii_hex ( $stream_data ) ;
 		   		break ;
@@ -1976,6 +1916,106 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		return ( $decoded_stream_data ) ;
+	    }
+
+
+	// __decode_lzw -
+	//	Decoding function for LZW encrypted data. This function is largely inspired by the TCPDF one but has been rewritten
+	//	for a performance gain of 30-35%.
+	private function   __decode_lzw ($data) 
+	   {
+		static $InitialDictionary      =  array
+		   (
+			"\x00", "\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07", "\x08", "\x09", "\x0A", "\x0B", "\x0C", "\x0D", "\x0E", "\x0F",
+			"\x10", "\x11", "\x12", "\x13", "\x14", "\x15", "\x16", "\x17", "\x18", "\x19", "\x1A", "\x1B", "\x1C", "\x1D", "\x1E", "\x1F",
+			"\x20", "\x21", "\x22", "\x23", "\x24", "\x25", "\x26", "\x27", "\x28", "\x29", "\x2A", "\x2B", "\x2C", "\x2D", "\x2E", "\x2F",
+			"\x30", "\x31", "\x32", "\x33", "\x34", "\x35", "\x36", "\x37", "\x38", "\x39", "\x3A", "\x3B", "\x3C", "\x3D", "\x3E", "\x3F",
+			"\x40", "\x41", "\x42", "\x43", "\x44", "\x45", "\x46", "\x47", "\x48", "\x49", "\x4A", "\x4B", "\x4C", "\x4D", "\x4E", "\x4F",
+			"\x50", "\x51", "\x52", "\x53", "\x54", "\x55", "\x56", "\x57", "\x58", "\x59", "\x5A", "\x5B", "\x5C", "\x5D", "\x5E", "\x5F",
+			"\x60", "\x61", "\x62", "\x63", "\x64", "\x65", "\x66", "\x67", "\x68", "\x69", "\x6A", "\x6B", "\x6C", "\x6D", "\x6E", "\x6F",
+			"\x70", "\x71", "\x72", "\x73", "\x74", "\x75", "\x76", "\x77", "\x78", "\x79", "\x7A", "\x7B", "\x7C", "\x7D", "\x7E", "\x7F",
+			"\x80", "\x81", "\x82", "\x83", "\x84", "\x85", "\x86", "\x87", "\x88", "\x89", "\x8A", "\x8B", "\x8C", "\x8D", "\x8E", "\x8F",
+			"\x90", "\x91", "\x92", "\x93", "\x94", "\x95", "\x96", "\x97", "\x98", "\x99", "\x9A", "\x9B", "\x9C", "\x9D", "\x9E", "\x9F",
+			"\xA0", "\xA1", "\xA2", "\xA3", "\xA4", "\xA5", "\xA6", "\xA7", "\xA8", "\xA9", "\xAA", "\xAB", "\xAC", "\xAD", "\xAE", "\xAF",
+			"\xB0", "\xB1", "\xB2", "\xB3", "\xB4", "\xB5", "\xB6", "\xB7", "\xB8", "\xB9", "\xBA", "\xBB", "\xBC", "\xBD", "\xBE", "\xBF",
+			"\xC0", "\xC1", "\xC2", "\xC3", "\xC4", "\xC5", "\xC6", "\xC7", "\xC8", "\xC9", "\xCA", "\xCB", "\xCC", "\xCD", "\xCE", "\xCF",
+			"\xD0", "\xD1", "\xD2", "\xD3", "\xD4", "\xD5", "\xD6", "\xD7", "\xD8", "\xD9", "\xDA", "\xDB", "\xDC", "\xDD", "\xDE", "\xDF",
+			"\xE0", "\xE1", "\xE2", "\xE3", "\xE4", "\xE5", "\xE6", "\xE7", "\xE8", "\xE9", "\xEA", "\xEB", "\xEC", "\xED", "\xEE", "\xEF",
+			"\xF0", "\xF1", "\xF2", "\xF3", "\xF4", "\xF5", "\xF6", "\xF7", "\xF8", "\xF9", "\xFA", "\xFB", "\xFC", "\xFD", "\xFE", "\xFF"
+		    ) ;
+		static  $DictionaryLengths	=  array 
+		   (
+			511		=>  10,
+			1023		=>  11,
+			2047		=>  12,
+			4095		=>  13,
+			8191		=>  14
+		    ) ;
+
+		$result			=  '' ;
+		$data_length		=  strlen ( $data ) ;
+		$max_data_bits		=  $data_length << 3 ;
+		$current_data_bit	=  0 ;
+
+		// Convert string to binary string
+		$bit_string		=  '' ;
+
+		for  ( $i = 0 ; $i  <  $data_length ; $i ++ )
+			$bit_string	.=  sprintf ( '%08b', ord ( $data [$i] ) ) ;
+
+		$bit_length		=  9 ;
+		$dictionary_index	=  258 ;
+
+		// initialize the dictionary (with the first 256 entries).
+		$dictionary		=  $InitialDictionary ;
+		$previous_index		=  0 ;
+
+		// Until we encounter the EOD marker (257), read $bit_length bits
+		while  ( ( $current_data_bit  <  $max_data_bits )  &&  ( ( $index = bindec (substr ( $bit_string, $current_data_bit, $bit_length ) ) )  !=  257 ) ) 
+		   {
+			$current_data_bit	+=  $bit_length ;
+
+			// Normal case : Simply process the entry
+			if  ( $index  !=   256  &&  $previous_index  !=  256 )
+			   {
+				// Check if the entry exists in the dictionary
+				if  ( $index  <  $dictionary_index ) 
+				   {
+					$result			.=  $dictionary [ $index ] ;
+					$dictionary_value	 =  $dictionary [ $previous_index ] . $dictionary [ $index ] [0] ;
+					$previous_index		 =  $index ;		// Remember this index
+				    } 
+				else 
+				   {
+					$dictionary_value	 =  $dictionary [ $previous_index ] . $dictionary [ $previous_index ] [0] ;
+					$result			.=  $dictionary_value ;
+				    }
+
+				// Update dictionary
+				$dictionary [ $dictionary_index ++ ]	=  $dictionary_value ;
+				
+				// Update bit length if needed 
+				if  ( isset ( $DictionaryLengths [ $dictionary_index ] ) )
+					$bit_length	=  $DictionaryLengths [ $dictionary_index ] ;
+			    }
+			// Clear-table marker
+			else if  ( $index  ==  256 ) 
+			   { 
+				// Reset code length in bits and dictionary index
+				$bit_length		=  9 ;
+				$dictionary_index	=  258 ;
+				$previous_index		=  256 ;
+				$dictionary		=  $InitialDictionary ;		// Reset the dictionary, with its first 256 entries
+			    }
+			// First entry
+			else
+			   {
+				$result		.=  $dictionary [ $index ] ;
+				$previous_index  =  $index ;
+			    }  
+		}
+
+		return ( $result ) ;
 	    }
 
 
@@ -4542,9 +4582,7 @@ abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public static function  CreateInstance ( $object_id, $definitions )
 	   {
-		if  ( stripos ( $definitions, 'begincmap'    )  !==  false  ||  
-		      stripos ( $definitions, 'beginbfchar'  )  !==  false  ||
-		      stripos ( $definitions, 'beginbfrange' )  !==  false )
+		if  ( preg_match ( '# (begincmap) | (beginbfchar) | (beginbfrange) #ix', $definitions ) )
 			return ( new PdfTexterUnicodeMap ( $object_id, $definitions ) ) ;
 		else if  ( stripos ( $definitions, '/Differences' )  !==  false )
 			return ( new PdfTexterEncodingMap ( $object_id, $definitions ) ) ;
@@ -7428,6 +7466,7 @@ class  PdfEncryptionData		extends  PdfObjectBase
 			return ( false ) ;
 
 		return ( false ) ;
+		//return ( $this -> Decrypter -> Decrypt ( $object_data ) ) ;
 		//return ( "BT (coucou)Tj ET" ) ;
 	    }
 
@@ -7452,28 +7491,11 @@ abstract class	PdfDecryptionAlgorithm		//extends  Object
 	public function  __construct ( $encryption_data )
 	   {
 		$this -> EncryptionData		=  $encryption_data ;
-	    }
 
-
-	public static function  GetInstance  ( $encryption_data )
-	   {
-		switch  ( $encryption_data -> EncryptionAlgorithm ) 
-		   {
-			case	PdfEncryptionData::PDFCRYPT_ALGORITHM_RC4 :
-				return ( new PdfRC4DecryptionAlgorithm ( $encryption_data ) ) ;
-
-			default :
-				return ( false ) ;
-		    }
-	    }
-
-
-	public function  Reset ( )
-	   {
-		$objkey		=  array ( ) ;
+		$objkey		=  '' ;
 
 		for  ( $i = 0 ; $i  <  $this -> EncryptionData -> FileKeyLength ; $i ++ )
-			$objkey 	.=  $this -> EncryptionData -> FileId ;
+			$objkey 	.=  $this -> EncryptionData -> FileId [$i] ;
 
 		$objkey 			.=  chr ( ( $this -> EncryptionData -> ObjectId ) & 0xFF ) ;
 		$objkey 			.=  chr ( ( $this -> EncryptionData -> ObjectId  >>   8 )  &  0xFF ) ;
@@ -7492,7 +7514,21 @@ abstract class	PdfDecryptionAlgorithm		//extends  Object
 	    }
 
 
-	abstract public function  Decrypt  ( $data ) ;
+	public static function  GetInstance  ( $encryption_data )
+	   {
+		switch  ( $encryption_data -> EncryptionAlgorithm ) 
+		   {
+			case	PdfEncryptionData::PDFCRYPT_ALGORITHM_RC4 :
+				return ( new PdfRC4DecryptionAlgorithm ( $encryption_data ) ) ;
+
+			default :
+				return ( false ) ;
+		    }
+	    }
+
+
+	abstract public function  Reset		( ) ;
+	abstract public function  Decrypt	( $data ) ;
 
     }
 
@@ -7540,12 +7576,29 @@ class	PdfRC4DecryptionAlgorithm		extends  PdfDecryptionAlgorithm
 
 	public function  Decrypt ( $data )
 	   {
+		$this -> Reset ( ) ;
 		$length		=  strlen ( $data ) ;
 		$x		=  0 ;
 		$y		=  0 ;
 		$result		=  '' ;
 
-		//for  ( $i = 0 ; 
+		for  ( $i = 0 ; $i  <  $length ; $i ++ )
+		   {
+			$ord	=  ord ( $data [$i] ) ;
+			$x	=  ( $x + 1 ) & 0xFF ;
+			$y	=  ( $this -> State [$x] + $y ) & 0xFF ;
+
+			$tx	=  $this -> State [$x] ;
+			$ty	=  $this -> State [$y] ;
+
+			$this -> State [$x]	=  $ty ;
+			$this -> State [$y]	=  $tx ;
+
+			$new_ord		=  $ord ^ $this -> State [ ( $tx + $ty ) & 0xFF ] ;
+			$result		.=  chr ( $new_ord ) ;
+		    }
+
+		return ( $result ) ;
 	    }
     }
 
