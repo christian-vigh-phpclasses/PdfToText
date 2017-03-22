@@ -24,11 +24,15 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.16]	[Date : 2017/03/19]     [Author : CV]
-	. Completely reviewed the way PDF objects are parsed ; the original code sometimes forced the user to
-	  change the pcre.backtrack_limit PHP setting to abnormal values (14 000 000 for parsing the Adobe
-	  PDF Specifications document itself !)
-	. Implemented the LZW decompression algorithm for text objects.
+    [Version : 1.4.17]	[Date : 2017/03/21]     [Author : CV]
+	. Drawing instructions between BX/EX were unduly removed, causing some text to be missing sometimes in
+	  the output.
+	. Fixed an inappropriate property setting in class PdfTexterTimeoutException
+	. Handle the case where /XObjects contents are not inline but specify another object with the inline
+	  contents. This caused some text to be missed in the output.
+	. When a Unicode font had a secondary character map (representing the /Differences array), the 
+	  secondary cmap was not searched if the character to be mapped was not also defined in the primary
+	  cmap. This caused some mappings to be missed.
 	
     (...)
 
@@ -97,7 +101,7 @@ class  PdfToTextTimeoutException		extends  PdfToTextException
 
 		$text	.=  "(php limit = {$php_setting}s, class limit = {$class_setting}s) : $message" ;
 
-		$this -> Global		=  $global ;
+		$this -> GlobalTimeout		=  $global ;
 
 		parent::__construct ( $text ) ;
 	    }
@@ -451,7 +455,11 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFont ( $object_data )
 	   {
-		return ( stripos ( $object_data, '/BaseFont' )  !==  false ) ;
+		return 
+		   ( 
+			stripos ( $object_data, '/BaseFont' )  !==  false  ||
+			preg_match ( '#/Type \s* /Font#ix', $object_data ) 
+		    ) ;
 	    }
 
 
@@ -466,6 +474,8 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  IsFontMap ( $object_data )
 	   {
+		$object_data	=  self::UnescapeHexCharacters ( $object_data ) ;
+
 		if  ( preg_match ( '#<< \s* ( ' . self::$FontSpecifiers . ' ) \s+ .* >>#imsx', $object_data ) )
 			return ( true ) ;
 		else
@@ -693,6 +703,57 @@ abstract class  PdfObjectBase		// extends  Object
 
 		return ( $result ) ;
 	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        UnescapeHexCharacters - Unescapes characters in the #xy notation.
+	
+	    PROTOTYPE
+	        $result		=  $this -> UnescapeHexCharacters ( $data ) ;
+	
+	    DESCRIPTION
+		Some specifications contain hex characters specified as #xy. For the moment, I have met such a construct in
+		font aliases such as :
+			/C2#5F0 25 0 R
+		where "#5F" stands for "_", giving :
+			/C2_0 25 0 R
+		Hope that such constructs do not happen in other places...
+	
+	    PARAMETERS
+	        $data (string) -
+	                String to be unescaped.
+	
+	    RETURN VALUE
+	        The input string with all the hex character representations replaced with their ascii equivalent.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  UnescapeHexCharacters ( $data )
+	   {
+		if  ( strpos ( $data, 'stream' )  ===  false  &&  preg_match ( '/(?P<hex> \# [0-9a-f] [0-9a-f])/ix', $data ) )
+		    {
+			preg_match_all ( '/(?P<hex> \# [0-9a-f] [0-9a-f])/ix', $data, $matches ) ;
+		  
+			$searches		=   array ( ) ;
+			$replacements		=   array ( ) ;
+
+			foreach  ( $matches [ 'hex' ]  as  $hex )
+			   {
+				if  ( ! isset ( $searches [ $hex ] ) )
+				   {
+					$searches [ $hex ]	=  $hex ;
+					$replacements []	=  chr ( hexdec ( substr ( $hex, 1 ) ) ) ;
+				    }
+
+				$data	=  str_replace ( $searches, $replacements, $data ) ;
+			    }
+		     }
+
+		return ( $data ) ;
+	    }
+
+
     }
 
 
@@ -705,7 +766,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.16" ;
+	const		VERSION					=  "1.4.17" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
@@ -851,7 +912,6 @@ class  PdfToText 	extends PdfObjectBase
 		 '^[fhnqQS] \s+',
 		 '^ \s* (\b [a-zA-Z] \s+)+',
 		 '\s* (\b [a-zA-Z] \s+)+$',
-		 'BX \s+ .*? EX',
 		 '-?0 (\. \d+)? \s+ T[cw]',
 		 '\bBI\b .*? \bID\b .*? \bEI\b'
 	    ) ;
@@ -1326,7 +1386,6 @@ class  PdfToText 	extends PdfObjectBase
 				else if  ( $this -> IsFontMap ( $object_data ) )
 				   {
 					$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
-					//continue ;
 				    }
 				// Ignore other objects that do not contain an encoded stream
 				else 
@@ -4297,6 +4356,8 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	//		<</C0_0 5 0 R
 	public function  AddFontMap ( $object_id, $object_data )
 	   {
+		$object_data	=  self::UnescapeHexCharacters ( $object_data ) ;
+
 		// The same object can hold different notations for font associations
 		if  ( preg_match_all ( '# (?P<font> ' . self::$FontSpecifiers . ' ) \s+ (?P<object> \d+) #imsx', $object_data, $matches ) )
 		   {
@@ -4506,9 +4567,12 @@ class  PdfTexterFont		extends PdfObjectBase
 				$this -> CharacterMap	=  new  PdfTexterEncodingMap ( $cmap_id, $this -> FontVariant ) ;
 				break ;
 
+			case	self::FONT_ENCODING_UNICODE_MAP :
+				break ;
+
 			default :
 				if  ( PdfToText::$DEBUG )
-					warning ( "Unknown font type encountered for object #$resource_id, character map #$cmap_id." ) ;
+					warning ( "Unknown font type #$font_type encountered for object #$resource_id, character map #$cmap_id." ) ;
 		    }
 	    }
 
@@ -4520,6 +4584,8 @@ class  PdfTexterFont		extends PdfObjectBase
 	   {
 		if  ( $this -> CharacterMap )
 		   {
+			// Character is defined in the character map ; check if it has been overridden by a /Differences array in
+			// a secondary character map
 			if  ( isset ( $this -> CharacterMap [ $ch ] ) )
 			   {
 				// Since a /ToUnicode map can have an associated /Encoding map with a /Differences list, this is the right place
@@ -4533,6 +4599,13 @@ class  PdfTexterFont		extends PdfObjectBase
 					else
 						$code	=  $this -> CharacterMap [ $ch ] ;
 				    }
+
+				return ( $code ) ;
+			    }
+			// On the contrary, the character may not be defined in the main character map but may exist in the secondary cmap
+			else if  ( $this -> SecondaryCharacterMap  &&  isset ( $this -> SecondaryCharacterMap [ $ch ] ) )
+			   {
+				$code	=  $this -> SecondaryCharacterMap [ $ch ] ;
 
 				return ( $code ) ;
 			    }
@@ -5153,6 +5226,11 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		'udblacute'		=>  array ( 0x171, 0x171, 0x171, 0x171 ),
 		'Odblacute'		=>  array ( 0x150, 0x150, 0x150, 0x150 ),
 		'Udblacute'		=>  array ( 0x170, 0x170, 0x170, 0x170 ),
+
+		// Don't know if these ones are official...
+		'a0'			=>  array ( 0x2D, 0x2D, 0x2D, 0x2D ),			// A long hyphen
+		'a1'			=>  array ( 0x2192, 0x2192, 0x2192, 0x2192 ),		// Right arrow
+		'a2'			=>  array ( 0x2D, 0x2D, 0x2D, 0x2D ),			// Another hyphen, not so long
 	   ) ;
 
 
@@ -6096,6 +6174,14 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 
 		// Whatever we will be analyzing (an object contents or inline contents following the /Resources parameter),
 		// the text will be enclosed within double angle brackets (<< ... >>)
+
+		// A small kludge for /XObject which specify an object reference ("15 0 R") instead of XObjects mappings
+		// ("<< ...>>" )
+		if  ( $parameter   ==  '/XObject'  &&  preg_match ( '#/XObject \s+ (?P<obj> \d+) \s+ \d+ \s+ R#ix', $data, $match ) )
+		   {
+			$data = '/XObject ' . $pdf_object_list [ $match [ 'obj' ] ] ;
+		    }
+		
 		if  ( preg_match ( "#$parameter \s* << \s* (?P<mappings> .*?) \s* >>#imsx", $data, $match ) )
 		   {
 			preg_match_all ( '# (?P<mapping> / [^\s]+) \s+ (?P<object_id> \d+) \s+ \d+ \s+ R#ix', $match [ 'mappings' ], $matches ) ;
