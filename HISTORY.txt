@@ -1,3 +1,13 @@
+    [Version : 1.4.17]	[Date : 2017/03/21]     [Author : CV]
+	. Drawing instructions between BX/EX were unduly removed, causing some text to be missing sometimes in
+	  the output.
+	. Fixed an inappropriate property setting in class PdfTexterTimeoutException
+	. Handle the case where /XObjects contents are not inline but specify another object with the inline
+	  contents. This caused some text to be missed in the output.
+	. When a Unicode font had a secondary character map (representing the /Differences array), the 
+	  secondary cmap was not searched if the character to be mapped was not also defined in the primary
+	  cmap. This caused some mappings to be missed.
+	
     [Version : 1.4.16]	[Date : 2017/03/19]     [Author : CV]
 	. Completely reviewed the way PDF objects are parsed ; the original code sometimes forced the user to
 	  change the pcre.backtrack_limit PHP setting to abnormal values (14 000 000 for parsing the Adobe
