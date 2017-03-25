@@ -24,15 +24,21 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.17]	[Date : 2017/03/21]     [Author : CV]
-	. Drawing instructions between BX/EX were unduly removed, causing some text to be missing sometimes in
-	  the output.
-	. Fixed an inappropriate property setting in class PdfTexterTimeoutException
-	. Handle the case where /XObjects contents are not inline but specify another object with the inline
-	  contents. This caused some text to be missed in the output.
-	. When a Unicode font had a secondary character map (representing the /Differences array), the 
-	  secondary cmap was not searched if the character to be mapped was not also defined in the primary
-	  cmap. This caused some mappings to be missed.
+    [Version : 1.4.18]	[Date : 2017/03/25]     [Author : CV]
+	. Fixed a warning issued when author information in buggy PDFs referred to non-existing objects.
+	. The PageSeparator property was not taken into account by the GetPageFromOffset() method.
+	. Fixed a regression which caused an exception to be thrown if the PDF document did not exactly start
+	  with '%PDF'
+	. Remove more useless instruction from the input stream before processing it (graphic-related
+	  instructions).
+	. Trying to process object streams that contain invalid gzip data led to an infinite loop.
+	. Handle buggy PDF containing object streams which do not start with an even number of integer values
+	  (this should normally be a list of object number/offset pairs)
+	. The CodePointToUtf8() function was running into an inifinite loop when the high order bit of the
+	  supplied value was set (unsigned right-shift operator does not exist in PHP 5.*).
+	. Handle another kind of buggy PDF that have a page catalog referring to a non-existing object ; in this
+	  case the behavior is the same as if there is no page catalog at all : everything is grouped onto a
+	  single page.
 	
     (...)
 
@@ -189,7 +195,7 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static  $FontSpecifiers	=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z])' ;
+	protected static  $FontSpecifiers	=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F[A-Z]+)' ;
 
 
 	public function  __construct ( )
@@ -227,7 +233,7 @@ abstract class  PdfObjectBase		// extends  Object
 			   {
 				$entity		  =  '&#' . ( $code & 0xFFFF ) . ';' ;
 				$result		  =  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) . $result ;
-				$code		>>=  16 ;
+				$code		  =  ( integer ) ( $code / 0xFFFF ) ;	// There is no unsigned right-shift operator in PHP...
 			    }
 
 			return ( $result ) ;
@@ -752,8 +758,6 @@ abstract class  PdfObjectBase		// extends  Object
 
 		return ( $data ) ;
 	    }
-
-
     }
 
 
@@ -766,23 +770,30 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.17" ;
+	const		VERSION					=  "1.4.18" ;
 
 	// Pdf processing options
-	const		PDFOPT_NONE				=  0x0000 ;		// No extra option
-	const		PDFOPT_REPEAT_SEPARATOR			=  0x0001 ;		// Repeats the Separator property if the offset between two text blocks (in array notation)
+	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
+	const		PDFOPT_REPEAT_SEPARATOR			=  0x00000001 ;		// Repeats the Separator property if the offset between two text blocks (in array notation)
 											// is greater than $this -> MinSpaceWidth
-	const		PDFOPT_GET_IMAGE_DATA			=  0x0002 ;		// Retrieve raw image data in the $ths -> ImageData array
-	const		PDFOPT_DECODE_IMAGE_DATA		=  0x0004 ;		// Creates a jpeg resource for each image
-	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x0008 ;		// Ignore text leading values
-	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x0010 ;		// Join hyphenated words that are split on two lines
-	const		PDFOPT_AUTOSAVE_IMAGES			=  0x0020 ;		// Autosave images ; the ImageFileTemplate property will need to be defined
-	const		PDFOPT_ENFORCE_EXECUTION_TIME		=  0x0040 ;		// Enforces the max_execution_time PHP setting when processing a file. A PdfTexterTimeoutException
+	const		PDFOPT_GET_IMAGE_DATA			=  0x00000002 ;		// Retrieve raw image data in the $ths -> ImageData array
+	const		PDFOPT_DECODE_IMAGE_DATA		=  0x00000004 ;		// Creates a jpeg resource for each image
+	const		PDFOPT_IGNORE_TEXT_LEADING		=  0x00000008 ;		// Ignore text leading values
+	const		PDFOPT_NO_HYPHENATED_WORDS		=  0x00000010 ;		// Join hyphenated words that are split on two lines
+	const		PDFOPT_AUTOSAVE_IMAGES			=  0x00000020 ;		// Autosave images ; the ImageFileTemplate property will need to be defined
+	const		PDFOPT_ENFORCE_EXECUTION_TIME		=  0x00000040 ;		// Enforces the max_execution_time PHP setting when processing a file. A PdfTexterTimeoutException
 											// will be thrown if processing of a single file reaches (time_limit - 1 second) by default
 											// The MaxExecutionTime property can be set to modify this default value.
-	const		PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME	=  0x0080 ;		// Same as PDFOPT_ENFORCE_EXECUTION_TIME, but for all calls to the Load() method of the PdfToText class
+	const		PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME	=  0x00000080 ;		// Same as PDFOPT_ENFORCE_EXECUTION_TIME, but for all calls to the Load() method of the PdfToText class
 											// The MaxGlobalExecutionTime static property can be set to modify the default time limit
-	const		PDFOPT_IGNORE_HEADERS_AND_FOOTERS	=  0x0300 ;		// Ignore headers and footers
+	const		PDFOPT_IGNORE_HEADERS_AND_FOOTERS	=  0x00000300 ;		// Ignore headers and footers
+
+	const		PDFOPT_RAW_LAYOUT			=  0x00000000 ;		// Layout rendering : raw (default)
+	const		PDFOPT_BASIC_LAYOUT			=  0x00000400 ;		// Layout rendering : basic 
+
+	const		PDFOPT_LAYOUT_MASK			=  0x00000C00 ;		// Mask to isolate the targeted layout
+
+	const		PDFOPT_ENHANCED_STATISTICS		=  0x00001000 ;		// Compute statistics on PDF language instructions
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -913,7 +924,8 @@ class  PdfToText 	extends PdfObjectBase
 		 '^ \s* (\b [a-zA-Z] \s+)+',
 		 '\s* (\b [a-zA-Z] \s+)+$',
 		 '-?0 (\. \d+)? \s+ T[cw]',
-		 '\bBI\b .*? \bID\b .*? \bEI\b'
+		 '\bBI\b .*? \bID\b .*? \bEI\b',
+		 '\/ \w+ \s+ ( (cs) | (CS) | (ri) | (gs) )'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs		=  array
@@ -1237,7 +1249,7 @@ class  PdfToText 	extends PdfObjectBase
 			$this -> DocumentStartOffset	=  $start_offset ;
 
 		// Check that this is a PDF file with a valid version number
-		if  ( ! preg_match ( '/^ %PDF- (?P<version> \d+ (\. \d+)*) /ix', $contents, $match ) )
+		if  ( ! preg_match ( '/ %PDF- (?P<version> \d+ (\. \d+)*) /ix', $contents, $match, 0, $start_offset ) )
 			error ( new PdfToTextDecodingException ( "File \"$filename\" is not a valid PDF file." ) ) ;
 
 		$this -> PdfVersion 		=  $match [ 'version' ] ;
@@ -1273,7 +1285,25 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> Statistics			=  array
 		   (
 			'TextSize'			=>  0,				// Total size of drawing instructions ("text" objects)
-			'OptimizedTextSize'		=>  0				// Optimized text size, with useless instructions removed
+			'OptimizedTextSize'		=>  0,				// Optimized text size, with useless instructions removed
+			'Distributions'			=>  array			// Statistics about handled instructions distribution - Works only with the page layout option in debug mode
+			   (
+				'operand'	=>  0,
+				'Tm'		=>  0,
+				'Td'		=>  0,
+				'TD'		=>  0,
+				"'"		=>  0,
+				'TJ'		=>  0,
+				'Tj'		=>  0,
+				'Tf'		=>  0,
+				'TL'		=>  0,
+				'T*'		=>  0,
+				'('		=>  0,
+				'<'		=>  0,
+				'['		=>  0,
+				'template'	=>  0,
+				'ignored'	=>  0
+			    )
 		    ) ;
 
 		// Per-instance execution time limit
@@ -1295,6 +1325,16 @@ class  PdfToText 	extends PdfObjectBase
 		// Systematically set the GET_IMAGE_DATA flag if DECODE_IMAGE_DATA is specified (debug mode only)
 		if  ( self::$DEBUG  &&  $this -> Options  &  self::PDFOPT_DECODE_IMAGE_DATA )
 			$this -> Options	|=  self::PDFOPT_GET_IMAGE_DATA ;
+
+		// Since page layout options take 2 bits, but not all of the 4 possible values are allowed, make sure that an invalid
+		// value will default to PDFOPT_RAW_LAYOUT value
+		$layout_option		=  $this -> Options & self::PDFOPT_LAYOUT_MASK ;
+
+		if  ( ! $layout_option  ===  self::PDFOPT_RAW_LAYOUT  &&  $layout_option  !==  self::PDFOPT_BASIC_LAYOUT )
+		   {
+			$layout_option		=  self::PDFOPT_RAW_LAYOUT ;
+			$this -> Options	=  ( $this -> Options & ~self::PDFOPT_LAYOUT_MASK ) | self::PDFOPT_RAW_LAYOUT ;
+		    }
 
 		// Author information needs to be processed after, because it may reference objects that occur later in the PDF stream
 		$author_information_object_id		=  false ;
@@ -1318,12 +1358,12 @@ class  PdfToText 	extends PdfObjectBase
 			if  ( $this -> IsObjectStream ( $object_data ) )
 			   {
 				// Ignore ill-formed object streams
-				if  ( ( $object_stream_matches = $this -> DecodeObjectStream ( $object_number, $object_data ) )  ===  false )
-					continue ;
-
-				// Add this list of objects to the list of known objects
-				for  ( $j = 0, $object_stream_count = count ( $object_stream_matches [ 'object_id' ] ) ; $j  <  $object_stream_count ; $j ++ )
-					$pdf_objects [ $object_stream_matches [ 'object_id' ] [$j] ]	=  $object_stream_matches [ 'object' ] [$j] ;
+				if  ( ( $object_stream_matches = $this -> DecodeObjectStream ( $object_number, $object_data ) )  !==  false )
+				   {
+					// Add this list of objects to the list of known objects
+					for  ( $j = 0, $object_stream_count = count ( $object_stream_matches [ 'object_id' ] ) ; $j  <  $object_stream_count ; $j ++ )
+						$pdf_objects [ $object_stream_matches [ 'object_id' ] [$j] ]	=  $object_stream_matches [ 'object' ] [$j] ;
+				    }
 			    }
 			// Normal (non-compound) object
 			else
@@ -1410,7 +1450,7 @@ class  PdfToText 	extends PdfObjectBase
 				if  ( ! $stream_match )
 					continue ;
 			    }
-			   
+
 			// Check if the stream contains data (yes, I have found a sample that had streams of length 0...)
 			// In other words : ignore empty streams
 			if  ( stripos ( $object_data, '/Length 0' )  !==  false )
@@ -1475,8 +1515,10 @@ class  PdfToText 	extends PdfObjectBase
 					    }
 				    }
 				else
+				   {
 					$text [ $object_number ]	=  
 					$text_data			=  $decoded_stream_data ;
+				    }
 					
 
 				// The current object may be a text object that have been defined as an XObject in some other object
@@ -1514,16 +1556,37 @@ class  PdfToText 	extends PdfObjectBase
 				
 			$this -> Pages [ $page_number ]		=  '' ;
 
-			foreach  ( $page_objects  as  $page_object ) 
+			if  ( $layout_option  ===  self::PDFOPT_RAW_LAYOUT )
 			   {
-				if  ( isset ( $text [ $page_object ] ) )
+				foreach  ( $page_objects  as  $page_object ) 
 				   {
-					$new_text				 =  $this -> PageMap -> ProcessTemplateReferences ( $page_number, $text [ $page_object ] ) ;
-					$object_text				 =  $this -> ExtractText ( $page_number, $page_object, $new_text, $current_font ) ;
-					$this -> Pages [ $page_number ]		.=  $object_text ;
+					if  ( isset ( $text [ $page_object ] ) )
+					   {
+						$new_text				 =  $this -> PageMap -> ProcessTemplateReferences ( $page_number, $text [ $page_object ] ) ;
+						$object_text				 =  $this -> ExtractText ( $page_number, $page_object, $new_text, $current_font ) ;
+						$this -> Pages [ $page_number ]		.=  $object_text ;
+					    }
+					else if  ( self::$DEBUG  >  1 )
+						echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
 				    }
-				else if  ( self::$DEBUG  >  1 )
-					echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
+			     }
+			// New style (basic) layout rendering
+			else if  ( $layout_option  ===  self::PDFOPT_BASIC_LAYOUT )
+			   {
+				$page_fragments		=  array ( ) ;
+
+				foreach  ( $page_objects  as  $page_object ) 
+				   {
+					if  ( isset ( $text [ $page_object ] ) )
+					   {
+						$new_text				 =  $this -> PageMap -> ProcessTemplateReferences ( $page_number, $text [ $page_object ] ) ;
+						$this -> ExtractTextWithLayout ( $page_fragments, $page_number, $page_object, $new_text, $current_font ) ;
+					    }
+					else if  ( self::$DEBUG  >  1 )
+						echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
+				    }
+
+				//$this -> Pages [ $page_number ]		=  $this -> __convert_fragments_to_text ( $page_fragments ) ;
 			    }
 		    }
 
@@ -1532,7 +1595,9 @@ class  PdfToText 	extends PdfObjectBase
 			$this -> RetrieveAuthorInformation ( $author_information_object_id, $pdf_objects ) ;
 
 		// Build the page locations (ie, starting and ending offsets)
-		$offset		=  0 ;
+		$offset			=  0 ;
+		$page_separator		=  utf8_encode ( $this -> PageSeparator ) ;
+		$page_separator_length	=  strlen ( $page_separator ) ;
 
 		foreach  ( $this -> Pages  as  &$page )
 		   {
@@ -1542,11 +1607,11 @@ class  PdfToText 	extends PdfObjectBase
 
 			$length				 =  strlen ( $page ) ;
 			$this -> PageLocations []	 =  array ( 'start' => $offset, 'end' => $offset + $length - 1 ) ;
-			$offset				+=  $length ;
+			$offset				+=  $length + $page_separator_length ;
 		    }
 
 		// And finally, the Text property
-		$this -> Text	=  implode ( utf8_encode ( $this -> PageSeparator ), $this -> Pages ) ;
+		$this -> Text	=  implode ( $page_separator, $this -> Pages ) ;
 
 		// Free memory
 		$this -> MapIdBuffer			=  array ( ) ;
@@ -1563,9 +1628,45 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> MemoryUsage		=  $memory_usage_end      - $this -> __memory_usage_start ;
 		$this -> MemoryPeakUsage	=  $memory_peak_usage_end - $this -> __memory_peak_usage_start ;
 
+		// Adjust the "Distributions" statistics
+		if  ( $this -> Options  &  self::PDFOPT_ENHANCED_STATISTICS )
+		   {
+			$instruction_count		=  0 ;
+			$statistics			=  array ( ) ;
+
+			// Count the total number of instructions 
+			foreach  ( $this -> Statistics [ 'Distributions' ]  as  $count )
+				$instruction_count  +=  $count ;
+
+			// Now transform the Distributions entries into an associative array containing the instruction counts
+			// ('count') and their relative percentage
+			foreach  ( $this -> Statistics [ 'Distributions' ]  as  $name => $count )
+			   {
+				if  ( $instruction_count ) 
+					$percent	=  round ( ( 100.0 / $instruction_count ) * $count, 2 ) ;
+				else
+					$percent	=  0 ;
+
+				$statistics [ $name ]	=  array
+				   (
+					'instruction'		=>  $name,
+					'count'			=>  $count,
+					'percent'		=>  $percent 
+				    ) ;
+			    }
+
+			// Set the new 'Distributions' array and sort it by instruction count in reverse order
+			$this -> Statistics [ 'Distributions' ]		=  $statistics ;
+			uksort ( $this -> Statistics [ 'Distributions' ], array ( $this, '__sort_distributions' ) ) ;
+		    }
+
 		// All done, return
 		return ( $this -> Text ) ;
 	    }
+
+
+	public function  __sort_distributions ( $a, $b )
+	   { return ( $this -> Statistics [ 'Distributions' ] [$b] [ 'count' ] - $this -> Statistics [ 'Distributions' ] [$a] [ 'count' ] ) ; }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -2355,10 +2456,10 @@ class  PdfToText 	extends PdfObjectBase
 		// $series should contain an even number of values
 		if  ( count ( $series ) % 2 )
 		   {
-			if  ( self::$DEBUG  >  1 )
-				error ( new PdfToTextDecodingException ( "Object stream should start with an even number of integer values.", $object_id ) ) ;
+			if  ( self::$DEBUG )
+				warning ( new PdfToTextDecodingException ( "Object stream should start with an even number of integer values.", $object_id ) ) ;
 
-			return ( false ) ;
+			array_pop ( $series ) ;
 		    }
 
 		// Extract every individual object
@@ -2505,7 +2606,7 @@ class  PdfToText 	extends PdfObjectBase
 		  the (restricted) parsing of text drawing instructions.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	private function  ExtractText ( $page_number, $object_id, $data, &$current_font )
+	protected function  ExtractText ( $page_number, $object_id, $data, &$current_font )
 	   {
 		$new_data	=  $this -> __strip_useless_instructions ( $data ) ;
 
@@ -3030,9 +3131,171 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
+	protected function  ExtractTextWithLayout ( &$page_fragments, $page_number, $object_id, $data, &$current_font )
+	   {
+		// Text fragments will be stored as associative arrays, giving their absolute (x,y) coordinates
+		if  ( ! isset ( $page_fragments [ $page_number ] ) )
+			$page_fragments [ $page_number ]	=  array ( ) ;
+
+		$page_fragment_count	=  count ( $page_fragments [ $page_number ] ) ;
+
+		// Remove useless instructions
+		$new_data	=  $this -> __strip_useless_instructions ( $data ) ;
+
+		if  ( self::$DEBUG )
+		   {
+			echo "\n----------------------------------- TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
+			echo $data ;
+			echo "\n----------------------------------- OPTIMIZED TEXT #$object_id\n" ;
+			echo $new_data ;
+		    }
+
+		$data					=  $new_data ;
+		$data_length 				=  strlen ( $data ) ;		// Data length
+
+		// Index into the specified block of text-drawing instructions
+		$data_index 				=  0 ;
+
+		// Absolute (x,y) positions
+		$absolute_x				=
+		$absolute_y				=  0 ;
+
+		// Current font map width, in bytes, plus a flag saying whether the current font is mapped or not
+		$current_template	=  '' ;
+		$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
+
+		// Operand stack
+		$operand_stack				=  array ( ) ;
+
+		// Number of tokens processed so far
+		$token_count				=  0 ;
+
+		// Global/local execution time measurements
+		$tokens_between_timechecks	=  1000 ;
+		$enforce_global_execution_time	=  $this -> Options  &  self::PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME ;
+		$enforce_local_execution_time	=  $this -> Options  &  self::PDFOPT_ENFORCE_EXECUTION_TIME ;
+		$enforce_execution_time		=  $enforce_global_execution_time | $enforce_local_execution_time ;
+
+		// Whether we should compute enhanced statistics
+		$enhanced_statistics		=  ( $this -> Options  &  self::PDFOPT_ENHANCED_STATISTICS ) ;
+
+		// Loop through the stream of tokens
+		while  ( ( $part = $this -> __next_token ( $page_number, $data, $data_length, $data_index ) )  !==  false )
+		   {
+			$token 		=  $part [0] ;
+			$token_start	=  $token [0] ;
+			$next_index 	=  $part [1] ;
+			$token_count ++ ;
+
+			// Check if we need to enforce execution time checking, to prevent PHP from terminating our script without any hope
+			// of catching the error
+			if  ( $enforce_execution_time  &&  ( $token_count % $tokens_between_timechecks ) )
+			   {
+				if  ( $enforce_global_execution_time )
+				   {
+					$now	=  microtime ( true ) ;
+
+					if  ( $now - self::$GlobalExecutionStartTime  >  self::$MaxGlobalExecutionTime )
+						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", true, self::$PhpMaxExecutionTime, self::$MaxGlobalExecutionTime ) ) ;
+				    }
+
+				// Per-instance timeout handling
+				if  ( $enforce_local_execution_time )
+				   {
+					$now	=  microtime ( true ) ;
+
+					if  ( $now - $this -> ExecutionStartTime  >  $this -> MaxExecutionTime )
+						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", false, self::$PhpMaxExecutionTime, $this -> MaxExecutionTime ) ) ;
+				    }
+			    }
+
+			// Handle instructions that are of interest for us
+			// Numeric or flag for an instruction
+			if  ( $token_start  ==  '/'  ||  is_numeric ( $token ) )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'operand' ] ++ ;
+			    }
+			// Text in the (...) notation
+			else if  ( $token_start  ==  '(' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '(' ] ++ ;
+			    }
+			// Text array in the [...] notation
+			else if  ( $token_start  ==  '[' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '[' ] ++ ;
+			    }
+			// Text array in hex format (<...> notation)
+			else if  ( $token_start  ==  '<' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
+			    }
+			// Tick instruction
+			else if  ( $token  ==  "'" )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ "'" ] ++ ;
+			    }
+			// Tm instruction
+			else if  ( $token  ==  'Tm' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tm' ] ++ ;
+			    }
+			// Td instruction
+			else if  ( $token  ==  'Td' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
+			    }
+			// TD instruction
+			else if  ( $token  ==  'TD' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TD' ] ++ ;
+			    }
+			// Tj instruction
+			else if  ( $token  ==  'Tj' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tj' ] ++ ;
+			    }
+			// TJ instruction
+			else if  ( $token  ==  'TJ' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TJ' ] ++ ;
+			    }
+			// Tf instruction
+			else if  ( $token  ==  'Tf' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tf' ] ++ ;
+			    }
+			// TL instruction
+			else if  ( $token  ==  'TL' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TL' ] ++ ;
+			    }
+			// T* instruction
+			else if  ( $token  ==  'T*' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
+			    }
+			// Template (substituted in __next_token)
+			else if  ( $token_start  ==  '!' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
+			    }
+			// Other instructions
+			else
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
+			    }
+
+			// Update current index in instruction stream
+			$data_index	=  $next_index ;
+		    }
+	    }
+
+
+
 	// __next_instruction -
 	//	Retrieves the next instruction from the drawing text block.
-	function  __next_instruction ( $page_number, $data, $data_length, $index, $current_template )
+	private function  __next_instruction ( $page_number, $data, $data_length, $index, $current_template )
 	   {
 		static 	$last_instruction 	=  false ;
 
@@ -3047,6 +3310,9 @@ class  PdfToText 	extends PdfObjectBase
 			return ( $result ) ;
 		    }
 
+		// Whether we should compute enhanced statistics
+		$enhanced_statistics		=  ( $this -> Options  &  self::PDFOPT_ENHANCED_STATISTICS ) ;
+
 		// Holds the floating-point values encountered so far
 		$number_stack 	=  array ( ) ;
 
@@ -3058,12 +3324,17 @@ class  PdfToText 	extends PdfObjectBase
 
 			// Floating-point number : push it onto the stack
 			if  ( ( $token [0]  >=  '0'  &&  $token [0]  <=  '9' )  ||  $token [0]  ==  '-'  ||  $token [0]  ==  '+'  ||  $token [0]  ==  '.' )
+			   {
 				$number_stack []	=  $token ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'operand' ] ++ ;
+			    }
 			// 'Tm' instruction : return a "goto" instruction with the x and y coordinates
 			else if  ( $token  ==  'Tm' )
 			   {
 				$x 	=  $number_stack [4] ;
 				$y 	=  $number_stack [5] ;
+
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tm' ] ++ ;
 
 				return ( array ( 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => false, 'token' => $token ) ) ;
 			    }
@@ -3073,33 +3344,60 @@ class  PdfToText 	extends PdfObjectBase
 				$x 	=  $number_stack [0] ;
 				$y 	=  $number_stack [1] ;
 
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ $token ] ++ ;
+
 				return ( array ( 'instruction' => 'goto', 'next' => $next_index, 'x' => $x, 'y' => $y, 'relative' => true, 'token' => $token ) ) ;
 			    }
 			// Output text "'" instruction, with conditional newline
 			else if  ( $token [0]  ==  "'" )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ "'" ] ++ ;
+
 				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false, 'token' => $token ) ) ;
+			    }
 			// Same as above
 			else if  ( $token  ==  'TJ'  ||  $token  ==  'Tj' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ $token ] ++ ;
+
 				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => false, 'token' => $token ) ) ;
+			    }
 			// Set font size
 			else if  ( $token  ==  'Tf' )
+			    {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tf' ] ++ ;
+
 				return ( array ( 'instruction' => 'fontsize', 'next' => $next_index, 'size' => $number_stack [0], 'token' => $token ) ) ;
+			     }
 			// Text leading (spacing used by T*)
 			else if  ( $token  ==  'TL' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TL' ] ++ ;
+
 				return ( array ( 'instruction' => 'leading', 'next' => $next_index, 'size' => $number_stack [0], 'token' => $token ) ) ;
+			    }
 			// Position to next line
 			else if  ( $token  ==  'T*' )
+			    {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
+				
 				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ) ) ;
+			     }
 			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return a "newline" instruction
 			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
 			// appear in the pdf file (which is likely to be different from their position on a graphic screen).
 			else if  ( $token  ==  'Do' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
+
 				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => false, 'token' => $token ) ) ;
+			    }
 			// Raw text output
 			else if  ( $token [0]  ==  '(' )
 			   {
 			   	$next_part 	=  $this -> __next_token ( $page_number, $data, $data_length, $next_index ) ;
 			   	$instruction	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( $token ), 'token' => $token ) ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '(' ] ++ ;
 
 			   	if  ( $next_part [0]  ==  "'" )
 			   	   {
@@ -3112,6 +3410,7 @@ class  PdfToText 	extends PdfObjectBase
 		   	else if  ( $token [0]  ==  '<'  )
 			   {
 				$ch	=  $token [1] ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
 
 				if  ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass & self::CTYPE_ALNUM ) )
 				   {
@@ -3131,6 +3430,7 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( $token [0]  ==  '[' )
 			   {
 				$values 	=  $this -> __extract_chars_from_array ( $token ) ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '[' ] ++ ;
 				$instruction 	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => $values [0], 'offsets' => $values [1], 'token' => $token ) ;
 
 				return ( $instruction ) ;
@@ -3139,6 +3439,7 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( preg_match ( '#^ ( ' . self::$FontSpecifiers . ' ) #ix', $token ) )
 			   {
 				$key	=  "$page_number:$current_template:$token" ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'operand' ] ++ ;
 
 				if  ( isset ( $this -> MapIdBuffer [ $key ] ) )
 					$id	=   $this -> MapIdBuffer [ $key ] ;
@@ -3151,12 +3452,13 @@ class  PdfToText 	extends PdfObjectBase
 
 				return ( array ( 'instruction' => 'resource', 'next' => $next_index, 'resource' => $id, 'token' => $token ) ) ;
 			    }
-			// Template reference, such as /TPL1. Each reference has initially been replaced by /PDFTOTEXT_TEMPLATE_TPLx during substitution
+			// Template reference, such as /TPL1. Each reference has initially been replaced by !PDFTOTEXT_TEMPLATE_TPLx during substitution
 			// by ProcessTemplateReferences(), because templates not only specify text to be replaced, but also font aliases
 			// -and this is the place where we catch font aliases in this case
-			else if  ( preg_match ( '/PDFTOTEXT_TEMPLATE_ (?P<template> \w+) /ix', $token, $match ) )
+			else if  ( preg_match ( '/ !PDFTOTEXT_TEMPLATE_ (?P<template> \w+) /ix', $token, $match ) )
 			   {
 				$current_template	=  '/' . $match [ 'template' ] ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
 
 				return ( array ( 'instruction' => 'template', 'next' => $next_index, 'token' => $current_template ) ) ;
 			    }
@@ -3165,6 +3467,7 @@ class  PdfToText 	extends PdfObjectBase
 			else
 			   {
 				$number_stack 	=  array ( ) ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
 			    }
 
 			$index 		=  $next_index ;
@@ -3177,7 +3480,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	// __next_token :
 	//	Retrieves the next token from the drawing instructions stream.
-	function  __next_token ( $page_number, $data, $data_length, $index )
+	private function  __next_token ( $page_number, $data, $data_length, $index )
 	   {
 		// Skip spaces
 		while  ( $index  <  $data_length  &&  ( $data [ $index ]  ==  ' '  ||  $data [ $index ]  ==  "\t"  ||  $data [ $index ]  ==  "\r"  ||  $data [ $index ]  ==  "\n" ) )
@@ -3338,7 +3641,7 @@ class  PdfToText 	extends PdfObjectBase
 		   					$value 	.=  $data [ $index ++ ] ;
 		   			    }
 		   			else if  ( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALPHA ) )  ||  
-							$ch  ==  '/' )
+							$ch  ==  '/'  ||  $ch  ==  '!' )
 		   			   {
 						$ch	=  $data [ $index ] ;
 
@@ -4076,7 +4379,10 @@ class  PdfToText 	extends PdfObjectBase
 			for  ( $i = 0, $count = count ( $object_matches [ 'keyword' ] ) ; $i  <  $count ; $i ++ )
 			   {
 				$searches []		=  $object_matches [ 'object_ref' ] [$i] ;
-				$replacements []	=  trim ( $pdf_objects [ $object_matches [ 'object' ] [$i] ] ) ;
+
+				// Some buggy PDF may reference author information objects that do not exist
+				$replacements []	=  isset ( $pdf_objects [ $object_matches [ 'object' ] [$i] ] ) ?
+								trim ( $pdf_objects [ $object_matches [ 'object' ] [$i] ] ) : '' ;
 			    }
 
 			$object_data	=  str_replace ( $searches, $replacements, $object_data ) ;
@@ -4591,7 +4897,9 @@ class  PdfTexterFont		extends PdfObjectBase
 				// Since a /ToUnicode map can have an associated /Encoding map with a /Differences list, this is the right place
 				// to perform the translation (ie, the final Unicode codepoint is impacted by the /Differences list)
 				if  ( ! $this -> SecondaryCharacterMap )		// Most common case first !
+				   {
 					$code	=  $this -> CharacterMap [ $ch ] ;
+				    }
 				else
 				   {
 					if  ( isset  ( $this -> SecondaryCharacterMap [ $ch ] ) )
@@ -4919,7 +5227,9 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 
 		// Character already has an entry (character reference => subtituted character)
 		if  ( isset ( $this -> DirectMap [ $offset ] ) )
+		   {
 			$code	=  ( $translate ) ? $this -> CodePointToUtf8 ( $this -> DirectMap [ $offset ] ) : $this -> DirectMap [ $offset ] ;
+		    }
 		// Character does not has a direct entry ; have a look in the character ranges defined for this map
 		else if  ( $this -> RangeCount  &&  $offset  >=  $this -> RangeMin  &&  $offset  <=  $this -> RangeMax )
 		   {
@@ -6275,7 +6585,7 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					// We just need to check that the object contains something like :
 					//	[x 0 R y 0 R ...]
 					// and nothing more 
-					if  ( preg_match ( '#^\s* \[ [^]]+ \]#x', $pdf_objects [ $reference ] )  &&
+					if  ( isset ( $pdf_objects [ $reference ] )  &&  preg_match ( '#^\s* \[ [^]]+ \]#x', $pdf_objects [ $reference ] )  &&
 							$this -> GetObjectReferences ( $reference, $pdf_objects [ $reference ], '', $nested_references ) )
 						$new_references		=  array_merge ( $new_references, $nested_references ) ;
 					else
@@ -6369,11 +6679,11 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	   {
 		foreach  ( $page_contents [ 'xobjects' ]  as  $template_name => $template_object )
 		   {
-			if  ( isset ( $this -> TemplateObjects [ $template_object ] )  &&  ! in_array ( $template_object, $objects_seen ) )
+			if  ( isset ( $this -> TemplateObjects [ $template_object ] )  &&  ! isset ( $objects_seen [ $template_object ] ) )
 			   {
-				$searches []		=  '#(' . $template_name . ' \s+ Do\b )#msx' ;
-				$replacements []	=  '/PDFTOTEXT_TEMPLATE_' . substr ( $template_name, 1 ) . ' ' . $this -> TemplateObjects [ $template_object ] ;
-				$objects_seen []	=  $template_object ;
+				$searches []				=  '#(' . $template_name . ' \s+ Do\b )#msx' ;
+				$replacements []			=  '!PDFTOTEXT_TEMPLATE_' . substr ( $template_name, 1 ) . ' ' . $this -> TemplateObjects [ $template_object ] ;
+				$objects_seen [ $template_object ]	=  $template_object ;
 			
 				if  ( isset ( $this -> PageContents [ $template_object ] ) )
 					$this -> __get_replacements ( $this -> PageContents [ $template_object ], $searches, $replacements, $objects_seen ) ;
@@ -6394,6 +6704,10 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	    DESCRIPTION
 	        Builds a correspondance between object and page numbers. The page number corresponding to an object id 
 		will after that be available using the array notation.
+
+	    NOTES
+		This method behaves as if there could be more than one page catalog in the same file, but I've not yet
+		encountered this case.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  MapObjects ( $objects )
@@ -6401,7 +6715,7 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 		$kid_count	=  count ( $this -> PageKids ) ;
 
 		// PDF files created short after the birth of Earth may have neither a page catalog nor page contents descriptions
-		if  ( ! $this -> PageCatalogs  )
+		if  ( ! count ( $this -> PageCatalogs  ) )
 		   {
 			// Later, during Pleistocen, references to page kids started to appear...
 			if  ( $kid_count )
@@ -6421,6 +6735,11 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 			   {
 				if  ( isset ( $this -> PageKids [ $catalog ] ) )
 					$this -> MapKids ( $catalog, $current_page ) ;
+				// Well, almost ideal : it may happen that the page catalog refers to a non-existing object :
+				// in this case, we behave the same as if there were no page catalog at all : group everything
+				// onto one page
+				else 
+					$this -> Pages [1]	=  array_keys ( $objects ) ;
 			    }
 		    }
 	    }
