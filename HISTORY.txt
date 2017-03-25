@@ -1,3 +1,19 @@
+    [Version : 1.4.18]	[Date : 2017/03/25]     [Author : CV]
+	. Fixed a warning issued when author information in buggy PDFs referred to non-existing objects.
+	. The PageSeparator property was not taken into account by the GetPageFromOffset() method.
+	. Fixed a regression which caused an exception to be thrown if the PDF document did not exactly start
+	  with '%PDF'
+	. Remove more useless instruction from the input stream before processing it (graphic-related
+	  instructions).
+	. Trying to process object streams that contain invalid gzip data led to an infinite loop.
+	. Handle buggy PDF containing object streams which do not start with an even number of integer values
+	  (this should normally be a list of object number/offset pairs)
+	. The CodePointToUtf8() function was running into an inifinite loop when the high order bit of the
+	  supplied value was set (unsigned right-shift operator does not exist in PHP 5.*).
+	. Handle another kind of buggy PDF that have a page catalog referring to a non-existing object ; in this
+	  case the behavior is the same as if there is no page catalog at all : everything is grouped onto a
+	  single page.
+	
     [Version : 1.4.17]	[Date : 2017/03/21]     [Author : CV]
 	. Drawing instructions between BX/EX were unduly removed, causing some text to be missing sometimes in
 	  the output.
