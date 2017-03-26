@@ -1,3 +1,16 @@
+    [Version : 1.4.19]	[Date : 2017/03/25]     [Author : CV]
+	. Added the PDFOPT_ENHANCED_STATISTICS flag (for debugging/optimization purposes)
+	. Added more useless instructions to be removed from the PDF input stream before processing
+	. Fixed a warning issued when processing certain objects not having stream data
+	. Fixed a warning issued when a character map does not contain a begincodespacerange/endcodespacerange
+	  construct.
+	. Fixed a warning issued by the MapKids() method when a page catalog refers to a non-existing object.
+	. Re-established PCRE error handling during PDF file processing, since the pcre.backtrack_limit clearly 
+	  imposes a limit on the size of the data that can be captured (it does not only depends on the 
+	  complexity of the regular expression). This means that PDF file scanning will be stopping with an 
+	  exception if the size of the object to be captured exceeds such a limit.
+	. Fixed inappropriate warnings about undefined fonts
+	
     [Version : 1.4.18]	[Date : 2017/03/25]     [Author : CV]
 	. Fixed a warning issued when author information in buggy PDFs referred to non-existing objects.
 	. The PageSeparator property was not taken into account by the GetPageFromOffset() method.
