@@ -24,21 +24,18 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.18]	[Date : 2017/03/25]     [Author : CV]
-	. Fixed a warning issued when author information in buggy PDFs referred to non-existing objects.
-	. The PageSeparator property was not taken into account by the GetPageFromOffset() method.
-	. Fixed a regression which caused an exception to be thrown if the PDF document did not exactly start
-	  with '%PDF'
-	. Remove more useless instruction from the input stream before processing it (graphic-related
-	  instructions).
-	. Trying to process object streams that contain invalid gzip data led to an infinite loop.
-	. Handle buggy PDF containing object streams which do not start with an even number of integer values
-	  (this should normally be a list of object number/offset pairs)
-	. The CodePointToUtf8() function was running into an inifinite loop when the high order bit of the
-	  supplied value was set (unsigned right-shift operator does not exist in PHP 5.*).
-	. Handle another kind of buggy PDF that have a page catalog referring to a non-existing object ; in this
-	  case the behavior is the same as if there is no page catalog at all : everything is grouped onto a
-	  single page.
+    [Version : 1.4.19]	[Date : 2017/03/25]     [Author : CV]
+	. Added the PDFOPT_ENHANCED_STATISTICS flag (for debugging/optimization purposes)
+	. Added more useless instructions to be removed from the PDF input stream before processing
+	. Fixed a warning issued when processing certain objects not having stream data
+	. Fixed a warning issued when a character map does not contain a begincodespacerange/endcodespacerange
+	  construct.
+	. Fixed a warning issued by the MapKids() method when a page catalog refers to a non-existing object.
+	. Re-established PCRE error handling during PDF file processing, since the pcre.backtrack_limit clearly 
+	  imposes a limit on the size of the data that can be captured (it does not only depends on the 
+	  complexity of the regular expression). This means that PDF file scanning will be stopping with an 
+	  exception if the size of the object to be captured exceeds such a limit.
+	. Fixed inappropriate warnings about undefined fonts
 	
     (...)
 
@@ -770,7 +767,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.18" ;
+	const		VERSION					=  "1.4.19" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -907,9 +904,9 @@ class  PdfToText 	extends PdfObjectBase
 	   (
 		'%n{6} ( (c) | (cm) ) \s+',
 		'%n{4} ( (re) | (y) | (v) | (k) | (K) ) \s+',
-		'%n{3} ( (scn) | (SCN) | (r) | (rg) | (RG) ) \s+',
+		'%n{3} ( (scn) | (SCN) | (r) | (rg) | (RG) | (sc) | (SC) ) \s+',
 		'%n{2} ( (m) | (l) ) \s+',
-		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) | (i) ) \s+',
+		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) | (i) | (sc) | (SC) | (Tc) | (Tw) | (scn) ) \s+',
 		'\b ( (BDC) | (BT) | (ET) | (EMC) ) \s+',
 		'\/( (Cs \d+) | (CS \d+) | (G[Ss] \d+) | (Fm \d+) | (Im \d+) | (PlacedGraphic) ) \s+ \w+ \s*',
 		'\/( (Span) | (Artifact) | (Figure) | (P) ) \s* << .*? >> [ \t\r\n>]*',
@@ -924,8 +921,12 @@ class  PdfToText 	extends PdfObjectBase
 		 '^ \s* (\b [a-zA-Z] \s+)+',
 		 '\s* (\b [a-zA-Z] \s+)+$',
 		 '-?0 (\. \d+)? \s+ T[cw]',
-		 '\bBI\b .*? \bID\b .*? \bEI\b',
-		 '\/ \w+ \s+ ( (cs) | (CS) | (ri) | (gs) )'
+		 '\bBI \s+ .*? \bID \s+ .*? \bEI',
+		 '\/ \w+ \s+ ( (cs) | (CS) | (ri) | (gs) )',
+		 // Hazardous replaces ?
+		 '( [Ww] \s+ ){3,}',			
+		 '( [Qfhnq] \s+ ){2,}',
+		 ' \[\] \s+ [Shs] \s+'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs		=  array
@@ -1373,6 +1374,41 @@ class  PdfToText 	extends PdfObjectBase
 			$contents_offset	=  $match [ 're' ] [1] + strlen ( $match [ 're' ] [0] ) ;
 		    }
 
+		// We put a particular attention in treating errors returned by preg_match_all() here, since we need to be really sure why stopped
+		// to find further PDF objects in the supplied contents
+		$preg_error	=  preg_last_error ( ) ;
+
+		switch  ( $preg_error )
+		   {
+			case  PREG_NO_ERROR :
+				break ;
+
+			case  PREG_INTERNAL_ERROR :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : the preg_match_all() function encountered an internal error." ) ) ;
+
+			case  PREG_BACKTRACK_LIMIT_ERROR :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : backtrack limit reached (you may have to modify the pcre.backtrack_limit " .
+						"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.backtrack_limit' ) . ")." ) ) ;
+
+			case  PREG_JIT_STACKLIMIT_ERROR :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : JIT stack limit reached (you may disable this feature by setting the pcre.jit " .
+						"setting of your PHP.ini file to 0)." ) ) ;
+
+			case  PREG_RECURSION_LIMIT_ERROR :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : recursion limit reached (you may have to modify the pcre.recursion_limit " .
+						"setting of your PHP.ini file, which is currently set to " . ini_get ( 'pcre.recursion_limit' ) . ")." ) ) ;
+
+			case  PREG_BAD_UTF8_ERROR :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : bad UTF8 character encountered." ) ) ;
+
+			case PREG_BAD_UTF8_OFFSET_ERROR :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : the specified offset does not start at the beginning of a valid UTF8 codepoint." ) ) ;
+
+			default :
+				error ( new PdfToTextDecodingException ( "PDF object extraction : unkown PREG error #$preg_error" ) ) ;
+		    }
+
+
 		// Extract trailer information, which may contain the ID of an object specifying encryption flags
 		$this -> GetTrailerInformation ( $contents, $pdf_objects ) ;
 		unset ( $contents ) ;
@@ -1457,7 +1493,10 @@ class  PdfToText 	extends PdfObjectBase
 				continue ;
 
 			// Isolate stream data and try to find its encoding type
-			$stream_data 		=  ltrim ( $stream_match [ 'stream' ], "\r\n" ) ;
+			if  ( isset  ( $stream_match [ 'stream' ] ) )
+				$stream_data 		=  ltrim ( $stream_match [ 'stream' ], "\r\n" ) ;
+			else
+				continue ;
 
 			// Ignore this stream if the object does not contain an encoding type (/FLATEDECODE, /ASCIIHEX or /ASCII85)
 			if  ( $type  ==  self::PDF_UNKNOWN_ENCODING )
@@ -2614,7 +2653,7 @@ class  PdfToText 	extends PdfObjectBase
 		   {
 			echo "\n----------------------------------- TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
 			echo $data ;
-			echo "\n----------------------------------- OPTIMIZED TEXT #$object_id\n" ;
+			echo "\n----------------------------------- OPTIMIZED TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
 			echo $new_data ;
 		    }
 
@@ -4876,9 +4915,12 @@ class  PdfTexterFont		extends PdfObjectBase
 			case	self::FONT_ENCODING_UNICODE_MAP :
 				break ;
 
+			case	self::FONT_ENCODING_STANDARD :
+				break ;
+
 			default :
 				if  ( PdfToText::$DEBUG )
-					warning ( "Unknown font type #$font_type encountered for object #$resource_id, character map #$cmap_id." ) ;
+					warning ( "Unknown font type #$font_type found for object #$resource_id, character map #$cmap_id." ) ;
 		    }
 	    }
 
@@ -5058,7 +5100,11 @@ class  PdfTexterUnicodeMap 	extends 	PdfTexterCharacterMap
 		// Get the codespace range, which will give us the width of a character specified in hexadecimal notation
 		preg_match ( '# begincodespacerange \s+ <\s* (?P<low> [0-9a-f]+) \s*> \s* <\s* (?P<high> [0-9a-f]+) \s*> \s*endcodespacerange #ix', $definitions, $match ) ;
 
-		$this -> HexCharWidth 	=  max ( strlen ( $match [ 'low' ] ), strlen ( $match [ 'high' ] ) ) ;
+		if  ( isset ( $match [ 'low' ] ) )
+			$this -> HexCharWidth 	=  max ( strlen ( $match [ 'low' ] ), strlen ( $match [ 'high' ] ) ) ;
+		else
+			$this -> HexCharWidth	=  0 ;
+
 		$max_found_char_width	=  0 ;
 
 		// Process beginbfchar/endbfchar constructs
@@ -6815,6 +6861,9 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  MapKids ( $catalog, &$page ) 
 	   {
+		if  ( ! isset ( $this -> PageKids [ $catalog ] ) )
+			return ;
+
 		$entry		=  $this -> PageKids [ $catalog ] ;
 
 		// The PDF file contains an object containing a /Type/Pages/Kids[] construct, specified by another object containing a
