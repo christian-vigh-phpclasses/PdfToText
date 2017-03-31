@@ -55,12 +55,13 @@ This is why the **PdfToText** class tracks the following information from the dr
 - If multiple strings are rendered using identical y-coordinate, they will be grouped onto the same line. Note that they must appear sequentially in the instruction flow for this trick to work
 - Sub/super-scripted text is usually written at a slightly different y-coordinate than the line it appears in. Such a situation is detected, and the sub/super-scripted text will correctly appear onto the same line
 
+These symptoms will not appear if the *PDFOPT\_BASIC\_LAYOUT* option is specified.
 
 # KNOWN ISSUES #
 
 Here is a list about known issues for the **PdfToText** class ;  I'm working on solving them, so I hope this whole paragraph will soon completely disappear !
 
-- Unwanted line breaks may occur within text lines. This is due to the fact that the pdf file contains drawing instructions that use relative positioning. This is especially true for file created with generators such as **PdfCreator**. However, some provisions have been made to try to track put text with roughly the same y-coordinates onto the same line
+- Unwanted line breaks may occur within text lines. This is due to the fact that the pdf file contains drawing instructions that use relative positioning. This is especially true for file created with generators such as **PdfCreator**. However, some provisions have been made to try to track put text with roughly the same y-coordinates onto the same line. This limitation does not apply if the *PDFOPT\_BASIC\_LAYOUT* option is specified.
 - Encrypted PDF files are not supported 
 
 # A NOTE FOR WINDOWS USERS #
@@ -237,6 +238,8 @@ A string to be used for separating chunks of text. The main goal is for processi
 
 The default value is the empty string.
 
+When the *PDFOPT\_BASIC\_LAYOUT* option is specified, this property is used to separate parts of text that are visually on a different x-axis on the same line. In this case, the default separator will be a white space. 
+
 ### CIDTablesDirectory ###
 
 Path to the directory containing CID mapping tables.
@@ -303,6 +306,15 @@ A flag coming from a password-protected file that says is the document metadata 
 ### EOL ###
 
 The string to be used for line breaks. The default is PHP\_EOL.
+
+### ExtraTextWidth ###
+
+This property is expressed in percents ; it gives the extra percentage to add to the values computed by
+the **PdfTexterFont::GetStringWidth()** method.
+
+This value is basically used when computing text positions and string lengths with the PDFOPT_BASIC_LAYOUT option : the computed string length is shorter than its actual length (because of extra spacing determined by character kerning in the font data, among other details). 
+
+To determine whether two consecutive blocks of text on the same should be separated by a space, the class will empirically add this extra percentage to the computed string length. The default value is 5%.
 
 ### Filename ###
 
@@ -450,7 +462,26 @@ A combination of the following flags :
 - *PDFOPT\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property.
 - *PDFOPT\_AUTOSAVE\_IMAGES* : Auto-saves the images found in the PDF file, using a filename template given by the **ImageAutoSaveFileTemplate** property. The **ImageAutoSaveFormat** property will define the image format to be used when generating the image files. The default output format is *IMG\_JPEG*. Note that the **Images** property will be left empty. This flag has been introduced to save internal memory if you only need to extract images. 
 - *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
-- *PDFOPT\_NO\_HYPHENATED\_WORDS : When specified, tries to join back hyphenated words into a single word. For example, the following text :
+- *PDFOPT\_RAW\_LAYOUT* : Renders the text as it comes from the PDF file. This may sometimes lead to out-of-order text or strings concatenated in an inappropriate way, but this option is to be preferred if you only need to index contents or focus on performance. This is the default option.
+- *PDFOPT\_BASIC\_LAYOUT* : Tries to render the text in the order you can see it with Acrobat Reader. Note that the elements will not be mapped in the output exactly as they appear with Acrobat Reader : elements physically disjoint on the x-axis will be separated by a space by default. The **BlockSeparator** property can be used to modify this separator. The following text for example :
+-
+		Company1							Company2
+		address1							address2
+		city1 								city2
+
+will be rendered as :
+
+		Company1 Company2
+		address1 address2
+		city1 city2
+
+or, if you set the **BlockSeparator** property to "#", the output will be :
+
+		Company1#Company2
+		address1#address2
+		city1#city2
+
+- *PDFOPT\_NO\_HYPHENATED\_WORDS* : When specified, tries to join back hyphenated words into a single word. For example, the following text :
 
 		this is a sam-
 		ple text using hyphe-
@@ -519,9 +550,29 @@ Note that if you change the *PdfToText::$DEBUG** variable **after** the first in
 The PDFOPT\_\* constants are a set of flags which can be combined when either instantiating the class or setting the *Options* property before calling the **Load** method. It can be a combination of any of the following flags :
 
 - *PDFOPT\_REPEAT\_SEPARATOR* : Sometimes, groups of characters are separated by an integer value, which specifies the offset to subtract to the current position before drawing the next group of characters. This quantity is expressed in thousands of "text units". The **PdfToText** class considers that if this value is less than -1000, then the string specified by the *Separator* property needs to be appended to the result before the next group of characters. If this flag is specified, then the *Separator* string will be appended (*offset* % 1000) times.
-- *PDF\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
-- *PDF\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property. 
+- *PDFOPT\_GET\_IMAGE\_DATA* : Store image data from the Pdf file to the **ImageData** array property.
+- *PDFOPT\_DECODE\_IMAGE\_DATA* : Decode image data and put it in the **Images** array property.
+- *PDFOPT\_AUTOSAVE\_IMAGES* : Auto-saves the images found in the PDF file, using a filename template given by the **ImageAutoSaveFileTemplate** property. The **ImageAutoSaveFormat** property will define the image format to be used when generating the image files. The default output format is *IMG\_JPEG*. Note that the **Images** property will be left empty. This flag has been introduced to save internal memory if you only need to extract images. 
 - *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
+- *PDFOPT\_RAW\_LAYOUT* : Renders the text as it comes from the PDF file. This may sometimes lead to out-of-order text or strings concatenated in an inappropriate way, but this option is to be preferred if you only need to index contents or focus on performance. This is the default option.
+- *PDFOPT\_BASIC\_LAYOUT* : Tries to render the text in the order you can see it with Acrobat Reader. Note that the elements will not be mapped in the output exactly as they appear with Acrobat Reader : elements physically disjoint on the x-axis will be separated by a space by default. The **BlockSeparator** property can be used to modify this separator. The following text for example :
+ 
+		Company1							Company2
+		address1							address2
+		city1 								city2
+
+will be rendered as :
+
+		Company1 Company2
+		address1 address2
+		city1 city2
+
+or, if you set the **BlockSeparator** property to "#", the output will be :
+
+		Company1#Company2
+		address1#address2
+		city1#city2
+
 - *PDFOPT\_NO\_HYPHENATED\_WORDS* : When specified, tries to join back hyphenated words into a single word. For example, the following text :
 
 		this is a sam-
@@ -529,17 +580,26 @@ The PDFOPT\_\* constants are a set of flags which can be combined when either in
 		nated words that can split
 		over seve-
 		ral lines.
-
-	will be rendered as :
+	
+will be rendered as :
 
 		this is a sample
 		text using hyphenated
 		words that can split
 		over several lines.
+
 - *PDFOPT\_ENFORCE\_EXECUTION\_TIME* : when specified, the **MaxExecutionTime** property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process a single file may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
-- *PDFOPT\_IGNORE\_HEADERS\_AND\_FOOTERS* : when specified, headers and footers will not be included in the output.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
+
+### Pages ###
+
+Associative array containing individual page contents. The array key is the page number, starting from 1.
+
+### PageSeparator ###
+
+String to be used when building the *Text* property to separate individual pages. The default value is a newline.
+
 
 ### VERSION ###
 

@@ -1,3 +1,22 @@
+    [Version : 1.5.0]	[Date : 2017/03/31]     [Author : CV]
+	. Implemented page layout rendering !!!
+	  - Text parts are displayed in the same order as Acrobat Reader displays them
+	  - Spaces are inserted in the same line when necessary (the BlockSeparator property can be used
+	    to separate items that are on the same line, at different -x-coordinates)
+	  - The PDFOPT_RAW_LAYOUT and PDFOPT_BASIC_LAYOUT options have been added. The default is 
+	    PDFOPT_RAW_LAYOUT, which behaves as in the previous versions. The PDFOPT_BASIC_LAYOUT will 
+	    activate layout rendering.
+	  - The new ExtraTextWidth property allows to adjust the computed text widths to help determine if
+	    two consecutive blocks of text on the same line should be separated by a whitespace or not.
+	  - Hold a separate set of instructions to be removed from PDF stream before interpretation,
+	    depending on whether the page layout option has been activated or not. This is done not to impact
+	    the performance of this class for callers that use it the traditional way.
+	  This new feature allows to process more efficiently PDF files presenting tabular data or form data
+	  (such as tickets reservations for example). Note that the PDFOPT_BASIC_LAYOUT option simply ensures
+	  that items coming from the PDF file are shown in the correct order and not improperly concatenated ; 
+	  it does not visually reproduce  what you could see with Acrobat Reader.
+	. Font descriptors were mistakenly interpreted as font entries.
+
     [Version : 1.4.19]	[Date : 2017/03/25]     [Author : CV]
 	. Added the PDFOPT_ENHANCED_STATISTICS flag (for debugging/optimization purposes)
 	. Added more useless instructions to be removed from the PDF input stream before processing
