@@ -24,18 +24,24 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.4.19]	[Date : 2017/03/25]     [Author : CV]
-	. Added the PDFOPT_ENHANCED_STATISTICS flag (for debugging/optimization purposes)
-	. Added more useless instructions to be removed from the PDF input stream before processing
-	. Fixed a warning issued when processing certain objects not having stream data
-	. Fixed a warning issued when a character map does not contain a begincodespacerange/endcodespacerange
-	  construct.
-	. Fixed a warning issued by the MapKids() method when a page catalog refers to a non-existing object.
-	. Re-established PCRE error handling during PDF file processing, since the pcre.backtrack_limit clearly 
-	  imposes a limit on the size of the data that can be captured (it does not only depends on the 
-	  complexity of the regular expression). This means that PDF file scanning will be stopping with an 
-	  exception if the size of the object to be captured exceeds such a limit.
-	. Fixed inappropriate warnings about undefined fonts
+    [Version : 1.5.0]	[Date : 2017/03/31]     [Author : CV]
+	. Implemented page layout rendering !!!
+	  - Text parts are displayed in the same order as Acrobat Reader displays them
+	  - Spaces are inserted in the same line when necessary (the BlockSeparator property can be used
+	    to separate items that are on the same line, at different -x-coordinates)
+	  - The PDFOPT_RAW_LAYOUT and PDFOPT_BASIC_LAYOUT options have been added. The default is 
+	    PDFOPT_RAW_LAYOUT, which behaves as in the previous versions. The PDFOPT_BASIC_LAYOUT will 
+	    activate layout rendering.
+	  - The new ExtraTextWidth property allows to adjust the computed text widths to help determine if
+	    two consecutive blocks of text on the same line should be separated by a whitespace or not.
+	  - Hold a separate set of instructions to be removed from PDF stream before interpretation,
+	    depending on whether the page layout option has been activated or not. This is done not to impact
+	    the performance of this class for callers that use it the traditional way.
+	  This new feature allows to process more efficiently PDF files presenting tabular data or form data
+	  (such as tickets reservations for example). Note that the PDFOPT_BASIC_LAYOUT option simply ensures
+	  that items coming from the PDF file are shown in the correct order and not improperly concatenated ; 
+	  it does not visually reproduce  what you could see with Acrobat Reader.
+	. Font descriptors were mistakenly interpreted as font entries.
 	
     (...)
 
@@ -461,7 +467,8 @@ abstract class  PdfObjectBase		// extends  Object
 		return 
 		   ( 
 			stripos ( $object_data, '/BaseFont' )  !==  false  ||
-			preg_match ( '#/Type \s* /Font#ix', $object_data ) 
+				( ! preg_match ( '#/Type \s* /FontDescriptor#ix', $object_data )  &&
+					preg_match ( '#/Type \s* /Font#ix', $object_data ) )
 		    ) ;
 	    }
 
@@ -767,7 +774,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.4.19" ;
+	const		VERSION					=  "1.5.0" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -872,6 +879,13 @@ class  PdfToText 	extends PdfObjectBase
 	// PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME options, or both
 	public		$MaxExecutionTime		=  -1 ;
 	public static	$MaxGlobalExecutionTime		=  -1 ;
+	// This property is expressed in percents ; it gives the extra percentage to add to the values computed by
+	// the PdfTexterFont::GetStringWidth() method.
+	// This is basically used when computing text positions and string lengths with the PDFOPT_BASIC_LAYOUT option :
+	// the computed string length is shorter than its actual length (because of extra spacing determined by character
+	// kerning in the font data). To determine whether two consecutive blocks of text should be separated by a space,
+	// we empirically add this extra percentage to the computed string length. The default is 5%.
+	public		$ExtraTextWidth			=  5 ;
 	
 	// Internal variables used when the PDFOPT_ENFORCE_* options are specified
 	private static	$PhpMaxExecutionTime ;
@@ -889,6 +903,8 @@ class  PdfToText 	extends PdfObjectBase
 	// Encryption data
 	public		$IsEncrypted			=  false ;
 	protected	$EncryptionData			=  false ;
+	// A flag coming from the constructor options, telling if enhanced statistics are enabled
+	protected	$EnhancedStatistics ;
 
 	// Indicates whether global static initializations have been made
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
@@ -900,33 +916,41 @@ class  PdfToText 	extends PdfObjectBase
 	// This is an array of regular expressions where the following constructs are replaced at runtime during static
 	// initialization :
 	// %n - Will be replaced with a regex matching a decimal number.
-	private static  $IgnoredInstructionsTemplates	=  array
+	private static  $IgnoredInstructionTemplatesLayout	=  array
 	   (
-		'%n{6} ( (c) | (cm) ) \s+',
+		'%n{6} ( (c) ) \s+',
 		'%n{4} ( (re) | (y) | (v) | (k) | (K) ) \s+',
 		'%n{3} ( (scn) | (SCN) | (r) | (rg) | (RG) | (sc) | (SC) ) \s+',
 		'%n{2} ( (m) | (l) ) \s+',
-		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) | (i) | (sc) | (SC) | (Tc) | (Tw) | (scn) ) \s+',
-		'\b ( (BDC) | (BT) | (ET) | (EMC) ) \s+',
+		'%n ( (w) | (M) | (g) | (G) | (J) | (j) | (d) | (i) | (sc) | (SC) | (Tc) | (Tw) | (scn) | (Tr) | (Tz) | (Ts) ) \s+',
+		'\b ( (BDC) | (EMC) ) \s+',
 		'\/( (Cs \d+) | (CS \d+) | (G[Ss] \d+) | (Fm \d+) | (Im \d+) | (PlacedGraphic) ) \s+ \w+ \s*',
 		'\/( (Span) | (Artifact) | (Figure) | (P) ) \s* << .*? >> [ \t\r\n>]*',
 		'\/ ( (PlacedGraphic) | (Artifact) ) \s+',
 		'\d+ \s+ ( (scn) | (SCN) )',
 		'\/MC \d+ \s+',
-		 '^ \s* [QqfhS] \r? \n',
+		 '^ \s* [fhS] \r? \n',
 		 '^W \s+ n \r? \n',
-		 '^q \s+ [hfS] \n',
 		 '(f | W) \* \s+',
-		 '^[fhnqQS] \s+',
-		 '^ \s* (\b [a-zA-Z] \s+)+',
-		 '\s* (\b [a-zA-Z] \s+)+$',
+		 '^[fhnS] \s+',
 		 '-?0 (\. \d+)? \s+ T[cw]',
 		 '\bBI \s+ .*? \bID \s+ .*? \bEI',
 		 '\/ \w+ \s+ ( (cs) | (CS) | (ri) | (gs) )',
 		 // Hazardous replaces ?
 		 '( [Ww] \s+ ){3,}',			
-		 '( [Qfhnq] \s+ ){2,}',
 		 ' \[\] \s+ [Shs] \s+'
+	    ) ;
+	// Additional instructions to be stripped when no particular page layout has been requested
+	private static   $IgnoredInstructionTemplatesNoLayout	=  array 
+	   (
+		'%n{6} ( (cm) ) \s+',
+		'\b ( (BT) | (ET) ) \s+',
+		 '^ \s* [Qq] \r? \n',
+		 '^ \s* (\b [a-zA-Z] \s+)+',
+		 '\s* (\b [a-zA-Z] \s+)+$',
+		 '^[qQ] \s+',
+		 '^q \s+ [hfS] \n',
+		 '( [Qfhnq] \s+ ){2,}'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
 	private static	$ReplacementConstructs		=  array
@@ -934,13 +958,18 @@ class  PdfToText 	extends PdfObjectBase
 		'%n'	=>  '( [+\-]? ( ( [0-9]+ ( \. [0-9]* )? ) | ( \. [0-9]+ ) ) \s+ )'
 	     ) ;
 	// The final regexes that are built during static initialization by the __build_ignored_instructions() method
-	private static  $IgnoredInstructions		=  array ( ) ;
+	private static  $IgnoredInstructionsNoLayout	=  array ( ) ;
+	private static  $IgnoredInstructionsLayout	=  array ( ) ;
+	private		$IgnoredInstructions		=  array ( ) ;
 
 	// Map id buffer - for avoiding unneccesary calls to GetFontByMapId
 	private		$MapIdBuffer			=  array ( ) ;
 
 	// Same for MapCharacter()
 	private		$CharacterMapBuffer		=  array ( ) ;
+
+	// Font objects buffer - used by __assemble_text_fragments()
+	private		$FontObjectsBuffer		=  array ( ) ;
 
 	// Regex used for removing hyphens - we have to take care of different line endings : "\n" for Unix, "\r\n"
 	// for Windows, and "\r" for pure Mac files.
@@ -1276,11 +1305,20 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> ID				=  '' ;
 		$this -> ID2				=  '' ; 
 		$this -> EncryptionData			=  false ;
+		$this -> EnhancedStatistics		=  ( ( $this -> Options  &  self::PDFOPT_ENHANCED_STATISTICS )  !=  0 ) ;
 
 		// Also reset cached information that may come from previous runs
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
 		$this -> CharacterMapBuffer		=  array ( ) ;
+		$this -> FontObjectsBuffer		=  array ( ) ;
+
+		// Page layout options needs more instructions to be retained - select the appropriate list of useless instructions
+		if  ( $this -> Options  &  self::PDFOPT_BASIC_LAYOUT )
+			$this -> IgnoredInstructions	=  self::$IgnoredInstructionsLayout ;
+		else
+			$this -> IgnoredInstructions	=  self::$IgnoredInstructionsNoLayout ;
+
 
 		// Debug statistics 
 		$this -> Statistics			=  array
@@ -1302,8 +1340,11 @@ class  PdfToText 	extends PdfObjectBase
 				'('		=>  0,
 				'<'		=>  0,
 				'['		=>  0,
+				'cm'		=>  0,
+				'BT'		=>  0,
 				'template'	=>  0,
-				'ignored'	=>  0
+				'ignored'	=>  0,
+				'space'		=>  0
 			    )
 		    ) ;
 
@@ -1625,7 +1666,7 @@ class  PdfToText 	extends PdfObjectBase
 						echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
 				    }
 
-				//$this -> Pages [ $page_number ]		=  $this -> __convert_fragments_to_text ( $page_fragments ) ;
+				$this -> Pages [ $page_number ]		=  $this -> __assemble_text_fragments ( $page_fragments ) ;
 			    }
 		    }
 
@@ -2121,7 +2162,7 @@ class  PdfToText 	extends PdfObjectBase
 	// __decode_lzw -
 	//	Decoding function for LZW encrypted data. This function is largely inspired by the TCPDF one but has been rewritten
 	//	for a performance gain of 30-35%.
-	private function   __decode_lzw ($data) 
+	private function   __decode_lzw ( $data ) 
 	   {
 		static $InitialDictionary      =  array
 		   (
@@ -2170,12 +2211,12 @@ class  PdfToText 	extends PdfObjectBase
 		$previous_index		=  0 ;
 
 		// Until we encounter the EOD marker (257), read $bit_length bits
-		while  ( ( $current_data_bit  <  $max_data_bits )  &&  ( ( $index = bindec (substr ( $bit_string, $current_data_bit, $bit_length ) ) )  !=  257 ) ) 
-		   {
+		while  ( ( $current_data_bit  <  $max_data_bits )  &&  ( ( $index = bindec ( substr ( $bit_string, $current_data_bit, $bit_length ) ) )  !==  257 ) ) 
+		   { 
 			$current_data_bit	+=  $bit_length ;
 
 			// Normal case : Simply process the entry
-			if  ( $index  !=   256  &&  $previous_index  !=  256 )
+			if  ( $index  !==   256  &&  $previous_index  !==  256 )
 			   {
 				// Check if the entry exists in the dictionary
 				if  ( $index  <  $dictionary_index ) 
@@ -2195,10 +2236,12 @@ class  PdfToText 	extends PdfObjectBase
 				
 				// Update bit length if needed 
 				if  ( isset ( $DictionaryLengths [ $dictionary_index ] ) )
+				   {
 					$bit_length	=  $DictionaryLengths [ $dictionary_index ] ;
+				    }
 			    }
 			// Clear-table marker
-			else if  ( $index  ==  256 ) 
+			else if  ( $index  ===  256 ) 
 			   { 
 				// Reset code length in bits and dictionary index
 				$bit_length		=  9 ;
@@ -2593,7 +2636,7 @@ class  PdfToText 	extends PdfObjectBase
 		ExtractText - extracts text from a pdf stream.
 
 	    PROTOTYPE
-		$text 	=  $this -> __extract_text ( $page_number, $object_id, $data, &$current_font ) ;
+		$text 	=  $this -> ExtractText ( $page_number, $object_id, $data, &$current_font ) ;
 
 	    DESCRIPTION
 	        Extracts text from decoded stream contents.
@@ -3170,167 +3213,6 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
-	protected function  ExtractTextWithLayout ( &$page_fragments, $page_number, $object_id, $data, &$current_font )
-	   {
-		// Text fragments will be stored as associative arrays, giving their absolute (x,y) coordinates
-		if  ( ! isset ( $page_fragments [ $page_number ] ) )
-			$page_fragments [ $page_number ]	=  array ( ) ;
-
-		$page_fragment_count	=  count ( $page_fragments [ $page_number ] ) ;
-
-		// Remove useless instructions
-		$new_data	=  $this -> __strip_useless_instructions ( $data ) ;
-
-		if  ( self::$DEBUG )
-		   {
-			echo "\n----------------------------------- TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
-			echo $data ;
-			echo "\n----------------------------------- OPTIMIZED TEXT #$object_id\n" ;
-			echo $new_data ;
-		    }
-
-		$data					=  $new_data ;
-		$data_length 				=  strlen ( $data ) ;		// Data length
-
-		// Index into the specified block of text-drawing instructions
-		$data_index 				=  0 ;
-
-		// Absolute (x,y) positions
-		$absolute_x				=
-		$absolute_y				=  0 ;
-
-		// Current font map width, in bytes, plus a flag saying whether the current font is mapped or not
-		$current_template	=  '' ;
-		$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
-
-		// Operand stack
-		$operand_stack				=  array ( ) ;
-
-		// Number of tokens processed so far
-		$token_count				=  0 ;
-
-		// Global/local execution time measurements
-		$tokens_between_timechecks	=  1000 ;
-		$enforce_global_execution_time	=  $this -> Options  &  self::PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME ;
-		$enforce_local_execution_time	=  $this -> Options  &  self::PDFOPT_ENFORCE_EXECUTION_TIME ;
-		$enforce_execution_time		=  $enforce_global_execution_time | $enforce_local_execution_time ;
-
-		// Whether we should compute enhanced statistics
-		$enhanced_statistics		=  ( $this -> Options  &  self::PDFOPT_ENHANCED_STATISTICS ) ;
-
-		// Loop through the stream of tokens
-		while  ( ( $part = $this -> __next_token ( $page_number, $data, $data_length, $data_index ) )  !==  false )
-		   {
-			$token 		=  $part [0] ;
-			$token_start	=  $token [0] ;
-			$next_index 	=  $part [1] ;
-			$token_count ++ ;
-
-			// Check if we need to enforce execution time checking, to prevent PHP from terminating our script without any hope
-			// of catching the error
-			if  ( $enforce_execution_time  &&  ( $token_count % $tokens_between_timechecks ) )
-			   {
-				if  ( $enforce_global_execution_time )
-				   {
-					$now	=  microtime ( true ) ;
-
-					if  ( $now - self::$GlobalExecutionStartTime  >  self::$MaxGlobalExecutionTime )
-						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", true, self::$PhpMaxExecutionTime, self::$MaxGlobalExecutionTime ) ) ;
-				    }
-
-				// Per-instance timeout handling
-				if  ( $enforce_local_execution_time )
-				   {
-					$now	=  microtime ( true ) ;
-
-					if  ( $now - $this -> ExecutionStartTime  >  $this -> MaxExecutionTime )
-						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", false, self::$PhpMaxExecutionTime, $this -> MaxExecutionTime ) ) ;
-				    }
-			    }
-
-			// Handle instructions that are of interest for us
-			// Numeric or flag for an instruction
-			if  ( $token_start  ==  '/'  ||  is_numeric ( $token ) )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'operand' ] ++ ;
-			    }
-			// Text in the (...) notation
-			else if  ( $token_start  ==  '(' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '(' ] ++ ;
-			    }
-			// Text array in the [...] notation
-			else if  ( $token_start  ==  '[' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '[' ] ++ ;
-			    }
-			// Text array in hex format (<...> notation)
-			else if  ( $token_start  ==  '<' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
-			    }
-			// Tick instruction
-			else if  ( $token  ==  "'" )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ "'" ] ++ ;
-			    }
-			// Tm instruction
-			else if  ( $token  ==  'Tm' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tm' ] ++ ;
-			    }
-			// Td instruction
-			else if  ( $token  ==  'Td' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
-			    }
-			// TD instruction
-			else if  ( $token  ==  'TD' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TD' ] ++ ;
-			    }
-			// Tj instruction
-			else if  ( $token  ==  'Tj' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tj' ] ++ ;
-			    }
-			// TJ instruction
-			else if  ( $token  ==  'TJ' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TJ' ] ++ ;
-			    }
-			// Tf instruction
-			else if  ( $token  ==  'Tf' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tf' ] ++ ;
-			    }
-			// TL instruction
-			else if  ( $token  ==  'TL' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TL' ] ++ ;
-			    }
-			// T* instruction
-			else if  ( $token  ==  'T*' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
-			    }
-			// Template (substituted in __next_token)
-			else if  ( $token_start  ==  '!' )
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
-			    }
-			// Other instructions
-			else
-			   {
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
-			    }
-
-			// Update current index in instruction stream
-			$data_index	=  $next_index ;
-		    }
-	    }
-
-
 
 	// __next_instruction -
 	//	Retrieves the next instruction from the drawing text block.
@@ -3350,7 +3232,7 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		// Whether we should compute enhanced statistics
-		$enhanced_statistics		=  ( $this -> Options  &  self::PDFOPT_ENHANCED_STATISTICS ) ;
+		$enhanced_statistics		=  $this -> EnhancedStatistics ;
 
 		// Holds the floating-point values encountered so far
 		$number_stack 	=  array ( ) ;
@@ -3434,7 +3316,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Raw text output
 			else if  ( $token [0]  ==  '(' )
 			   {
-			   	$next_part 	=  $this -> __next_token ( $page_number, $data, $data_length, $next_index ) ;
+			   	$next_part 	=  $this -> __next_token ( $page_number, $data, $data_length, $next_index, $enhanced_statistics ) ;
 			   	$instruction	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( $token ), 'token' => $token ) ;
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '(' ] ++ ;
 
@@ -3501,6 +3383,18 @@ class  PdfToText 	extends PdfObjectBase
 
 				return ( array ( 'instruction' => 'template', 'next' => $next_index, 'token' => $current_template ) ) ;
 			    }
+			// Others, only counted for statistics
+			else if  ( $token  ===  'cm' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'cm' ] ++ ;
+			    }
+			else if  ( $token  ===  'BT' )
+			   {
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'BT' ] ++ ;
+			    }
+			else if  ( $token  ==  'ET' )	// Nothing special to count here
+			   {
+			    }
 			// Other instructions : we're not that much interested in them, so clear the number stack and consider
 			// that the current parameters, floating-point values, have been processed
 			else
@@ -3522,8 +3416,16 @@ class  PdfToText 	extends PdfObjectBase
 	private function  __next_token ( $page_number, $data, $data_length, $index )
 	   {
 		// Skip spaces
+		$count		=  0 ;
+
 		while  ( $index  <  $data_length  &&  ( $data [ $index ]  ==  ' '  ||  $data [ $index ]  ==  "\t"  ||  $data [ $index ]  ==  "\r"  ||  $data [ $index ]  ==  "\n" ) )
-			$index ++ ;
+		   {
+			$index ++ ; 
+			$count ++ ;
+		    }
+
+		$enhanced_statistics	=  $this -> EnhancedStatistics ;
+		$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'space' ]	+=  $count ;
 
 		// End of input
 		if  ( $index  >=  $data_length )
@@ -3705,6 +3607,950 @@ class  PdfToText 	extends PdfObjectBase
 	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
+	        ExtractTextWithLayout - Extracts text, trying to render the page layout.
+	
+		$text 	=  $this -> ExtractTextWithLayout ( $page_number, $object_id, $data, &$current_font ) ;
+
+	    DESCRIPTION
+	        Extracts text from decoded stream contents, trying to render the layout.
+
+	    PARAMETERS
+		$page_number (integer) -
+			¨Page number that contains the text to be extracted.
+
+	    	$object_id (integer) -
+	    		Object id of this text block.
+
+	    	$data (string) -
+	    		Stream contents.
+
+		$current_font (integer) -
+			Id of the current font, which should be found in the $this->FontTable property, if anything
+			went ok.
+			This parameter is required, since text blocks may not specify a new font resource id and reuse
+			the one that waas set before.
+
+	    RETURN VALUE
+		Returns the decoded text.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  ExtractTextWithLayout ( &$page_fragments, $page_number, $object_id, $data, &$current_font )
+	   {
+		// Characters that can start a numeric operand
+		static		$numeric_starts		=  array
+		   (
+			'+' => true, '-' => true, '.' => true, '0' => true, '1' => true, '2' => true, '3' => true, '4' => true,
+			'5' => true, '6' => true, '7' => true, '8' => true, '9' => true
+		    ) ;
+		// Initial (default) transformation matrix. To reflect the PDF specifications, we will keep it as a 6 elements array :
+		//	[ sx tx ty sy x y ]
+		// (although tx and ty are not useful here, since they affect the graphic orientation of the text)
+		// sx and sy are scaling parameters, actually a multiplier for the x and y parameters. We only keep 
+		static		$IdentityMatrix		=  array ( 1, 1, 0, 0 ) ;
+
+		// Remove useless instructions
+		$new_data	=  $this -> __strip_useless_instructions ( $data ) ;
+
+		if  ( self::$DEBUG )
+		   {
+			echo "\n----------------------------------- TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
+			echo $data ;
+			echo "\n----------------------------------- OPTIMIZED TEXT #$object_id (size = " . strlen ( $data ) . " bytes, new size = " . strlen ( $new_data ) . " bytes)\n" ;
+			echo $new_data ;
+		    }
+
+		$data					=  $new_data ;
+		$data_length 				=  strlen ( $data ) ;		// Data length
+
+		$page_fragment_count			=  count ( $page_fragments ) ;
+
+		// Index into the specified block of text-drawing instructions
+		$data_index 				=  0 ;
+
+		// Text matrices
+		$initial_tm				=  
+		$current_tm				=  $IdentityMatrix ;
+
+		// Nesting level of BT..ET instructions (Begin text/End text) - they are not nestable but be prepared to meet buggy PDFs
+		$BT_nesting_level			=  0 ;
+
+		// Current font data
+		$current_font_height			=  0 ;
+
+		// Current font map width, in bytes, plus a flag saying whether the current font is mapped or not
+		$current_template	=  '' ;
+		$current_font_name	=  '' ;
+		$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
+
+		// Operand stack
+		$operand_stack				=  array ( ) ;
+
+		// Number of tokens processed so far
+		$token_count				=  0 ;
+
+		// Page attributes
+		$page_attributes			=  $this -> PageMap -> PageAttributes [ $page_number ] ;
+
+		// Graphics context stack - well, we only store here the current transformation matrix
+		$graphic_stack				=  array ( ) ;
+		$graphic_stack_size			=  0 ;
+
+		// Global/local execution time measurements
+		$tokens_between_timechecks	=  1000 ;
+		$enforce_global_execution_time	=  $this -> Options  &  self::PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME ;
+		$enforce_local_execution_time	=  $this -> Options  &  self::PDFOPT_ENFORCE_EXECUTION_TIME ;
+		$enforce_execution_time		=  $enforce_global_execution_time | $enforce_local_execution_time ;
+
+		// Whether we should compute enhanced statistics
+		$enhanced_statistics		=  $this -> EnhancedStatistics ;
+
+		// Loop through the stream of tokens
+		while  ( $this -> __next_token_ex ( $page_number, $data, $data_length, $data_index, $token, $next_index )  !==  false )
+		   {
+			$token_start	=  $token [0] ;
+			$token_count ++ ;
+			$length		=  $next_index - $data_index - 1 ;
+
+			// Check if we need to enforce execution time checking, to prevent PHP from terminating our script without any hope
+			// of catching the error
+			if  ( $enforce_execution_time  &&  ! ( $token_count % $tokens_between_timechecks ) )
+			   {
+				if  ( $enforce_global_execution_time )
+				   {
+					$now	=  microtime ( true ) ;
+
+					if  ( $now - self::$GlobalExecutionStartTime  >  self::$MaxGlobalExecutionTime )
+						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", true, self::$PhpMaxExecutionTime, self::$MaxGlobalExecutionTime ) ) ;
+				    }
+
+				// Per-instance timeout handling
+				if  ( $enforce_local_execution_time )
+				   {
+					$now	=  microtime ( true ) ;
+
+					if  ( $now - $this -> ExecutionStartTime  >  $this -> MaxExecutionTime )
+						error ( new PdfToTextTimeoutException ( "file {$this -> Filename}", false, self::$PhpMaxExecutionTime, $this -> MaxExecutionTime ) ) ;
+				    }
+			    }
+
+			/****************************************************************************************************************
+			
+				The order of the testings is important for maximum performance : put the most common cases first.
+				A study on over 1000 PDF files has shown the following :
+
+				- Instruction operands appear 24.5 million times
+				- Tx instructions (including Tf, Tm, ', ", etc.) : 24M
+				- (), <> and [] constructs for drawing text : 17M
+				- Other : peanuts...
+				- Ignored instructions : 0.5M (these are the instructions without interest for text extraction and that
+				 could not be removed by the __strip_useless_instructions() method).
+
+				Of course, white spaces appear more than 100M times between instructions. However, it gets hard to remove
+				most of them without compromising the result of __strip_useless_instructions.
+			
+			 ***************************************************************************************************************/
+			// Numeric or flag for an instruction
+			if  ( $token_start  ==  '/'  ||  isset ( $numeric_starts [ $token_start ] ) )
+			   {
+				$operand_stack []		=  $token ;
+
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'operand' ] ++ ;
+			    }
+			// A 2-characters "Tx" or a 1-character quote/doublequote instruction
+			else if  ( ( $length  ===  2   &&  $token_start  ===  'T' )  ||  ( $length  ===  1  &&  ( $token_start  ===  "'"  ||  $token_start  ===  '"' ) ) )
+			   {
+				switch  ( ( $length  ===  1 ) ?  $token [0] : $token [1] ) 
+				   {
+					// Tj instruction
+					case	'j' :
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tj' ] ++ ;
+						break ;
+
+					// Tm instruction
+					case	'm' :
+						$current_tm [0]			=  ( double ) $operand_stack [0] ;
+						$current_tm [1]			=  ( double ) $operand_stack [3] ;
+						$current_tm [2]			=  $initial_tm [2] + ( double ) $operand_stack [4] ;
+						$current_tm [3]			=  $initial_tm [3] + ( double ) $operand_stack [5] ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tm' ] ++ ;
+						break ;
+
+					// Tf instruction
+					case	'f' :
+						$current_font_name	=  $operand_stack [0] ;
+						$key			=  "$page_number:$current_template:$current_font_name" ;
+
+						// We have to map a font specifier (such /TT0, C0-1, etc.) into an object id.
+						// Check first if we already met this font
+						if  ( isset ( $this -> MapIdBuffer [ $key ] ) )
+							$current_font	=   $this -> MapIdBuffer [ $key ] ;
+						// Otherwise retrieve its corresponding object number and put it in our font cache
+						else
+						   {
+							$current_font 	=  $this -> FontTable -> GetFontByMapId ( $page_number, $current_template, $current_font_name ) ;
+
+							$this -> MapIdBuffer [ $key ]	=  $current_font ;
+						    }
+
+						$current_font_height	=  ( double ) $operand_stack [1] ;
+						$this -> FontTable -> GetFontAttributes ( $page_number, $current_template, $current_font, $current_font_map_width, $current_font_mapped ) ;
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tf' ] ++ ;
+						break ;
+
+					// Td instruction
+					case	'd' :
+						$current_tm [2]		+=  ( double ) $operand_stack [0] ;
+						$current_tm [3]		+=  ( double ) $operand_stack [1] ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
+						break ;
+
+					// TJ instruction
+					case	'J' :
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TJ' ] ++ ;
+						break ;
+
+					// TD instruction
+					case	'D' :
+						$current_tm [2]		 =  ( double ) $operand_stack [0] ;
+						$current_tm [3]		 =  ( double ) $operand_stack [1] ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TD' ] ++ ;
+						break ;
+
+					// T* instruction
+					case	'*' :
+						if  ( self::$DEBUG )
+							warning ( "Instruction $token not yet implemented." ) ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
+						break ;
+
+					// TL instruction
+					case	'L' :
+						if  ( self::$DEBUG )
+							warning ( "Instruction $token not yet implemented." ) ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TL' ] ++ ;
+						break ;
+
+					// ' instruction
+					case	"'" :
+						if  ( self::$DEBUG )
+							warning ( "Instruction $token not yet implemented." ) ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ "'" ] ++ ;
+						break ;
+
+					// "'" instruction
+					case	'"' :
+						if  ( self::$DEBUG )
+							warning ( "Instruction $token not yet implemented." ) ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '"' ] ++ ;
+						break ;
+
+					// Other : ignore them
+					default :
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
+				    }
+
+				$operand_stack		=  array ( ) ;
+			    }
+			// cm instruction
+			else if  ( $token  ==  'cm' )
+			   {
+				$initial_tm [0]		 =  ( double ) $operand_stack [0] ;
+				$initial_tm [1]		 =  ( double ) $operand_stack [3] ;
+				$initial_tm [2]		 =  ( double ) $operand_stack [4] ;
+				$initial_tm [3]		 =  ( double ) $operand_stack [5] ;
+
+				$current_tm		 =  $initial_tm ;
+				$operand_stack		=  array ( ) ;
+
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'cm' ] ++ ;
+			    }
+			// Q/q instructions (restore/save graphic context)
+			else if  ( $length  ===  1  &&  ( $token_start  ===  'q'  ||  $token_start  ===  'Q' ) )
+			   {
+				if  ( $token_start  ===  'q' )
+				   {
+					$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $initial_tm, $current_tm ) ;
+				    }
+				else
+				   {
+					if  ( $graphic_stack_size )
+					   {
+						list ( $initial_tm, $current_tm	)	=  $graphic_stack [ -- $graphic_stack_size ] ;
+					    }
+				    }
+			    }
+			// Text array in the [...] notation. Well, in fact, even non-array constructs are returned as an array by the
+			// __next_token() function, for the sake of simplicity
+			else if  ( $token_start  ===  '[' )
+			   {
+				$text			=  $this -> __decode_text ( $token, $current_font, $current_font_mapped, $current_font_map_width ) ;
+
+				if  ( $text  !==  '' )
+				   {
+					if  ( $current_tm [0]  >=  0 )
+						$x	=  $current_tm [2] ;
+					else
+						$x	=  $page_attributes [ 'width' ] - $current_tm [2] ;
+
+					if  ( $current_tm [1]  >=  0 )
+						$y	=  $current_tm [3] ;
+					else
+						$y	=  $page_attributes [ 'height' ] - $current_tm [3] ;
+
+					$fragment	=  array
+					   (
+						'x'		=>  $x,
+						'y'		=>  $y,
+						'page'		=>  $page_number,
+						'template'	=>  $current_template,
+						'font'		=>  $current_font_name,
+						'font-height'	=>  abs ( $current_font_height * $current_tm [1] ),
+						'text'		=>  $text,
+						'initial'	=>  $initial_tm, 'current' => $current_tm
+					    ) ;
+
+					$page_fragments []	=  $fragment ;
+
+					$page_fragment_count ++ ;
+				    }
+			    }
+			// BT instruction
+			else if  ( $token  ==  'BT' )
+			   {
+				if  ( ! $BT_nesting_level )
+					$current_tm	=  $IdentityMatrix ;
+
+				$BT_nesting_level ++ ;
+				$operand_stack					=  array ( ) ;
+				$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $initial_tm, $current_tm ) ;
+
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'BT' ] ++ ;
+			    }
+			// ET instruction 
+			else if  ( $token  ==  'ET' )
+			   {
+				if  ( $BT_nesting_level )
+				   {
+					$BT_nesting_level -- ;
+
+					if  ( ! $BT_nesting_level  &&  $graphic_stack_size )
+					   {
+						list ( $initial_tm, $current_tm	)	=  $graphic_stack [ -- $graphic_stack_size ] ;
+					    }
+
+				    }
+
+				$operand_stack		=  array ( ) ;
+			    }
+			// Template (substituted in __next_token)
+			else if  ( $token_start  ===  '!' )
+			   {
+			warning ( "Template handling not yet implemented." ) ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
+			    }
+			// Other instructions
+			else
+			   {
+				$operand_stack		=  array ( ) ;
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
+			    }
+
+			// Update current index in instruction stream
+			$data_index	=  $next_index ;
+		    }
+
+		usort ( $page_fragments, array ( $this, '__sort_page_fragments' ) ) ;
+	    }
+
+
+	// __sort_page_fragments -
+	//	Sorts page fragments by their (y,x) coordinates, taking into account that a small variation in the y-position
+	//	which is less than the current font height means that both texts should reside on the same line.
+	public function  __sort_page_fragments ( $a, $b )
+	   {
+		$height			=  max ( $a [ 'font-height' ], $b [ 'font-height' ] ) ;
+		$xa			=  $a [ 'x' ] ;
+		$ya			=  $a [ 'y' ] ;
+		$xb			=  $b [ 'x' ] ;
+		$yb			=  $b [ 'y' ] ;
+
+		if  ( $ya  !==  $yb  &&  abs ( $ya - $yb )  <=  $height )
+			$yb	=  $ya ;
+
+		if  ( $ya  !==  $yb )
+			return ( $yb - $ya ) ;
+		else
+			return ( $xa - $xb ) ;
+	    }
+
+
+	// __next_token_ex :
+	//	Reviewed version of __next_token, adapted to ExtractTextWithLayout.
+	//	Both functions will be unified when this one will be stabilized.
+	private function  __next_token_ex ( $page_number, $data, $data_length, $index, &$token, &$next_index )
+	   {
+		// Skip spaces
+		$count		=  0 ;
+
+		while  ( $index  <  $data_length  &&  ( $data [ $index ]  ==  ' '  ||  $data [ $index ]  ==  "\t"  ||  $data [ $index ]  ==  "\r"  ||  $data [ $index ]  ==  "\n" ) )
+		   {
+			$index ++ ; 
+			$count ++ ;
+		    }
+
+		$enhanced_statistics	=  $this -> EnhancedStatistics ;
+		$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'space' ]	+=  $count ;
+
+		// End of input
+		if  ( $index  >=  $data_length )
+			return ( false ) ;
+
+		// The current character will tell us what to do
+		$ch 	=  $data [ $index ] ;
+
+		switch ( $ch )
+		   {
+			// Opening square bracket : we have to find the closing one, taking care of escape sequences
+			// that can also specify a square bracket, such as "\]"
+		   	case 	"[" :
+		   		$next_index 	=  $index + 1 ;
+		   		$parent 	=  0 ;
+		   		$angle 		=  0 ;
+		   		$token		=  '[' ;
+
+		   		while  ( $next_index  <  $data_length )
+		   		   {
+		   			$nch 	=  $data [ $next_index ++ ] ;
+
+		   			switch  ( $nch )
+		   			   {
+		   			   	case 	'(' :
+		   			   		$parent ++ ;
+		   			   		$token 	.=  $nch ;
+		   			   		break ;
+
+		   			   	case 	')' :
+		   			   		$parent -- ;
+		   			   		$token 	.=  $nch ;
+		   			   		break ;
+
+		   			   	case 	'<' :
+							// Although the array notation can contain hex digits between angle brackets, we have to
+							// take care that we do not have an angle bracket between two parentheses such as :
+							// [ (<) ... ]
+							if  ( ! $parent )
+		   			   			$angle ++ ;
+
+		   			   		$token 	.=  $nch ;
+		   			   		break ;
+
+		   			   	case 	'>' :
+							if  ( ! $parent )
+		   			   			$angle -- ;
+
+		   			   		$token 	.=  $nch ;
+		   			   		break ;
+
+		   			   	case 	'\\' :
+		   					$token 	.=  $nch . $data [ $next_index ++ ] ;
+		   					break ;
+
+		   			   	case 	']' :
+		   					$token 	.=  ']' ;
+
+		   					if  ( ! $parent  )
+		   						break  2 ;
+		   					else
+		   						break ;
+
+						case	"\n" :
+						case	"\r" :
+							break ;
+
+		   			   	default :
+		   			   		$token 	.=  $nch ;
+		   			    }
+		   		    }
+
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '[' ] ++ ;
+
+		   		return ( true ) ;
+
+			// Parenthesis : Again, we have to find the closing parenthesis, taking care of escape sequences
+			// such as "\)"
+		   	case 	"(" :
+		   		$next_index 	=  $index + 1 ;
+		   		$token		=  '[' . $ch ;
+
+		   		while  ( $next_index  <  $data_length )
+		   		   {
+		   			$nch 	=  $data [ $next_index ++ ] ;
+
+		   			if  ( $nch  ===  '\\' )
+					   {
+						$after		 =  $data [ $next_index ] ;
+
+						// Character references specified as \xyz, where "xyz" are octal digits
+						if  ( $after  >=  '0'  &&  $after  <=  '7' )
+						   {
+							$token		.=  $nch ;
+
+							while  ( $data [ $next_index ]  >=  '0'  &&  $data [ $next_index ]  <=  '7' )
+								$token		.=  $data [ $next_index ++ ] ;
+						    }
+						// Regular character escapes
+						else
+		   					$token 	.=  $nch . $data [ $next_index ++ ] ;
+					    }
+		   			else if  ( $nch  ===  ')' )
+		   			   {
+		   				$token 	.=  ')' ;
+		   				break ;
+		   			    }
+		   			else
+		   				$token 	.=  $nch ;
+		   		   }
+
+				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '(' ] ++ ;
+				$token	.=  ']' ;
+
+		   		return ( true ) ;
+
+			// A construction of the form : "<< something >>", or a unicode character
+		   	case 	'<' :
+				if  ( isset ( $data [ $index + 1 ] ) )
+				   {
+		   			if (  $data [ $index + 1 ]  ===  '<' )
+		   			   {
+		   		   		$next_index 	=  strpos ( $data, '>>', $index + 2 ) ;
+
+		   				if  ( $next_index  ===  false )
+		   					return ( false ) ;
+
+						$token		=  substr ( $data, $index, $next_index - $index + 2 ) ;
+						$next_index    +=  2 ;
+		   				
+						return ( true ) ;
+		   			    }
+		   			else
+		   			   {
+		   		   		$next_index 	=  strpos ( $data, '>', $index + 2 ) ;
+
+		   				if  ( $next_index  ===  false )
+		   					return ( false ) ;
+
+						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
+
+						$token		=  substr ( $data, $index, $next_index - $index + 1 ) ;
+						$next_index ++ ;
+
+		   				return ( true ) ;
+		   			   }
+				    }
+				else 
+					return ( false ) ;
+
+			// Tick character : consider it as a keyword, in the same way as the "TJ" or "Tj" keywords
+		   	case 	"'" :
+			case	'"' :
+		   		$token		=  $ch ;
+				$next_index ++ ;
+
+				return ( true ) ;
+
+			// Other cases : this may be either a floating-point number or a keyword
+		   	default :
+		   		$next_index	=  ++ $index ;
+		   		$token 		=  $ch ;
+
+				if  ( isset ( $data [ $next_index ] ) )
+				   {
+		   			if ( ( $ch  >=  '0'  &&  $ch  <=  '9' )  ||  $ch  ==  '-'  ||  $ch  ==  '+'  ||  $ch  ==  '.' )
+		   			   {
+		   				while  ( $next_index  <  $data_length  &&
+		   						( ( $data [ $next_index ]  >=  '0'  &&  $data [ $next_index ]  <=  '9' )  ||  
+									$data [ $next_index ]  ===  '-'  ||  $data [ $next_index ]  ===  '+'  ||  $data [ $next_index ]  ===  '.' ) )
+		   					$token 	.=  $data [ $next_index ++ ] ;
+		   			    }
+		   			else if  ( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALPHA ) )  ||  
+							$ch  ==  '/'  ||  $ch  ==  '!' )
+		   			   {
+						$ch	=  $data [ $next_index ] ;
+
+						while  ( $next_index  <  $data_length  &&  
+							( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALNUM ) )  ||  
+								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_'  ||  $ch  ==  '.' ) )
+						   {
+							$token 	.=  $ch ;
+							$next_index ++ ;
+
+							if  ( isset ( $data [ $next_index ] ) )
+								$ch	=  $data [ $next_index ] ;
+						    }
+		   			    }
+				    }
+
+		   		return ( true ) ;
+		    }
+	    }
+
+
+	private function  __decode_text ( $data, $current_font, $current_font_mapped, $current_font_map_width )
+	   {
+		list ( $text_values, $offsets ) 	=  $this -> __extract_chars_from_array ( $data ) ;
+		$value_index				=  0 ;
+		$result					=  '' ;
+
+		// Fonts having character maps will require some special processing
+		if  ( $current_font_mapped )
+		   {
+			// Loop through each text value
+			foreach  ( $text_values  as  $text )
+			   {
+				$is_hex 	=  ( $text [0]  ==  '<' ) ;
+				$length 	=  strlen ( $text ) - 1 ;
+				$handled	=  false ;
+
+				// Characters are encoded within angle brackets ( "<>" ).
+				// Note that several characters can be specified within the same angle brackets, so we have to take
+				// into account the width we detected in the begincodespancerange construct 
+				if  ( $is_hex )
+				   {
+					for  ( $i = 1 ; $i  <  $length ; $i += $current_font_map_width )
+					   {
+						$value		 =  substr ( $text, $i, $current_font_map_width ) ;
+						$ch 		 =  hexdec ( $value ) ;
+
+						if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+							$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+						else
+						   {
+							$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
+							$this -> CharacterMapBuffer [ $current_font ] [ $ch ]		=  $newchar ;
+						    }
+
+						$result		.=  $newchar ;
+					    }
+
+					$handled	 =  true ;
+				    }
+				// Yes ! double-byte codes can also be specified as plain text within parentheses !
+				// However, we have to be really careful here ; the sequence :
+				//	(Be)
+				// can mean the string "Be" or the Unicode character 0x4265 ('B' = 0x42, 'e' = 0x65)
+				// We first look if the character map contains an entry for Unicode codepoint 0x4265 ;
+				// if not, then we have to consider that it is regular text to be taken one character by
+				// one character. In this case, we fall back to the "if ( ! $handled )" condition
+				else if  ( $current_font_map_width  ==  4  )
+				   {
+					$temp_result		=  '' ;
+
+					for  ( $i = 1 ; $i  <  $length ; $i ++ )
+					   {
+						// Each character in the pair may be a backslash, which escapes the next character so we must skip it
+						// This code needs to be reviewed ; the same code is duplicated to handle escaped characters in octal notation
+						if  ( $text [$i]  !=  '\\' )
+							$ch1	=  $text [$i] ;
+						else 
+						   {
+							$i ++ ;
+
+							if  ( $text [$i]  <  '0'  ||  $text [$i]  >  '7' )
+								$ch1	=  $this -> ProcessEscapedCharacter ( $text [$i] ) ;
+							else
+							   {
+								$oct		=  '' ;
+								$digit_count	=  0 ;
+
+								while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7'  &&  $digit_count  <  3 )
+								   {
+									$oct	.=  $text [$i ++] ;
+									$digit_count ++ ;
+								    }
+
+								$ch1	=  chr ( octdec ( $oct ) ) ;
+								$i -- ;
+							    }
+						    }
+
+						$i ++ ;
+
+						if  ( $text [$i]  != '\\' )
+							$ch2	=  $text [$i] ;
+						else
+						   {
+							$i ++ ;
+
+							if  ( $text [$i]  <  '0'  ||  $text [$i]  >  '7' )
+								$ch2	=  $this -> ProcessEscapedCharacter ( $text [$i] ) ;
+							else
+							   {
+								$oct		=  '' ;
+								$digit_count	=  0 ;
+
+								while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7'  &&  $digit_count  <  3 )
+								   {
+									$oct	.=  $text [$i ++] ;
+									$digit_count ++ ;
+								    }
+
+								$ch2	=  chr ( octdec ( $oct ) ) ;
+								$i -- ;
+							    }
+						    }
+
+						// Build the 2-bytes character code
+						$ch		=  ( ord ( $ch1 )  <<  8 )  |  ord ( $ch2 ) ;
+
+						if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
+							$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+						else
+						   {
+							$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ch, true ) ;
+							$this -> CharacterMapBuffer [ $current_font ] [ $ch ]		=  $newchar ;
+						    }
+
+						// Yes !!! for characters encoded with two bytes, we can find the following construct :
+						//	0x00 "\" "(" 0x00 "C" 0x00 "a" 0x00 "r" 0x00 "\" ")"
+						// which must be expanded as : (Car)
+						// We have here the escape sequences "\(" and "\)", but the backslash is encoded on two bytes
+						// (although the MSB is nul), while the escaped character is encoded on 1 byte. waiting
+						// for the next quirk to happen...
+						if  ( $newchar  ==  '\\' )
+						   {
+							$newchar		=  $this -> ProcessEscapedCharacter ( $text [ $i + 2 ] ) ;
+							$i ++ ;		// this time we processed 3 bytes, not 2
+						    }
+
+						$temp_result		.=  $newchar ;
+					    }
+
+					// Happens only if we were unable to translate a character using the current character map
+					$result		.=  $temp_result ;
+					$handled	 =  true ;
+				    }
+
+				// Character strings within parentheses.
+				// For every text value, use the character map table for substitutions
+				if  ( ! $handled )
+				   {
+					for  ( $i = 1 ; $i  <  $length ; $i ++ )
+					   {
+						$ch 		=  $text [$i] ;
+
+						// Set to true to optimize calls to MapCharacters
+						// Currently does not work with pobox@dizy.sk/infoma.pdf (a few characters differ)
+						$use_map_buffer	=  false ;
+
+						// ... but don't forget to handle escape sequences "\n" and "\r" for characters
+						// 10 and 13
+						if  ( $ch  ==  '\\' )
+						   {
+							$ch 	=  $text [++$i] ;
+
+							// Escaped character
+							if  ( $ch  <  '0'  ||  $ch  >  '7' )
+								$ch		=  $this -> ProcessEscapedCharacter ( $ch ) ;
+							// However, an octal form can also be specified ; in this case we have to take into account
+							// the character width for the current font (if the character width is 4 hex digits, then we
+							// will encounter constructs such as "\000\077").
+							// The method used here is dirty : we build a regex to match octal character representations on a substring
+							// of the text 
+							else
+							   {
+								$width		=  $current_font_map_width / 2 ;	// Convert to byte count
+								$subtext	=  substr ( $text, $i - 1 ) ;
+								$regex		=  "#^ (\\\\ [0-7]{3}){1,$width} #imsx" ;
+
+								$status		=  preg_match ( $regex, $subtext, $octal_matches ) ;
+
+								if  ( $status )
+								   {
+									$octal_values	=  explode ( '\\', substr ( $octal_matches [0], 1 ) ) ;
+									$ord		=  0 ;
+
+									foreach  ( $octal_values  as  $octal_value ) 
+										$ord	=  ( $ord  <<  8 ) + octdec ( $octal_value ) ;
+
+									$ch	 =  chr ( $ord ) ;
+									$i	+=  strlen ( $octal_matches [0] ) - 2 ;
+								    }
+							    }
+
+							$use_map_buffer		=  false ;
+						    }
+
+						// Add substituted character to the output result
+						$ord		 =  ord ( $ch ) ;
+
+						if  ( ! $use_map_buffer )
+							$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+						else
+						   {
+							if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ) )
+								$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ;
+							else
+							   {
+								$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+								$this -> CharacterMapBuffer [ $current_font ] [ $ord ]	=  $newchar ;
+							    }
+						    }
+
+						$result		.=  $newchar ;
+					    }
+				    }
+
+				// Handle offsets between blocks of characters
+				if  ( isset ( $offsets [ $value_index ] )  &&
+						- ( $offsets [ $value_index ] )  >  $this -> MinSpaceWidth )
+					$result		.=  $this -> __get_character_padding ( $offsets [ $value_index ] ) ;
+
+				$value_index ++ ;
+			    }
+		    }
+		// For fonts having no associated character map, we simply encode the string in UTF8
+		// after the C-like escape sequences have been processed
+		// Note that <xxxx> constructs can be encountered here, so we have to process them as well
+		else
+		   {
+			foreach  ( $text_values  as  $text )
+			   {
+				$is_hex 	=  ( $text [0]  ==  '<' ) ;
+				$length 	=  strlen ( $text ) - 1 ;
+
+				// Some text within parentheses may have a backslash followed by a newline, to indicate some continuation line.
+				// Example :
+				//	(this is a sentence \
+				//	 continued on the next line)
+				// Funny isn't it ? so remove such constructs because we don't care
+				$text		=  str_replace ( array ( "\\\r\n", "\\\r", "\\\n" ), '', $text ) ;
+
+				// Characters are encoded within angle brackets ( "<>" )
+				if  ( $is_hex )
+				   {
+					for  ( $i = 1 ; $i  <  $length ; $i += 2 )
+					   {
+						$ch 	=  hexdec ( substr ( $text, $i, 2 ) ) ;
+
+						$result .=  $this -> CodePointToUtf8 ( $ch ) ;
+					    }
+				    }
+				// Characters are plain text
+				else
+				   {
+					$text	=  $this -> Unescape ( $text ) ;
+
+					for  ( $i = 1, $length = strlen ( $text ) - 1 ; $i  <  $length ; $i ++ )
+					   {
+						$ch	=  $text [$i] ;
+						$ord	=  ord ( $ch ) ;
+
+						if  ( $ord  <  127 )
+							$newchar	=  $ch ;
+						else
+						   {
+							if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ) )
+								$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ord ] ;
+							else
+							   {
+								$newchar	=  $this -> FontTable -> MapCharacter ( $current_font, $ord ) ;
+								$this -> CharacterMapBuffer [ $current_font ] [ $ord ]	=  $newchar ;
+							    }
+						    }
+
+						$result		.=  $newchar ;
+					    }
+				    }
+
+				// Handle offsets between blocks of characters
+				if  ( isset ( $offsets [ $value_index ] )  &&
+						abs ( $offsets [ $value_index ] )  >  $this -> MinSpaceWidth )
+					$result		.=  $this -> __get_character_padding ( $offsets [ $value_index ] ) ;
+
+				$value_index ++ ;
+			   }
+		    }
+
+		// All done, return
+		return ( $result ) ;
+	    }
+
+
+	// __assemble_text_fragments -
+	//	Assembles text fragments collected by the ExtractTextWithLayout function.
+	private function  __assemble_text_fragments ( $fragments )
+	   {
+		$fragment_count		=  count ( $fragments ) ;
+
+		if  ( ! $fragment_count )
+			return ( '' ) ;
+
+		// Take the first text fragment
+		$result			=  $fragments [0] [ 'text' ] ;
+		$previous_fragment	=  $fragments [0] ;
+
+		// Block separator
+		$separator		=  ( $this -> BlockSeparator ) ?  $this -> BlockSeparator : ' ' ;
+
+		// Loop through consecutive ones
+		for  ( $i = 1 ; $i  <  $fragment_count ; $i ++ )
+		   {
+			$fragment		=  $fragments [$i] ;
+
+			// We have to find out which PHP font object is used for the previous text fragment, so that we will be able to compute the length of
+			// a string. To avoid repeated calls to the PdfTexterFontTable::GetFontObject() method, we are buffering them in the FontObjectsBuffer
+			// property.
+			$object_reference	=  $previous_fragment [ 'page' ] . ':' . $previous_fragment [ 'template' ] . ':' . $previous_fragment [ 'font' ] ;
+
+			if  ( isset ( $this -> FontObjectsBuffer [ $object_reference ] ) ) 
+				$font_object	=  $this -> FontObjectsBuffer [ $object_reference ] ;
+			else
+			   {
+				$font_object		=  $this -> FontTable -> GetFontObject ( $previous_fragment [ 'page' ], $previous_fragment [ 'template' ], $previous_fragment [ 'font' ] ) ;
+				$this -> FontObjectsBuffer [ $object_reference ]	=  $font_object ;
+			    }
+
+			// The width of the previous text fragment will be computed only if its associated font contains character widths information
+			$previous_width		=  ( $font_object ) ?  $font_object -> GetStringWidth ( $previous_fragment [ 'text' ], $this -> ExtraTextWidth ) : false ;
+
+			// Since we allow slight variations of the y-position (for example, because of super- or sub-scripted text), we retain the highest font 
+			// height between the previous text fragment and the current one
+			$font_height		=  max ( $previous_fragment [ 'font-height' ], $fragment [ 'font-height' ] ) ;
+
+			// If the difference between both y-positions are greater than the current font height, then insert a newline
+			if  ( abs ( $fragment [ 'y' ] - $previous_fragment [ 'y' ] )  >  $font_height )
+				$result		.=  $this -> EOL ;
+			// Otherwise, we may need to insert a space...
+			else
+			   {
+				// If the width of the previous fragment could be computed, insert a space only if its x-position plus
+				// the computed width is less than the x-position of the current text fragment
+				if  ( $previous_width  !==  false  &&  $previous_fragment [ 'x' ] + $previous_width  <  $fragment [ 'x' ] )
+					$result		.=  $separator ;
+			    }
+
+			// Catenate the result
+			$result		.=  $fragment [ 'text' ] ;
+
+			// Remember the current fragment
+			$previous_fragment	=  $fragment ;
+		    }
+
+		// All done, return
+		return ( $result ) ;
+	    }
+ 
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
 	        GetTrailerInformation - Retrieves trailer information.
 	
 	    PROTOTYPE
@@ -3770,13 +4616,22 @@ class  PdfToText 	extends PdfObjectBase
 	//	match the Postscript instructions to be removed from any text stream.
 	private function  __build_ignored_instructions ( )
 	   {
-		foreach  ( self::$IgnoredInstructionsTemplates  as  $template )
-		   {
-			$template	=  '/' .
-						str_replace ( array_keys ( self::$ReplacementConstructs ), array_values ( self::$ReplacementConstructs ), $template ) .
-					   '/msx' ;
+		$searches	=  array_keys   ( self::$ReplacementConstructs ) ;
+		$replacements	=  array_values ( self::$ReplacementConstructs ) ;
 
-			self::$IgnoredInstructions []	=  $template ;
+		foreach  ( self::$IgnoredInstructionTemplatesLayout  as  $template )
+		   {
+			$template	=  '/' . str_replace ( $searches, $replacements, $template ) . '/msx' ;
+
+			self::$IgnoredInstructionsLayout []	=  $template ;
+			self::$IgnoredInstructionsNoLayout []	=  $template ;
+		    }
+
+		foreach  ( self::$IgnoredInstructionTemplatesNoLayout  as  $template )
+		   {
+			$template	=  '/' . str_replace ( $searches, $replacements, $template ) . '/msx' ;
+
+			self::$IgnoredInstructionsNoLayout []	=  $template ;
 		    }
 	    }
 
@@ -4286,10 +5141,7 @@ class  PdfToText 	extends PdfObjectBase
 	//	(these are mainly shape drawing instructions).
 	private function  __strip_useless_instructions ( $data )
 	   {
-		$result		=  preg_replace ( self::$IgnoredInstructions, ' ', $data ) ;
-
-		// Don't replace carriage returns by nothing, as some Adobe software on Apple use it as a line terminator
-//		$result		=  str_replace ( "\r", '' , $result ) ;
+		$result		=  preg_replace ( $this -> IgnoredInstructions, ' ', $data ) ;
 
 		$this -> Statistics [ 'TextSize' ]		+=  strlen ( $data ) ;
 		$this -> Statistics [ 'OptimizedTextSize' ]	+=  strlen ( $result ) ;
@@ -4588,7 +5440,7 @@ class  PdfToText 	extends PdfObjectBase
 class 	PdfTexterFontTable 	extends PdfObjectBase
    {
 	// Font table
-	private		$Fonts		=  array ( ) ;
+	public		$Fonts		=  array ( ) ;
 	private		$DefaultFont	=  false ;
 	// Font mapping between a font number and an object number
 	private 	$FontMap 	=  array ( ) ;
@@ -4803,6 +5655,24 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	    }
 
 
+	// GetFontObject -
+	//	Returns the PdfTexterFont object for the given page, template and font id (in the form of "/something")
+	public function  GetFontObject ( $page_number, $template, $id )
+	   {
+		if  ( isset ( $this -> FontMap [ "$page_number:$template:$id" ] ) )
+			$font_object	=  $this -> FontMap [ "$page_number:$template:$id" ] ;
+		else if  ( isset ( $this -> FontMap [ $id ] ) )
+			$font_object	=  $this -> FontMap [ $id ] ;
+		else
+			return ( false ) ;
+
+		if  ( isset ( $this -> Fonts [ $font_object ] ) ) 
+			return ( $this -> Fonts [ $font_object ] ) ;
+		else
+			return ( false ) ;
+	    }
+
+
 	// MapCharacter -
 	//	Returns the character associated to the specified one.
 	public function  MapCharacter ( $font, $ch, $return_false_on_failure = false )
@@ -4826,7 +5696,9 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$cache	=  $font_object -> CharacterMap -> Cache ;
 		    }
 		else
+		   {
 			$code	=  $this -> CodePointToUtf8 ( $ch ) ;
+		    }
 
 		if  ( $cache )
 			$this -> CharacterMapBuffer [ $font ] [ $ch ]	=  $code ;
@@ -4876,6 +5748,13 @@ class  PdfTexterFont		extends PdfObjectBase
 	// Optional character map, that may be set by the PdfToText::Load method just before processing text drawing blocks
 	public		$CharacterMap		=  null ;
 	public		$SecondaryCharacterMap	=  null ;
+	// Character widths
+	public		$CharacterWidths	=  array ( ) ;
+	// Default character width, if not present in the $CharacterWidths array
+	public		$DefaultWidth		=  0 ;
+	private		$GotWidthInformation	=  false ;
+	// A buffer for remembering character widths
+	protected	$CharacterWidthsBuffer	=  array ( ) ;
 
 
 	// Constructor -
@@ -4890,6 +5769,7 @@ class  PdfTexterFont		extends PdfObjectBase
 		$this -> FontType			=  $font_type  &  ~self::FONT_VARIANT_MASK ;
 		$this -> FontVariant			=  ( $font_type  >>  self::FONT_VARIANT_SHIFT )  &  0x0F ;
 
+		// Instantiate the appropriate character map for this font
 		switch  ( $this -> FontType )
 		   {
 			case	self::FONT_ENCODING_WINANSI :
@@ -4921,6 +5801,59 @@ class  PdfTexterFont		extends PdfObjectBase
 			default :
 				if  ( PdfToText::$DEBUG )
 					warning ( "Unknown font type #$font_type found for object #$resource_id, character map #$cmap_id." ) ;
+		    }
+
+		// Retrieve the character widths for this font. This means :
+		// - Retrieving the /FirstChar, /LastChar and /Widths entries from the font definition. /Widths is an array of individual character
+		//   widths, between the /FirstChar and /LastChar entries. A value of zero in this array means "Use the default width"...
+		// - ... which is given by the /MissingWidth parameter, normally put in the font descriptor whose object id is given by the 
+		//   /FontDescriptor entry of the font definition
+		// Well, to be considered, given the number of buggy PDFs around the world, we won't care about the /LastChar entry and we won't
+		// check whether the /Widths array contains (LastChar - FirstChar + 1) integer values...
+		$font_data	=  $pdf_objects [ $resource_id ] ;
+
+		if  ( preg_match ( '/FontDescriptor \s+ (?P<id> \d+) \s+ \d+ \s+ R/imsx', $font_data, $match ) )
+		   {
+			$descriptor_id		=  $match [ 'id' ] ;
+
+			// Don't care about searching this in that object, or that in this object - simply catenate the font descriptor
+			// with the font definition
+			if  ( isset ( $pdf_objects [ $descriptor_id ] ) )
+				$font_data	.=  $pdf_objects [ $descriptor_id ] ;
+		    }
+
+		// Get the entries 
+		$first_char	=  false ;
+		$widths		=  false ;
+		$missing_width  =  false ;
+
+		if  ( preg_match ( '/FirstChar \s+ (?P<char> \d+)/imsx', $font_data, $match ) )
+			$first_char	=  $match [ 'char' ] ;
+
+		if  ( preg_match ( '/Widths \s* \[ (?P<widths> [^\]]+) \]/imsx', $font_data, $match ) )
+			$widths		=  $match [ 'widths' ] ;
+
+		if  ( preg_match ( '/MissingWidth \s+ (?P<missing> \d+)/imsx', $font_data, $match ) )
+			$missing_width	=  $match [ 'missing' ] ;
+
+		// It would not make sense if one of the two entries /FirstChar and /Widths was missing
+		// So ensure they are all there (not that /MissingWidths can be absent)
+		if  ( $first_char  &&  $widths )
+		   {
+			if  ( $missing_width  !==  false )
+				$this -> DefaultWidth		=  ( double ) $missing_width ;
+
+			$widths				=  explode ( ' ', $widths ) ;
+
+			for  ( $i = 0, $count = count ( $widths ) ; $i  <  $count ; $i ++ )
+			   {
+				$value		=  ( double ) trim ( $widths [$i] ) ;
+
+				if  ( $value )
+					$this -> CharacterWidths [ chr ( $first_char + $i ) ]	=  $value  ;
+			    }
+
+			$this -> GotWidthInformation	=  true ;
 		    }
 	    }
 
@@ -4965,6 +5898,75 @@ class  PdfTexterFont		extends PdfObjectBase
 			return ( false ) ;
 
 		return ( $this -> CodePointToUtf8 ( $ch ) ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetStringWidth - Returns the length of a string, in 1/100 of points
+	
+	    PROTOTYPE
+	        $width		=  $font -> GetStringWidth ( $text, $extra_percent ) ;
+	
+	    DESCRIPTION
+	        Returns the length of a string, in 1/100 of points. 
+	
+	    PARAMETERS
+	        $text (string) -
+	                String whose length is to be measured.
+
+		$extra_percent (double) -
+			Extra percentage to be added to the computed width.
+	
+	    RETURN VALUE
+	        Returns the length of the specified string in 1/1000 of text points, or 0 if the font does not
+		contain any character width information.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetStringWidth ( $text, $extra_percent )
+	   {
+		// No width information 
+		if  ( ! $this -> GotWidthInformation )
+			return ( false ) ;
+
+		$width		=  0 ;
+
+		// Compute the width of each individual character - use a character width buffer to avoid
+		// repeating the same tests again and again for characters whose width has already been processed
+		for  ( $i = 0, $length = strlen ( $text ) ; $i  <  $length ; $i ++ )
+		   {
+			$ch		=  $text [$i] ;
+
+			// Character already in the Widths buffer - Simply retrieve its value
+			if  ( isset ( $this -> CharacterWidthsBuffer [ $ch ] ) )
+				$width	+=  $this -> CharacterWidthsBuffer [ $ch ] ;
+			// New character - The width comes either from the CharacterWidths array if an entry is defined
+			// for this character, or from the default width property.
+			else
+			   {
+				if  ( isset ( $this -> CharacterWidths [ $ch ] ) )
+				   {
+					$width	+=  $this -> CharacterWidths [ $ch ] ;
+					$this -> CharacterWidthsBuffer [ $ch ]	=  $this -> CharacterWidths [ $ch ] ;
+				    }
+				else
+				   {
+					$width	+=  $this -> DefaultWidth ;
+					$this -> CharacterWidthsBuffer [ $ch ]	=  $this -> DefaultWidth ;
+				    }
+			    }
+		    }
+
+		// The computed width is actually shorter than its actual width. Adjust by the percentage specified
+		// by the ExtraTextWidth property
+		$divisor	=  100 - $extra_percent ;
+
+		if  ( $divisor  <  50 )			// Arbitrarily fix a limit 
+			$divisor	=  50 ;
+
+		// All done, return
+		return ( $width / $divisor ) ;
 	    }
     }
 
@@ -6408,7 +7410,7 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	// Entries that describe which page contains which text objects. Of course, these can be nested otherwise it would not be funny !
 	protected	$PageKids		=  array ( ) ;
 	// Terminal entries : they directly give the ids of the objects belonging to a page
-	protected	$PageContents		=  array ( ) ;
+	public		$PageContents		=  array ( ) ;
 	// Note that all the above arrays are indexed by object id and filled with the data collected by calling the Peek() Method...
 
 	// Objects that could be referenced from other text objects as XObjects, using the /TPLx notation
@@ -6417,6 +7419,8 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 	// Once the Peek() method has collected page contents & object information, the MapCatalog() method is called to create this array
 	// which contains page numbers as keys, and the list of objects contained in this page as values
 	public		$Pages			=  array ( ) ;
+	// Holds page attributes
+	public		$PageAttributes		=  array ( ) ;
 
 	// Resource mappings can either refer to an object (/Resources 2 0 R) or to inline mappings (/Resources << ... >>)
 	// The same object can be referenced by many /Resources parameters throughout the pdf file, so its important to keep
@@ -6622,6 +7626,19 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 				$fonts					=  $this -> GetResourceMappings ( $object_id, $object_data, '/Font', $pdf_objects ) ;
 				$xobjects				=  $this -> GetResourceMappings ( $object_id, $object_data, '/XObject', $pdf_objects ) ;
 
+				// Find the width and height of the page (/Mediabox parameter) 
+				if  ( preg_match ( '#/MediaBox \s* \[ \s* (?P<x1> \d+) \s+ (?P<y1> \d+) \s+ (?P<x2> \d+) \s+ (?P<y2> \d+) \s* \]#imsx', $object_data, $match ) )
+				   {
+					$width		=  ( double ) ( $match [ 'x2' ] - $match [ 'x1' ] + 1 ) ;
+					$height		=  ( double ) ( $match [ 'y2' ] - $match [ 'y1' ] + 1 ) ;
+				    }
+				// Otherwise, fix an arbitrary width and length (but this should never happen, because all pdf files are correct, isn't it?)
+				else
+				   {
+					$width		=  595 ;
+					$height		=  850 ;
+				    }
+
 				// Yes ! some /Contents parameters may designate another object which contains references to the real text contents
 				// in the form : [x 0 R y 0 R etc.], so we have to dig into it...
 				$new_references				=  array ( ) ;
@@ -6644,7 +7661,9 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					'parent'	=>  $parent,
 					'contents'	=>  $new_references,
 					'fonts'		=>  $fonts,
-					'xobjects'	=>  $xobjects
+					'xobjects'	=>  $xobjects,
+					'width'		=>  $width,
+					'height'	=>  $height
 				    ) ;
 			    }
 		    }
@@ -6885,6 +7904,12 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					$this -> PageContents [ $item ]	[ 'page' ]	=  $page ;
 					$this -> Pages [ $page ]			=  ( isset ( $this -> PageContents [ $item ] [ 'contents' ] ) ) ? 
 												$this -> PageContents [ $item ] [ 'contents' ] : array ( ) ;
+					$this -> PageAttributes [ $page ]		=  array
+					   (
+						'width'			=>  $this -> PageContents [ $item ] [ 'width' ],
+						'height'		=>  $this -> PageContents [ $item ] [ 'height' ]
+					    ) ;
+
 					$page ++ ;
 				    }
 			    }
