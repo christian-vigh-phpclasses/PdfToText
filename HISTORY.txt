@@ -1,3 +1,6 @@
+    [Version : 1.5.1]	[Date : 2017/03/31]     [Author : CV]
+	. Corrected a bug in the LZW decompression algorithm.
+	
     [Version : 1.5.0]	[Date : 2017/03/31]     [Author : CV]
 	. Implemented page layout rendering !!!
 	  - Text parts are displayed in the same order as Acrobat Reader displays them
