@@ -1,3 +1,13 @@
+    [Version : 1.5.2]	[Date : 2017/04/05]     [Author : CV]
+	. Page layout rendering enhancements :
+	  - Interpret more instructions
+	  - Fixed a problem where two lines, the first one having the biggest font, were joined together
+	. Fixed a bug in the Unescape() method which allowed octal sequences of more than 3 characters to be 
+	  interpreted, giving an incorrect character code as output.
+	. Some drawing objects were not recognized in the input ; this could affect page layout rendering.
+	. The document_strpos() methods were not returning the correct page number, but a zero-based offset
+	  (the Pages property is indexed by the actual page number)
+	
     [Version : 1.5.1]	[Date : 2017/03/31]     [Author : CV]
 	. Corrected a bug in the LZW decompression algorithm.
 	
