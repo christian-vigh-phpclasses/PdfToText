@@ -24,8 +24,15 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.1]	[Date : 2017/03/31]     [Author : CV]
-	. Corrected a bug in the LZW decompression algorithm.
+    [Version : 1.5.2]	[Date : 2017/04/05]     [Author : CV]
+	. Page layout rendering enhancements :
+	  - Interpret more instructions
+	  - Fixed a problem where two lines, the first one having the biggest font, were joined together
+	. Fixed a bug in the Unescape() method which allowed octal sequences of more than 3 characters to be 
+	  interpreted, giving an incorrect character code as output.
+	. Some drawing objects were not recognized in the input ; this could affect page layout rendering.
+	. The document_strpos() methods were not returning the correct page number, but a zero-based offset
+	  (the Pages property is indexed by the actual page number)
 	
     (...)
 
@@ -568,10 +575,10 @@ abstract class  PdfObjectBase		// extends  Object
 		if  ( preg_match ( '# / (Filter) | (Length) #ix', $object_data )  &&
 		      ! preg_match ( '# / (Type) | (Subtype) | (Length1) #ix', $object_data ) )
 		   {
-		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm|Do)\\b/', $decoded_stream_data ) )
+		   	if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm|Do|cm)\\b/', $decoded_stream_data ) )
 				return ( true ) ;
 		    }
-		else if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm|Do)\\b/', $decoded_stream_data ) )
+		else if  ( preg_match ( '/\\b(BT|Tf|Td|TJ|Tj|Tm|Do|cm)\\b/', $decoded_stream_data ) )
 			return ( true ) ;
 
 		return ( false ) ;
@@ -758,7 +765,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.1" ;
+	const		VERSION					=  "1.5.2" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1663,15 +1670,15 @@ class  PdfToText 	extends PdfObjectBase
 		$page_separator		=  utf8_encode ( $this -> PageSeparator ) ;
 		$page_separator_length	=  strlen ( $page_separator ) ;
 
-		foreach  ( $this -> Pages  as  &$page )
+		foreach  ( $this -> Pages  as  $page_number => &$page )
 		   {
 			// If hyphenated words are unwanted, then remove them
 			if  ( $this -> Options &  self::PDFOPT_NO_HYPHENATED_WORDS )
 				$page	=  preg_replace ( self::$RemoveHyphensRegex, '$4$2', $page ) ;
 
-			$length				 =  strlen ( $page ) ;
-			$this -> PageLocations []	 =  array ( 'start' => $offset, 'end' => $offset + $length - 1 ) ;
-			$offset				+=  $length + $page_separator_length ;
+			$length					 =  strlen ( $page ) ;
+			$this -> PageLocations [ $page_number ]	 =  array ( 'start' => $offset, 'end' => $offset + $length - 1 ) ;
+			$offset					+=  $length + $page_separator_length ;
 		    }
 
 		// And finally, the Text property
@@ -3638,7 +3645,7 @@ class  PdfToText 	extends PdfObjectBase
 		//	[ sx tx ty sy x y ]
 		// (although tx and ty are not useful here, since they affect the graphic orientation of the text)
 		// sx and sy are scaling parameters, actually a multiplier for the x and y parameters. We only keep 
-		static		$IdentityMatrix		=  array ( 1, 1, 0, 0 ) ;
+		static		$IdentityMatrix		=  array ( 1, 0, 0, 1, 0, 0 ) ;
 
 		// Remove useless instructions
 		$new_data	=  $this -> __strip_useless_instructions ( $data ) ;
@@ -3660,8 +3667,8 @@ class  PdfToText 	extends PdfObjectBase
 		$data_index 				=  0 ;
 
 		// Text matrices
-		$initial_tm				=  
-		$current_tm				=  $IdentityMatrix ;
+		$CTM					=  
+		$Tm					=  $IdentityMatrix ;
 
 		// Nesting level of BT..ET instructions (Begin text/End text) - they are not nestable but be prepared to meet buggy PDFs
 		$BT_nesting_level			=  0 ;
@@ -3695,6 +3702,13 @@ class  PdfToText 	extends PdfObjectBase
 
 		// Whether we should compute enhanced statistics
 		$enhanced_statistics		=  $this -> EnhancedStatistics ;
+
+		// Last know (x,y) coordinates
+		$last_known_x			=  0.0 ;
+		$last_known_y			=  0.0 ;
+
+		// Text leading value set by the TL instruction
+		$text_leading			=  0.0 ;
 
 		// Loop through the stream of tokens
 		while  ( $this -> __next_token_ex ( $page_number, $data, $data_length, $data_index, $token, $next_index )  !==  false )
@@ -3760,10 +3774,12 @@ class  PdfToText 	extends PdfObjectBase
 
 					// Tm instruction
 					case	'm' :
-						$current_tm [0]			=  ( double ) $operand_stack [0] ;
-						$current_tm [1]			=  ( double ) $operand_stack [3] ;
-						$current_tm [2]			=  $initial_tm [2] + ( double ) $operand_stack [4] ;
-						$current_tm [3]			=  $initial_tm [3] + ( double ) $operand_stack [5] ;
+						$Tm [0]			=  ( double ) $operand_stack [0] ;
+						$Tm [1]			=  ( double ) $operand_stack [1] ;
+						$Tm [2]			=  ( double ) $operand_stack [2] ;
+						$Tm [3]			=  ( double ) $operand_stack [3] ;
+						$Tm [4]			=  ( double ) $operand_stack [4] ;
+						$Tm [5]			=  ( double ) $operand_stack [5] ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tm' ] ++ ;
 						break ;
@@ -3792,8 +3808,10 @@ class  PdfToText 	extends PdfObjectBase
 
 					// Td instruction
 					case	'd' :
-						$current_tm [2]		+=  ( double ) $operand_stack [0] ;
-						$current_tm [3]		+=  ( double ) $operand_stack [1] ;
+						$x		=  ( double ) $operand_stack [0] ;
+						$y		=  ( double ) $operand_stack [1] ;
+						$Tm		=  $this -> __matrix_multiply ( array ( 1, 0, 0, 1, $x, $y ), $Tm,
+									$page_attributes [ 'width' ], $page_attributes [ 'height' ] ) ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
 						break ;
@@ -3805,8 +3823,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					// TD instruction
 					case	'D' :
-						$current_tm [2]		 =  ( double ) $operand_stack [0] ;
-						$current_tm [3]		 =  ( double ) $operand_stack [1] ;
+						$Tm [4]		 =  ( double ) $operand_stack [0] ;
+						$Tm [5]		 =  ( double ) $operand_stack [1] ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TD' ] ++ ;
 						break ;
@@ -3819,19 +3837,16 @@ class  PdfToText 	extends PdfObjectBase
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
 						break ;
 
-					// TL instruction
+					// TL instruction - Set text leading. Currently not used.
 					case	'L' :
-						if  ( self::$DEBUG )
-							warning ( "Instruction $token not yet implemented." ) ;
-
+						$text_leading		=  ( double ) $operand_stack [0] ;
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TL' ] ++ ;
 						break ;
 
 					// ' instruction
 					case	"'" :
-						if  ( self::$DEBUG )
-							warning ( "Instruction $token not yet implemented." ) ;
-
+						$page_fragments [ $page_fragment_count - 1 ] [ 'x' ]		+=  $text_leading ;
+						$page_fragments [ $page_fragment_count - 1 ] [ 'y' ]		-=  $current_font_height * abs ( $Tm [3] ) ;
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ "'" ] ++ ;
 						break ;
 
@@ -3853,13 +3868,25 @@ class  PdfToText 	extends PdfObjectBase
 			// cm instruction
 			else if  ( $token  ==  'cm' )
 			   {
-				$initial_tm [0]		 =  ( double ) $operand_stack [0] ;
-				$initial_tm [1]		 =  ( double ) $operand_stack [3] ;
-				$initial_tm [2]		 =  ( double ) $operand_stack [4] ;
-				$initial_tm [3]		 =  ( double ) $operand_stack [5] ;
+				$a		=  ( double ) $operand_stack [0] ;
+				$b		=  ( double ) $operand_stack [1] ;
+				$c		=  ( double ) $operand_stack [2] ;
+				$d		=  ( double ) $operand_stack [3] ;
+				$e		=  ( double ) $operand_stack [4] ;
+				$f		=  ( double ) $operand_stack [5] ;
 
-				$current_tm		 =  $initial_tm ;
-				$operand_stack		=  array ( ) ;
+				if  ( ! $e ) 
+					$e		=  $last_known_x ;
+				else
+					$last_known_x	=  $e ;
+					
+				if  ( ! $f ) 
+					$f		=  $last_known_y ;
+				else
+					$last_known_y	=  $f ;
+
+				$CTM		=  array ( $a, $b, $c, $d, $e, $f ) ;
+				$operand_stack	=  array ( ) ;
 
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'cm' ] ++ ;
 			    }
@@ -3868,14 +3895,11 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				if  ( $token_start  ===  'q' )
 				   {
-					$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $initial_tm, $current_tm ) ;
+					$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $CTM, $Tm ) ;
 				    }
-				else
+				else if  ( $graphic_stack_size )
 				   {
-					if  ( $graphic_stack_size )
-					   {
-						list ( $initial_tm, $current_tm	)	=  $graphic_stack [ -- $graphic_stack_size ] ;
-					    }
+					list ( $CTM, $Tm )				=  $graphic_stack [ -- $graphic_stack_size ] ;
 				    }
 			    }
 			// Text array in the [...] notation. Well, in fact, even non-array constructs are returned as an array by the
@@ -3886,26 +3910,18 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( $text  !==  '' )
 				   {
-					if  ( $current_tm [0]  >=  0 )
-						$x	=  $current_tm [2] ;
-					else
-						$x	=  $page_attributes [ 'width' ] - $current_tm [2] ;
-
-					if  ( $current_tm [1]  >=  0 )
-						$y	=  $current_tm [3] ;
-					else
-						$y	=  $page_attributes [ 'height' ] - $current_tm [3] ;
+					$r	=  $this -> __matrix_multiply ( $Tm, $CTM, $page_attributes [ 'width' ], $page_attributes [ 'height' ] ) ;
 
 					$fragment	=  array
 					   (
-						'x'		=>  $x,
-						'y'		=>  $y,
+						'x'		=>  $r [4],
+						'y'		=>  $r [5],
 						'page'		=>  $page_number,
 						'template'	=>  $current_template,
 						'font'		=>  $current_font_name,
-						'font-height'	=>  abs ( $current_font_height * $current_tm [1] ),
+						'font-height'	=>  abs ( $current_font_height * $Tm [3] ),
 						'text'		=>  $text,
-						'initial'	=>  $initial_tm, 'current' => $current_tm
+						'CTM'	=>  $CTM, 'Tm' => $Tm, 'NEW' => $r, 'CURHEIGHT' => $current_font_height
 					    ) ;
 
 					$page_fragments []	=  $fragment ;
@@ -3917,11 +3933,11 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( $token  ==  'BT' )
 			   {
 				if  ( ! $BT_nesting_level )
-					$current_tm	=  $IdentityMatrix ;
+					$Tm	=  $IdentityMatrix ;
 
 				$BT_nesting_level ++ ;
 				$operand_stack					=  array ( ) ;
-				$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $initial_tm, $current_tm ) ;
+				$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $CTM, $Tm ) ;
 
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'BT' ] ++ ;
 			    }
@@ -3934,7 +3950,7 @@ class  PdfToText 	extends PdfObjectBase
 
 					if  ( ! $BT_nesting_level  &&  $graphic_stack_size )
 					   {
-						list ( $initial_tm, $current_tm	)	=  $graphic_stack [ -- $graphic_stack_size ] ;
+						list ( $CTM, $Tm )	=  $graphic_stack [ -- $graphic_stack_size ] ;
 					    }
 
 				    }
@@ -3944,7 +3960,9 @@ class  PdfToText 	extends PdfObjectBase
 			// Template (substituted in __next_token)
 			else if  ( $token_start  ===  '!' )
 			   {
-			warning ( "Template handling not yet implemented." ) ;
+				if  ( self::$DEBUG ) 
+					warning ( "Template handling not yet implemented." ) ;
+
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
 			    }
 			// Other instructions
@@ -3959,6 +3977,49 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		usort ( $page_fragments, array ( $this, '__sort_page_fragments' ) ) ;
+		//dump ( $page_fragments ) ;
+	    }
+
+
+	// __matrix_multiply -
+	//	Multiplies matrix $ma by $mb.
+	//	PDF transformation matrices are 3x3 matrices containing the following values :
+	//	
+	//		| sx rx 0 |
+	//		| ry sy 0 |
+	//		| tx ty 1 |
+	//
+	//	However, we do not care about the 3rd column, which is always hardcoded. Transformation
+	//	matrices here are implemented 6-elements arrays :
+	//
+	//		[ sx, rx, ry, tx, ty ]
+	private function  __matrix_multiply ( $ma, $mb, $page_width, $page_height )
+	   {
+		// Scaling text is only appropriate for rendering graphics ; in our case, we just have to render 
+		// basic text without any consideration about its width or height ; so adjust the sx/sy parameters
+		// accordingly
+		$scale_1x	=  ( $ma [0]  >  0 ) ?  1 : -1 ;
+		$scale_1y	=  ( $ma [3]  >  0 ) ?  1 : -1 ;
+		$scale_2x	=  ( $mb [0]  >  0 ) ?  1 : -1 ;
+		$scale_2y	=  ( $mb [3]  >  0 ) ?  1 : -1 ;
+
+		// Perform the matrix multiplication
+		$r	=  array ( ) ;
+		$r [0]	=  ( $scale_1x * $scale_2x ) + ( $ma [1] * $mb [2]   ) ;
+		$r [1]	=  ( $scale_1x * $mb [1]   ) + ( $ma [1] * $scale_2y ) ;
+		$r [2]	=  ( $scale_1y * $scale_2x ) + ( $ma [3] * $mb [2]   ) ;
+		$r [3]	=  ( $scale_1y * $mb [1]   ) + ( $ma [3] * $scale_2y ) ;
+		$r [4]	=  ( $ma [4]   * $scale_2x ) + ( $ma [5] * $mb [2]   ) + $mb [4] ;
+		$r [5]	=  ( $ma [4]   * $mb [1]   ) + ( $ma [5] * $scale_2y ) + $mb [5] ;
+
+		// Negative x/y values are expressed relative to the page width/height (???)
+		if  ( $r [0]  <  0 )
+			$r [4]	=  abs ( $r [4] ) ;//$page_width - $r [4] ;
+
+		if  ( $r [3]  <  0 ) 
+			$r [5]	=  abs ( $r [5] ) ; //$page_height - $r [5] ;
+
+		return ( $r ) ;
 	    }
 
 
@@ -4152,8 +4213,8 @@ class  PdfToText 	extends PdfObjectBase
 			// Tick character : consider it as a keyword, in the same way as the "TJ" or "Tj" keywords
 		   	case 	"'" :
 			case	'"' :
-		   		$token		=  $ch ;
-				$next_index ++ ;
+		   		$token		 =  $ch ;
+				$next_index	+=  2 ;
 
 				return ( true ) ;
 
@@ -4524,8 +4585,15 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				// If the width of the previous fragment could be computed, insert a space only if its x-position plus
 				// the computed width is less than the x-position of the current text fragment
-				if  ( $previous_width  !==  false  &&  $previous_fragment [ 'x' ] + $previous_width  <  $fragment [ 'x' ] )
-					$result		.=  $separator ;
+				if  ( $previous_width  !==  false )
+				   {
+					if  (  $previous_fragment [ 'x' ] + $previous_width  <  $fragment [ 'x' ] )
+						$result		.=  $separator ;
+					// However, in case of an ending x-position superior to the starting x-position of the current fragment,
+					// we have to consider if they should really appear on the same line
+					else if  ( $previous_fragment [ 'y' ] + min ( $previous_fragment [ 'font-height' ], $fragment [ 'font-height' ] )  >  $fragment [ 'y' ] )
+						$result		.=  $this -> EOL ;
+				    }
 			    }
 
 			// Catenate the result
@@ -5368,7 +5436,7 @@ class  PdfToText 	extends PdfObjectBase
 	        Returns the unescaped value of $text.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function   Unescape ( $text )
+	protected function  Unescape ( $text )
 	   {
 		$length 	=  strlen ( $text ) ;
 		$result 	=  '' ;
@@ -5393,13 +5461,15 @@ class  PdfToText 	extends PdfObjectBase
 						// Octal escape notation 
 						if  ( $nch  >=  '0'  &&  $nch  <=  '7' )
 						   {
-							$ord	=  ord ( $nch ) - $ord0 ;
+							$ord		=  ord ( $nch ) - $ord0 ;
+							$digits		=  1 ;
 							$i ++ ;
 
-							while  ( $i  <  $length  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+							while  ( $i  <  $length  &&  $digits  <  3  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
 							   {
 								$ord	=  ( $ord * 8 ) + ord ( $text [$i] ) - $ord0 ;
 								$i ++ ;
+								$digits ++ ;
 							    }
 
 							$i -- ;		// Count one character less since $i will be incremented at the end of the for() loop
