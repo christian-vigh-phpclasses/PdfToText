@@ -1,3 +1,15 @@
+    [Version : 1.5.3]	[Date : 2017/04/06]     [Author : CV]
+	. Enhanced page layout rendering :
+	  - Better handle text positioning, especially when a line contains super/subscripted text
+	  - Implemented additional text positioning instructions
+	  - First experimental implementation of templates (which are correctly implemented in the non-page 
+	    layout version)
+	  - Fixed a regression intoduced in versions 1.5.1 and 1.5.2.
+	. Completed some missing codes for the WinAnsiEncoding font, which is far bigger than stated in the
+	  PDF specifications.
+	. Modified the default value of the ExtraTextWidth property to -5%, since most of the widths 
+	  computed by the GetStringWidth() method are a little bit too large.
+	
     [Version : 1.5.2]	[Date : 2017/04/05]     [Author : CV]
 	. Page layout rendering enhancements :
 	  - Interpret more instructions

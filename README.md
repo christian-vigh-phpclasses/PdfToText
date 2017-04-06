@@ -314,7 +314,7 @@ the **PdfTexterFont::GetStringWidth()** method.
 
 This value is basically used when computing text positions and string lengths with the PDFOPT_BASIC_LAYOUT option : the computed string length is shorter than its actual length (because of extra spacing determined by character kerning in the font data, among other details). 
 
-To determine whether two consecutive blocks of text on the same should be separated by a space, the class will empirically add this extra percentage to the computed string length. The default value is 5%.
+To determine whether two consecutive blocks of text on the same should be separated by a space, the class will empirically add this extra percentage to the computed string length. The default value is -5 (percent).
 
 ### Filename ###
 
