@@ -24,15 +24,17 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.2]	[Date : 2017/04/05]     [Author : CV]
-	. Page layout rendering enhancements :
-	  - Interpret more instructions
-	  - Fixed a problem where two lines, the first one having the biggest font, were joined together
-	. Fixed a bug in the Unescape() method which allowed octal sequences of more than 3 characters to be 
-	  interpreted, giving an incorrect character code as output.
-	. Some drawing objects were not recognized in the input ; this could affect page layout rendering.
-	. The document_strpos() methods were not returning the correct page number, but a zero-based offset
-	  (the Pages property is indexed by the actual page number)
+    [Version : 1.5.3]	[Date : 2017/04/06]     [Author : CV]
+	. Enhanced page layout rendering :
+	  - Better handle text positioning, especially when a line contains super/subscripted text
+	  - Implemented additional text positioning instructions
+	  - First experimental implementation of templates (which are correctly implemented in the non-page 
+	    layout version)
+	  - Fixed a regression intoduced in versions 1.5.1 and 1.5.2.
+	. Completed some missing codes for the WinAnsiEncoding font, which is far bigger than stated in the
+	  PDF specifications.
+	. Modified the default value of the ExtraTextWidth property to -5%, since most of the widths 
+	  computed by the GetStringWidth() method are a little bit too large.
 	
     (...)
 
@@ -765,7 +767,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.2" ;
+	const		VERSION					=  "1.5.3" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -875,8 +877,8 @@ class  PdfToText 	extends PdfObjectBase
 	// This is basically used when computing text positions and string lengths with the PDFOPT_BASIC_LAYOUT option :
 	// the computed string length is shorter than its actual length (because of extra spacing determined by character
 	// kerning in the font data). To determine whether two consecutive blocks of text should be separated by a space,
-	// we empirically add this extra percentage to the computed string length. The default is 5%.
-	public		$ExtraTextWidth			=  5 ;
+	// we empirically add this extra percentage to the computed string length. The default is -5%.
+	public		$ExtraTextWidth			=  -5 ;
 	
 	// Internal variables used when the PDFOPT_ENFORCE_* options are specified
 	private static	$PhpMaxExecutionTime ;
@@ -1688,9 +1690,8 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
 		$this -> CharacterMapBuffer		=  array ( ) ;
-
-		unset ( $this -> FontTable ) ;
-		unset ( $this -> PageMap ) ;
+		$this -> FontTable			=  null ;
+		$this -> PageMap			=  null ;
 
 		// Compute memory occupied for this file
 		$memory_usage_end		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
@@ -2506,6 +2507,9 @@ class  PdfToText 	extends PdfObjectBase
 			$stream_data	=  $stream_match [ 'stream' ] ;
 			$type 		=  $this -> GetEncodingType ( $object_id, $object_data ) ;
 			$decoded_data	=  $this -> DecodeData ( $object_id, $stream_data, $type ) ;
+
+			if  ( self::$DEBUG  >  1 )
+				echo "\n----------------------------------- OBJSTREAM #$object_id\n$decoded_data" ;
 		      }
 		// Stay prepared to find one day a sample declared as an object stream but not having gzipped data delimited by stream/endstream tags
 		else
@@ -3808,10 +3812,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					// Td instruction
 					case	'd' :
-						$x		=  ( double ) $operand_stack [0] ;
-						$y		=  ( double ) $operand_stack [1] ;
-						$Tm		=  $this -> __matrix_multiply ( array ( 1, 0, 0, 1, $x, $y ), $Tm,
-									$page_attributes [ 'width' ], $page_attributes [ 'height' ] ) ;
+						$Tm [4]		+=  ( double ) $operand_stack [0] + $text_leading ;
+						$Tm [5]		+=  ( double ) $operand_stack [1] ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
 						break ;
@@ -3831,8 +3833,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					// T* instruction
 					case	'*' :
-						if  ( self::$DEBUG )
-							warning ( "Instruction $token not yet implemented." ) ;
+						$Tm [4]		 =  0.0 ;
+						$Tm [5]		+=  $current_font_height ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
 						break ;
@@ -3843,10 +3845,16 @@ class  PdfToText 	extends PdfObjectBase
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TL' ] ++ ;
 						break ;
 
-					// ' instruction
+					// ' instruction : go to next line and display text
 					case	"'" :
+						// Update the coordinates of the last text block found so far 
 						$page_fragments [ $page_fragment_count - 1 ] [ 'x' ]		+=  $text_leading ;
-						$page_fragments [ $page_fragment_count - 1 ] [ 'y' ]		-=  $current_font_height * abs ( $Tm [3] ) ;
+						$offset								 =  $current_font_height * abs ( $Tm [3] ) ;
+						$page_fragments [ $page_fragment_count - 1 ] [ 'y' ]		-=  $offset ;
+
+						// And don't forget to update the y coordinate of the current transformation matrix
+						$Tm [5]								-=  $offset ;
+
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ "'" ] ++ ;
 						break ;
 
@@ -3960,10 +3968,18 @@ class  PdfToText 	extends PdfObjectBase
 			// Template (substituted in __next_token)
 			else if  ( $token_start  ===  '!' )
 			   {
-				if  ( self::$DEBUG ) 
-					warning ( "Template handling not yet implemented." ) ;
+				if  ( preg_match ( '/ !PDFTOTEXT_TEMPLATE_ (?P<template> \w+) /ix', $token, $match ) )
+				   {
+					$name	=  '/' . $match [ 'template' ] ;
+					$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
 
-				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'template' ] ++ ;
+					if  ( $this -> PageMap -> IsValidXObjectName ( $name ) )
+						$current_template	=  $name ;
+				    }
+				else
+					$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
+
+				$operand_stack	=  array ( ) ;
 			    }
 			// Other instructions
 			else
@@ -4201,7 +4217,7 @@ class  PdfToText 	extends PdfObjectBase
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
 
-						$token		=  substr ( $data, $index, $next_index - $index + 1 ) ;
+						$token		=  '[' . substr ( $data, $index, $next_index - $index + 1 ) . ']' ;
 						$next_index ++ ;
 
 		   				return ( true ) ;
@@ -4591,8 +4607,13 @@ class  PdfToText 	extends PdfObjectBase
 						$result		.=  $separator ;
 					// However, in case of an ending x-position superior to the starting x-position of the current fragment,
 					// we have to consider if they should really appear on the same line
-					else if  ( $previous_fragment [ 'y' ] + min ( $previous_fragment [ 'font-height' ], $fragment [ 'font-height' ] )  >  $fragment [ 'y' ] )
-						$result		.=  $this -> EOL ;
+					else
+					   {
+						$min_height		=  min ( $previous_fragment [ 'font-height' ], $fragment [ 'font-height' ] ) ;
+
+						if  ( round ( $previous_fragment [ 'y' ] - $fragment [ 'y' ] )  >  ceil ( $min_height ) )
+							$result		.=  $this -> EOL ;
+					    }
 				    }
 			    }
 
@@ -6002,7 +6023,9 @@ class  PdfTexterFont		extends PdfObjectBase
 
 			// Character already in the Widths buffer - Simply retrieve its value
 			if  ( isset ( $this -> CharacterWidthsBuffer [ $ch ] ) )
+			   {
 				$width	+=  $this -> CharacterWidthsBuffer [ $ch ] ;
+			    }
 			// New character - The width comes either from the CharacterWidths array if an entry is defined
 			// for this character, or from the default width property.
 			else
@@ -6020,7 +6043,7 @@ class  PdfTexterFont		extends PdfObjectBase
 			    }
 		    }
 
-		// The computed width is actually shorter than its actual width. Adjust by the percentage specified
+		// The computed width is actually longer/smaller than its actual width. Adjust by the percentage specified
 		// by the ExtraTextWidth property
 		$divisor	=  100 - $extra_percent ;
 
@@ -6528,9 +6551,9 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		'exclam' 		=>  array ( 0041, 0041, 0041, 0041 ),
 		'exclamdown' 		=>  array ( 0241, 0301, 0241, 0241 ),
 		'f' 			=>  array ( 0146, 0146, 0146, 0146 ),
-		'fi' 			=>  array ( 0256, 0336,    0, 0223 ),
+		'fi' 			=>  array ( 0256, 0336, 0xFB01, 0223 ),
 		'five' 			=>  array ( 0065, 0065, 0065, 0065 ),
-		'fl' 			=>  array ( 0257, 0337,    0, 0224 ),
+		'fl' 			=>  array ( 0257, 0337, 0xFB02, 0224 ),
 		'florin' 		=>  array ( 0246, 0304, 0203, 0206 ),
 		'four'			=>  array ( 0064, 0064, 0064, 0064 ),
 		'fraction'		=>  array ( 0244, 0332,    0, 0207 ),
