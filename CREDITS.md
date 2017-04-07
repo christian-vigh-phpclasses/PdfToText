@@ -46,6 +46,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Javier Diez, who submitted a sample created by Quark XPress and helped me solve basic problems not seen so far
 - Thomas Bourgeois, who sent me a very comprehensive set of small PDF samples showing issues, some of them were existing for long
 - Rob Webster, who sent me my first sample using the LZW compression algorithm
+- Darren Jett for his support in helping me to start implementing page layout rendering
 - And much more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
