@@ -24,17 +24,12 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.3]	[Date : 2017/04/06]     [Author : CV]
-	. Enhanced page layout rendering :
-	  - Better handle text positioning, especially when a line contains super/subscripted text
-	  - Implemented additional text positioning instructions
-	  - First experimental implementation of templates (which are correctly implemented in the non-page 
-	    layout version)
-	  - Fixed a regression intoduced in versions 1.5.1 and 1.5.2.
-	. Completed some missing codes for the WinAnsiEncoding font, which is far bigger than stated in the
-	  PDF specifications.
-	. Modified the default value of the ExtraTextWidth property to -5%, since most of the widths 
-	  computed by the GetStringWidth() method are a little bit too large.
+    [Version : 1.5.4]	[Date : 2017/04/07]     [Author : CV]
+	. Fixed an issue with the /Kids flag, whose parameters are normally the ids of the objects containing
+	  a page's contents. Sometimes, there is an additional indirection level : the parameter of the /Kids
+	  flag is an obect which in turn contains the ids of page contents objects. Not handling this
+	  situation caused some page contents to be missed.
+	. Some line breaks were not respected
 	
     (...)
 
@@ -767,7 +762,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.3" ;
+	const		VERSION					=  "1.5.4" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -2119,7 +2114,7 @@ class  PdfToText 	extends PdfObjectBase
 						    }
 					    }
 					else if  ( self::$DEBUG  >  1 )
-						error ( new PdfToTextDecodingException ( "Invalid gzip data.", $object_id ) ) ;
+						warning ( new PdfToTextDecodingException ( "Invalid gzip data.", $object_id ) ) ;
 				    }
 
 		   		break ;
@@ -3265,8 +3260,8 @@ class  PdfToText 	extends PdfObjectBase
 			// 'Td' or 'TD' instructions : return a goto instruction with the x and y coordinates (1st and 2nd args)
 			else if  ( $token  ==  'Td'  ||  $token  ==  'TD' )
 			   {
-				$x 	=  $number_stack [0] ;
-				$y 	=  $number_stack [1] ;
+				$x 		=  $number_stack [0] ;
+				$y 		=  $number_stack [1] ;
 
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ $token ] ++ ;
 
@@ -3812,7 +3807,7 @@ class  PdfToText 	extends PdfObjectBase
 
 					// Td instruction
 					case	'd' :
-						$Tm [4]		+=  ( double ) $operand_stack [0] + $text_leading ;
+						$Tm [4]		+=  ( double ) $operand_stack [0]  ;
 						$Tm [5]		+=  ( double ) $operand_stack [1] ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
@@ -3825,8 +3820,9 @@ class  PdfToText 	extends PdfObjectBase
 
 					// TD instruction
 					case	'D' :
-						$Tm [4]		 =  ( double ) $operand_stack [0] ;
-						$Tm [5]		 =  ( double ) $operand_stack [1] ;
+						$Tm [4]		 +=  ( double ) $operand_stack [0] ;
+						$Tm [5]		 +=  ( double ) $operand_stack [1] ;
+						$text_leading	 -=  $Tm [5] ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TD' ] ++ ;
 						break ;
@@ -3940,9 +3936,6 @@ class  PdfToText 	extends PdfObjectBase
 			// BT instruction
 			else if  ( $token  ==  'BT' )
 			   {
-				if  ( ! $BT_nesting_level )
-					$Tm	=  $IdentityMatrix ;
-
 				$BT_nesting_level ++ ;
 				$operand_stack					=  array ( ) ;
 				$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $CTM, $Tm ) ;
@@ -7684,6 +7677,30 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 		   {
 			if  ( $this -> GetObjectReferences ( $object_id, $object_data, '/Kids', $references ) )
 			   {
+				// Sometimes, a reference can be the one of an object that contains the real reference ; in the following example,
+				// the actual page contents are not in object 4, but in object 5
+				//	/Kids 4 0 R
+				//	...
+				//	4 0 obj
+				//	[5 0 R]
+				//	endobj
+				$new_references		=  array ( ) ;
+
+				foreach  ( $references  as  $reference )
+				   {
+					if  ( ! isset ( $pdf_objects [ $reference ] )  ||  
+						! preg_match ( '/^ \s* (?P<ref> \[ [^]]+ \]) \s*$/imsx', $pdf_objects [ $reference ], $match ) )
+					   {
+						$new_references []	=  $reference ;
+					    }
+					else
+					   {
+						$this -> GetObjectReferences ( $reference, $pdf_objects [ $reference ], '', $sub_references ) ;
+						$new_references		=  array_merge ( $new_references, $sub_references ) ;
+					    }
+
+				    }
+
 				// Get kid count (knowing that sometimes, it is missing...)
 				preg_match ( '#/Count \s+ (?P<count> \d+)#ix', $object_data, $match ) ;
 				$page_count				=  ( isset ( $match [ 'count' ] ) ) ?  ( integer ) $match [ 'count' ] : false ;
@@ -7697,7 +7714,7 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					'object'	=>  $object_id,
 					'parent'	=>  $parent,
 					'count'		=>  $page_count,
-					'kids'		=>  $references 
+					'kids'		=>  $new_references 
 				    ) ;
 			    }
 		    }
