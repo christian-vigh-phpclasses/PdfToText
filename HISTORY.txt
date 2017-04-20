@@ -1,3 +1,10 @@
+    [Version : 1.5.5]	[Date : 2017/04/20]     [Author : CV]
+	. Added the $UnicodeToSimpleAscii table, which maps Unicode characters which can have an ASCII
+	  equivalent. For example, German "fi" with ligature (U+FB01) becomes ASCII string "fi" ; special
+	  spaces (such as unbreakable space) become an ASCII space (0x20), etc.
+	. Fixed a warning issued when a page entry does not contain a width and a height.
+	. Suppressed a warning in non-debug mode when an unsupported encryption algorithm has been found
+	
     [Version : 1.5.4]	[Date : 2017/04/07]     [Author : CV]
 	. Fixed an issue with the /Kids flag, whose parameters are normally the ids of the objects containing
 	  a page's contents. Sometimes, there is an additional indirection level : the parameter of the /Kids

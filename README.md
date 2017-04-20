@@ -101,7 +101,7 @@ and here, where you will also find a FAQ section and be able to upload your PDF 
 
 and also here :
 
-[https://github.com/christian-vigh-phpclasses/PdfToText](https://github.com/christian-vigh-phpclasses/PdfToText "https://github.com/christian-vigh-phpclasses/PdfToText")
+[https://github.com/christian-vigh-phpclasses/PdfToText](https://github.com/christian-vigh-phpclasses/PdfToText)
 
 # REFERENCE #
 
