@@ -24,12 +24,12 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.4]	[Date : 2017/04/07]     [Author : CV]
-	. Fixed an issue with the /Kids flag, whose parameters are normally the ids of the objects containing
-	  a page's contents. Sometimes, there is an additional indirection level : the parameter of the /Kids
-	  flag is an obect which in turn contains the ids of page contents objects. Not handling this
-	  situation caused some page contents to be missed.
-	. Some line breaks were not respected
+    [Version : 1.5.5]	[Date : 2017/04/20]     [Author : CV]
+	. Added the $UnicodeToSimpleAscii table, which maps Unicode characters which can have an ASCII
+	  equivalent. For example, German "fi" with ligature (U+FB01) becomes ASCII string "fi" ; special
+	  spaces (such as unbreakable space) become an ASCII space (0x20), etc.
+	. Fixed a warning issued when a page entry does not contain a width and a height.
+	. Suppressed a warning in non-debug mode when an unsupported encryption algorithm has been found
 	
     (...)
 
@@ -186,7 +186,98 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static  $FontSpecifiers	=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F[A-Z]+)' ;
+	protected static	$FontSpecifiers		=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F[A-Z]+)' ;
+
+
+	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
+	protected static	$UnicodeToSimpleAscii	=  array
+	   (
+		0x00A0			=>  ' ',				// Non-breakable space
+		0x00C6			=>  'AE',				// AE with ligature (&AElig;)
+		0x00E6			=>  'ae',				// ae with ligature (&aelig;)
+		0x1680			=>  ' ',				// OGHAM space mark
+		0x0152			=>  'OE',				// OE with ligature (&OElig;)
+		0x0153			=>  'oe',				// oe with ligature (&oelig;)
+		0x1D6B			=>  'ue',				// ue with ligature
+		0x2000			=>  ' ',				// EN quad
+		0x2001			=>  ' ',				// EM quad
+		0x2002			=>  ' ',				// EN space
+		0x2003			=>  ' ',				// EM space
+		0x2004			=>  ' ',				// 3-per-EM space
+		0x2005			=>  ' ',				// 4-per-EM space
+		0x2006			=>  ' ',				// 6-per-EM space
+		0x2007			=>  ' ',				// Figure space 
+		0x2008			=>  ' ' ,				// Punctuation space
+		0x2009			=>  ' ',				// Thin s1pace
+		0x200A			=>  ' ',				// Hair space
+		0x200B			=>  ' ',				// Zero-width space
+		0x200C			=>  ' ',				// Zero-width non-joiner
+		0x200D			=>  '',					// Zero-width joiner
+		0x2028			=>  "\n",				// Line separator
+		0x2029			=>  "\n",				// Paragraph separator
+		0x202F			=>  ' ',				// Narrow non-break space
+		0x205F			=>  ' ',				// Medium mathematical space
+		0x2060			=>  '',					// Word joiner
+		0x2160			=>  'I',				// Roman numeral : I
+		0x2161			=>  'II',				// Roman numeral : II
+		0x2162			=>  'III',				// Roman numeral : III
+		0x2163			=>  'IV',				// Roman numeral : IV
+		0x2164			=>  'V',				// Roman numeral : V
+		0x2165			=>  'VI',				// Roman numeral : VI
+		0x2166			=>  'VII',				// Roman numeral : VII
+		0x2167			=>  'VIII',				// Roman numeral : VIII
+		0x2168			=>  'IX',				// Roman numeral : IX
+		0x2169			=>  'X',				// Roman numeral : X
+		0x216A			=>  'XI',				// Roman numeral : XI
+		0x216B			=>  'XII',				// Roman numeral : XII
+		0x216C			=>  'L',				// Roman numeral : L
+		0x216D			=>  'C',				// Roman numeral : C
+		0x216E			=>  'D',				// Roman numeral : D
+		0x216F			=>  'M',				// Roman numeral : M
+		0x2170			=>  'i',				// Roman numeral : i
+		0x2171			=>  'ii',				// Roman numeral : ii
+		0x2172			=>  'iii',				// Roman numeral : iii
+		0x2173			=>  'iv',				// Roman numeral : iv
+		0x2174			=>  'v',				// Roman numeral : v
+		0x2175			=>  'vi',				// Roman numeral : vi
+		0x2176			=>  'vii',				// Roman numeral : vii
+		0x2177			=>  'viii',				// Roman numeral : viii
+		0x2178			=>  'ix',				// Roman numeral : ix
+		0x2179			=>  'x',				// Roman numeral : x
+		0x217A			=>  'xi',				// Roman numeral : xi
+		0x217B			=>  'xii',				// Roman numeral : xii
+		0x217C			=>  'l',				// Roman numeral : l
+		0x217D			=>  'c',				// Roman numeral : c
+		0x217E			=>  'd',				// Roman numeral : d
+		0x217F			=>  'm',				// Roman numeral : m
+		0x3000			=>  ' ',				// Ideographic space
+		0xA728			=>  'TZ',				// TZ with ligature
+		0xA729			=>  'tz',				// tz with ligature
+		0xA732			=>  'AA',				// AA with ligature
+		0xA733			=>  'aa',				// aa with ligature
+		0xA734			=>  'AO',				// AO with ligature
+		0xA735			=>  'ao',				// ao with ligature
+		0xA736			=>  'AU',				// AU with ligature
+		0xA737			=>  'au',				// au with ligature
+		0xA738			=>  'AV',				// AV with ligature
+		0xA739			=>  'av',				// av with ligature
+		0xA73A			=>  'AV',				// AV with ligature and bar
+		0xA73B			=>  'av',				// av with ligature and bar
+		0xA73C			=>  'AY',				// AY with ligature
+		0xA73D			=>  'ay',				// ay with ligature
+		0xA74E			=>  'OO',				// OO with ligature
+		0xA74F			=>  'oo',				// oo with ligature
+		0xA760			=>  'VY',				// VY with ligature
+		0xA761			=>  'vy',				// vy with ligature
+		0xFB00			=>  'ff',				// ff with ligature
+		0xFB01			=>  'fi',				// fi with ligature
+		0xFB02			=>  'fl',				// fl with ligature
+		0xFB03			=>  'ffi',				// ffi with ligature
+		0xFB04			=>  'ffl',				// ffl with ligature
+		0xFB05			=>  'ft',				// ft with ligature
+		0xFB06			=>  'st',				// st with ligature
+		0xFEFF			=>  ' ',				// Zero-width non-breaking space
+	    ) ;
 
 
 	public function  __construct ( )
@@ -222,9 +313,17 @@ abstract class  PdfObjectBase		// extends  Object
 
 			while  ( $code )
 			   {
-				$entity		  =  '&#' . ( $code & 0xFFFF ) . ';' ;
-				$result		  =  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) . $result ;
-				$code		  =  ( integer ) ( $code / 0xFFFF ) ;	// There is no unsigned right-shift operator in PHP...
+				$word		=  ( $code & 0xFFFF ) ;
+
+				if  ( ! isset ( self::$UnicodeToSimpleAscii [ $word ] ) )
+				   {
+					$entity		 =  "&#$word;" ;
+					$result		.=  mb_convert_encoding ( $entity, 'UTF-8', 'HTML-ENTITIES' ) . $result ;
+				    }
+				else
+					$result		.=  self::$UnicodeToSimpleAscii [ $word ] ;
+
+				$code		 =  ( integer ) ( $code / 0xFFFF ) ;	// There is no unsigned right-shift operator in PHP...
 			    }
 
 			return ( $result ) ;
@@ -289,7 +388,7 @@ abstract class  PdfObjectBase		// extends  Object
 		The following constants are defined but not yet implemented ; an exception will be thrown if they are
 		encountered somewhere in the PDF file :
 
-		- PDF_LZW-ENCODING :
+		- PDF_LZW_ENCODING :
 			a filter based on LZW Compression; it can use one of two groups of predictor functions for more 
 			compact LZW compression : Predictor 2 from the TIFF 6.0 specification and predictors (filters) 
 			from the PNG specification
@@ -762,7 +861,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.4" ;
+	const		VERSION					=  "1.5.5" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -792,16 +891,16 @@ class  PdfToText 	extends PdfObjectBase
 	public static 		$DEBUG 			=  false ;
 
 	// Current filename
-	public 		$Filename 			=  false ;
+	public 			$Filename 			=  false ;
 	// Extracted text
-	public		$Text				=  '' ;
+	public			$Text				=  '' ;
 	// Document pages (array of strings)
-	public		$Pages				=  array ( ) ;
+	public			$Pages				=  array ( ) ;
 	// Document images (array of PdfImage objects)
-	public		$Images				=  array ( ) ;
-	protected	$ImageCount			=  0 ;
+	public			$Images				=  array ( ) ;
+	protected		$ImageCount			=  0 ;
 	// Raw data for document images
-	public		$ImageData			=  array ( ) ;
+	public			$ImageData			=  array ( ) ;
 	// ImageAutoSaveFileTemplate :
 	//	Template for the file names to be generated when extracting images, if the PDFOPT_AUTOSAVE_IMAGES has been specified.
 	//	Can contain any path, plus the following printf()-like modifiers :
@@ -810,54 +909,54 @@ class  PdfToText 	extends PdfObjectBase
 	//	. "%d" : A sequential number, starting from 1, used when generating filenames. The format can contains a width specifier,
 	//		 such as "%3d", which will generate 3-digits sequential numbers left-filled with zeroes.
 	//	. "%s" : Image suffix, which will automatically based on the underlying image type.
-	public		$ImageAutoSaveFileTemplate	=   "%p/%f.%d.%s" ;
+	public			$ImageAutoSaveFileTemplate	=   "%p/%f.%d.%s" ;
 	// Auto-save image file format
-	public		$ImageAutoSaveFormat		=  IMG_JPEG ;
+	public			$ImageAutoSaveFormat		=  IMG_JPEG ;
 	// Auto-saved image file names
-	public		$AutoSavedImageFiles		=  array ( ) ;
+	public			$AutoSavedImageFiles		=  array ( ) ;
 	// Text chunk separator (used to separate blocks of text specified as an array notation)
-	public		$BlockSeparator			=  '' ;
+	public			$BlockSeparator			=  '' ;
 	// Separator used to separate text groups where the offset value is less than -1000 thousands of character units
 	// (eg : [(1)-1822(2)] will add a separator between the characters "1" and "2")
 	// Note that such values are expressed in thousands of text units and subtracted from the current position. A 
 	// negative value means adding more space between the two text units it separates.
-	public		$Separator			=  ' ' ;
+	public			$Separator			=  ' ' ;
 	// Separator to be used between pages in the $Text property
 	public		$PageSeparator			=  "\n" ;
 	// Minimum value (in 1/1000 of text units) that separates two text chunks that can be considered as a real space
-	public		$MinSpaceWidth			=  200 ;
+	public			$MinSpaceWidth			=  200 ;
 	// Pdf options
-	public		$Options			=  self::PDFOPT_NONE ;
+	public			$Options			=  self::PDFOPT_NONE ;
 	// Maximum number of pages to extract from the PDF. A zero value means "extract everything"
 	// If this number is negative, then the pages to be extract start from the last page. For example, a value of -2
 	// extracts the last two pages
-	public		$MaxSelectedPages		=  false ;
+	public			$MaxSelectedPages		=  false ;
 	// Maximum number of images to be extracted. A value of zero means "extract everything". A non-zero value gives
 	// the number of images to extract.
-	public		$MaxExtractedImages		=  false ;
+	public			$MaxExtractedImages		=  false ;
 	// Location of the CID tables directory
-	public static	$CIDTablesDirectory ;
+	public static		$CIDTablesDirectory ;
 	// Author information 
-	public		$Author				=  '' ;
-	public		$CreatorApplication		=  '' ;
-	public		$ProducerApplication		=  '' ;
-	public		$CreationDate			=  '' ;
-	public		$ModificationDate		=  '' ;
-	public		$Title				=  '' ;
-	private		$GotAuthorInformation		=  false ;
+	public			$Author				=  '' ;
+	public			$CreatorApplication		=  '' ;
+	public			$ProducerApplication		=  '' ;
+	public			$CreationDate			=  '' ;
+	public			$ModificationDate		=  '' ;
+	public			$Title				=  '' ;
+	protected		$GotAuthorInformation		=  false ;
 	// Unique and arbitrary file identifier, as specified in the PDF file
 	// Well, in fact, there are two IDs, but the PDF specification does not mention the goal of the second one
-	public		$ID				=  '' ;
-	public		$ID2				=  '' ; 
+	public			$ID				=  '' ;
+	public			$ID2				=  '' ; 
 	// End of line string
-	public		$EOL				=  PHP_EOL ;
+	public			$EOL				=  PHP_EOL ;
 	// String to be used when no Unicode translation is possible
-	public static	$Utf8Placeholder		=  '' ;
+	public static		$Utf8Placeholder		=  '' ;
 	// Information about memory consumption implied by the file currently being loaded 
-	public		$MemoryUsage,
-			$MemoryPeakUsage ;
+	public			$MemoryUsage,
+				$MemoryPeakUsage ;
 	// Offset of the document start (%PDF-x.y)
-	public		$DocumentStartOffset ;
+	public			$DocumentStartOffset ;
 	// Debug statistics
 	public		$Statistics			=  array ( ) ;
 	// Max execution time settings. A positive value means "don't exceed that number of seconds".
@@ -865,38 +964,38 @@ class  PdfToText 	extends PdfObjectBase
 	// is negative, then the default will be "max_execution_time - 1".
 	// For those limits to be enforced, you need to specify either the PDFOPT_ENFORCE_EXECUTION_TIME or
 	// PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME options, or both
-	public		$MaxExecutionTime		=  -1 ;
-	public static	$MaxGlobalExecutionTime		=  -1 ;
+	public			$MaxExecutionTime		=  -1 ;
+	public static		$MaxGlobalExecutionTime		=  -1 ;
 	// This property is expressed in percents ; it gives the extra percentage to add to the values computed by
 	// the PdfTexterFont::GetStringWidth() method.
 	// This is basically used when computing text positions and string lengths with the PDFOPT_BASIC_LAYOUT option :
 	// the computed string length is shorter than its actual length (because of extra spacing determined by character
 	// kerning in the font data). To determine whether two consecutive blocks of text should be separated by a space,
 	// we empirically add this extra percentage to the computed string length. The default is -5%.
-	public		$ExtraTextWidth			=  -5 ;
+	public			$ExtraTextWidth			=  -5 ;
 	
 	// Internal variables used when the PDFOPT_ENFORCE_* options are specified
-	private static	$PhpMaxExecutionTime ;
-	private static	$GlobalExecutionStartTime ;
-	private static	$AllowedGlobalExecutionTime ;
-	private		$ExecutionStartTime ;
-	private		$AllowedExecutionTime ;
+	protected static	$PhpMaxExecutionTime ;
+	protected static	$GlobalExecutionStartTime ;
+	protected static	$AllowedGlobalExecutionTime ;
+	protected		$ExecutionStartTime ;
+	protected		$AllowedExecutionTime ;
 
 	// Font mappings
-	protected 	$FontTable			=  false ;
+	protected 		$FontTable			=  false ;
 	// Page map object
-	protected	$PageMap ;
+	protected		$PageMap ;
 	// Page locations (start and end offsets)
-	protected	$PageLocations ;
+	protected		$PageLocations ;
 	// Encryption data
-	public		$IsEncrypted			=  false ;
-	protected	$EncryptionData			=  false ;
+	public			$IsEncrypted			=  false ;
+	protected		$EncryptionData			=  false ;
 	// A flag coming from the constructor options, telling if enhanced statistics are enabled
-	protected	$EnhancedStatistics ;
+	protected		$EnhancedStatistics ;
 
 	// Indicates whether global static initializations have been made
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
-	private static	$StaticInitialized		=  false ;
+	private static		$StaticInitialized		=  false ;
 
 	// Drawing instructions that are to be ignored and removed from a text stream before processing, for performance 
 	// reasons (it is faster to call preg_replace() once to remove them than calling the __next_instruction() and 
@@ -904,7 +1003,7 @@ class  PdfToText 	extends PdfObjectBase
 	// This is an array of regular expressions where the following constructs are replaced at runtime during static
 	// initialization :
 	// %n - Will be replaced with a regex matching a decimal number.
-	private static  $IgnoredInstructionTemplatesLayout	=  array
+	private static		$IgnoredInstructionTemplatesLayout	=  array
 	   (
 		'%n{6} ( (c) ) \s+',
 		'%n{4} ( (re) | (y) | (v) | (k) | (K) ) \s+',
@@ -929,7 +1028,7 @@ class  PdfToText 	extends PdfObjectBase
 		 ' \[\] \s+ [Shs] \s+'
 	    ) ;
 	// Additional instructions to be stripped when no particular page layout has been requested
-	private static   $IgnoredInstructionTemplatesNoLayout	=  array 
+	private static		$IgnoredInstructionTemplatesNoLayout	=  array 
 	   (
 		'%n{6} ( (cm) ) \s+',
 		'\b ( (BT) | (ET) ) \s+',
@@ -941,44 +1040,44 @@ class  PdfToText 	extends PdfObjectBase
 		 '( [Qfhnq] \s+ ){2,}'
 	    ) ;
 	// Replacement regular expressions for %something constructs specified in the $IgnoredInstructions array
-	private static	$ReplacementConstructs		=  array
+	private static		$ReplacementConstructs		=  array
 	    (
 		'%n'	=>  '( [+\-]? ( ( [0-9]+ ( \. [0-9]* )? ) | ( \. [0-9]+ ) ) \s+ )'
 	     ) ;
 	// The final regexes that are built during static initialization by the __build_ignored_instructions() method
-	private static  $IgnoredInstructionsNoLayout	=  array ( ) ;
-	private static  $IgnoredInstructionsLayout	=  array ( ) ;
-	private		$IgnoredInstructions		=  array ( ) ;
+	private static		$IgnoredInstructionsNoLayout	=  array ( ) ;
+	private static		$IgnoredInstructionsLayout	=  array ( ) ;
+	private			$IgnoredInstructions		=  array ( ) ;
 
 	// Map id buffer - for avoiding unneccesary calls to GetFontByMapId
-	private		$MapIdBuffer			=  array ( ) ;
+	private			$MapIdBuffer			=  array ( ) ;
 
 	// Same for MapCharacter()
-	private		$CharacterMapBuffer		=  array ( ) ;
+	private			$CharacterMapBuffer		=  array ( ) ;
 
 	// Font objects buffer - used by __assemble_text_fragments()
-	private		$FontObjectsBuffer		=  array ( ) ;
+	private			$FontObjectsBuffer		=  array ( ) ;
 
 	// Regex used for removing hyphens - we have to take care of different line endings : "\n" for Unix, "\r\n"
 	// for Windows, and "\r" for pure Mac files.
 	// Note that we replace an hyphen followed by an end-of-line then by non-space characters with the non-space
 	// characters, so the word gets joined on the same line. Spaces after the end of the word (on the next line)
 	// are removed, in order for the next word to appear at the beginning of the second line.
-	private static $RemoveHyphensRegex		=  '#
-								( 
-									  -
-									  [ \t]* ( (\r\n) | \n | \r )+ [ \t\r\n]*
-								 )
-								([^ \t\r\n]+)
-								\s*
-							    #msx' ;
+	private static		$RemoveHyphensRegex		=  '#
+									( 
+										  -
+										  [ \t]* ( (\r\n) | \n | \r )+ [ \t\r\n]*
+									 )
+									([^ \t\r\n]+)
+									\s*
+								    #msx' ;
 
 	// A small list of Unicode character ranges that are related to languages written from right to left
 	// For performance reasons, everythings is mapped to a range here, even if it includes codepoints that do not map to anything
 	// (this class is not a Unicode codepoint validator, but a Pdf text extractor...)
 	// The UTF-16 version is given as comments ; only the UTF-8 translation is used here
 	// To be completed !
-	private static	$RtlCharacters		=  array
+	private static		$RtlCharacters			=  array
 	   (
 		// This range represents the following languages :
 		// - Hebrew			(0590..05FF)
@@ -1038,7 +1137,7 @@ class  PdfToText 	extends PdfObjectBase
 	    ) ;
 
 	// UTF-8 prefixes for RTL characters as keys, and number of characters that must follow the prefix as values
-	private static	$RtlCharacterPrefixLengths	=  array
+	private static		$RtlCharacterPrefixLengths	=  array
 	   (
 		"\xD6"		=>  1,
 		"\xD7"		=>  1,
@@ -1056,11 +1155,11 @@ class  PdfToText 	extends PdfObjectBase
 	    ) ;
 
 	// A string that contains all the RTL character prefixes above
-	private static  $RtlCharacterPrefixes ;
+	private static		$RtlCharacterPrefixes ;
 
 	// As usual, caching a little bit the results of the IsRtlCharacter() method is welcome. Each item will have the value true if the
 	// character is RTL, or false if LTR.
-	private		$RtlCharacterBuffer		=  array ( ) ;
+	private			$RtlCharacterBuffer		=  array ( ) ;
 
 	// A subset of a character classification array that avoids too many calls to the ctype_* functions or too many
 	// character comparisons.
@@ -1072,7 +1171,7 @@ class  PdfToText 	extends PdfObjectBase
 	const	CTYPE_XALNUM		=  0x07 ;		// A synonym for CTYPE_ALPHA | CTYPE_DIGIT | CTYPE_XDIGIT
 	const	CTYPE_XNUM		=  0x06 ;		// A synonym for CTYPE_DIGIT | CTYPE_XDIGIT
 
-	private static  $CharacterClass		=  array
+	private static		$CharacterClass		=  array
 	   (
 		'a' => self::CTYPE_XALNUM, 'b' => self::CTYPE_XALNUM, 'c' => self::CTYPE_XALNUM, 'd' => self::CTYPE_XALNUM, 'e' => self::CTYPE_XALNUM, 'f' => self::CTYPE_XALNUM, 
 		'g' => self::CTYPE_ALNUM , 'h' => self::CTYPE_ALNUM , 'i' => self::CTYPE_ALNUM , 'j' => self::CTYPE_ALNUM , 'k' => self::CTYPE_ALNUM , 'l' => self::CTYPE_ALNUM , 
@@ -1089,8 +1188,8 @@ class  PdfToText 	extends PdfObjectBase
 	    ) ;
 
 	// Stuff specific to the current PHP version
-	private static	$HasMemoryGetUsage ;
-	private static  $HasMemoryGetPeakUsage ;
+	private static		$HasMemoryGetUsage ;
+	private static		$HasMemoryGetPeakUsage ;
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -1685,8 +1784,6 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> MapIdBuffer			=  array ( ) ;
 		$this -> RtlCharacterBuffer		=  array ( ) ;
 		$this -> CharacterMapBuffer		=  array ( ) ;
-		$this -> FontTable			=  null ;
-		$this -> PageMap			=  null ;
 
 		// Compute memory occupied for this file
 		$memory_usage_end		=  ( self::$HasMemoryGetUsage     ) ?  memory_get_usage      ( true ) : 0 ;
@@ -8006,11 +8103,14 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					$this -> PageContents [ $item ]	[ 'page' ]	=  $page ;
 					$this -> Pages [ $page ]			=  ( isset ( $this -> PageContents [ $item ] [ 'contents' ] ) ) ? 
 												$this -> PageContents [ $item ] [ 'contents' ] : array ( ) ;
-					$this -> PageAttributes [ $page ]		=  array
-					   (
-						'width'			=>  $this -> PageContents [ $item ] [ 'width' ],
-						'height'		=>  $this -> PageContents [ $item ] [ 'height' ]
-					    ) ;
+					if ( isset ( $this -> PageContents [ $item ] [ 'width' ] ) )
+					   {
+						$this -> PageAttributes [ $page ]		=  array
+						   (
+							'width'			=>  $this -> PageContents [ $item ] [ 'width' ],
+							'height'		=>  $this -> PageContents [ $item ] [ 'height' ]
+						    ) ;
+					    }
 
 					$page ++ ;
 				    }
@@ -8261,7 +8361,7 @@ abstract class  PdfImage			extends  PdfObjectBase
 		   {
 			if  ( $this -> NoResourceCreated  &&  $image_type  ==  IMG_JPEG )
 				file_put_contents ( $output_file, $this -> ImageData ) ;
-			else
+			else if  ( PdfToText::$DEBUG )
 				warning ( new PdfToTextDecodingException ( "No image resource allocated." ) ) ;
 
 			return ;
@@ -8537,7 +8637,9 @@ class  PdfInlinedImage		extends  PdfImage
 				break ;
 
 			default :
-				warning ( new PdfToTextDecodingException ( "Unsupported color space \"$color_space_name\"." ) ) ;
+				if  ( PdfToText::$DEBUG )
+					warning ( new PdfToTextDecodingException ( "Unsupported color space \"$color_space_name\"." ) ) ;
+
 				return ( false ) ;
 		    }
 
@@ -8548,7 +8650,9 @@ class  PdfInlinedImage		extends  PdfImage
 				break ;
 
 			default :
-				warning ( new PdfToTextDecodingException ( "Unsupported bits per component : $bits_per_component." ) ) ;
+				if  ( PdfToText::$DEBUG )
+					warning ( new PdfToTextDecodingException ( "Unsupported bits per component : $bits_per_component." ) ) ;
+
 				return ( false ) ;
 		    }
 
@@ -8951,9 +9055,6 @@ class  PdfEncryptionData		extends  PdfObjectBase
 			if  ( PdfToText::$DEBUG )
 				error ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
 						$object_id ) ) ;
-			else
-				warning ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
-						$object_id ) ) ;
 
 			$this -> UnSupportedEncryptionAlgorithm		=  true ;
 
@@ -8966,10 +9067,6 @@ class  PdfEncryptionData		extends  PdfObjectBase
 		if  ( $this -> Decrypter  ===  false )
 		   {
 			if  ( PdfToText::$DEBUG )
-				error ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm #{$this -> EncryptionAlgorithm}, " .
-						"version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
-						$object_id ) ) ;
-			else
 				warning ( new PdfToTextDecryptionException ( "Unsupported encryption algorithm #{$this -> EncryptionAlgorithm}, " .
 						"version {$this -> AlgorithmVersion} revision {$this -> AlgorithmRevision}.", 
 						$object_id ) ) ;
