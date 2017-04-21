@@ -24,12 +24,14 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.5]	[Date : 2017/04/20]     [Author : CV]
-	. Added the $UnicodeToSimpleAscii table, which maps Unicode characters which can have an ASCII
-	  equivalent. For example, German "fi" with ligature (U+FB01) becomes ASCII string "fi" ; special
-	  spaces (such as unbreakable space) become an ASCII space (0x20), etc.
-	. Fixed a warning issued when a page entry does not contain a width and a height.
-	. Suppressed a warning in non-debug mode when an unsupported encryption algorithm has been found
+    [Version : 1.5.6]	[Date : 2017/04/21]     [Author : CV]
+	. Added font metrics information for the Adobe Standard 14 fonts, which are hardcoded (in new directory
+	  FontMetrics). This includes Times, Helvetica and Courier with their variations (bold, italic, etc.)
+	  along with the Symbol and ZapDingbats fonts. Currently, font information relates to individual 
+	  character widths, which are used for page layout rendering.
+	. Enhanced layout rendering, which was giving strange results due to improper handling of certain
+	  positioning instructions.
+	. Complemented the $UnicodeToSimpleAscii table to include special hyphens
 	
     (...)
 
@@ -186,14 +188,15 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static	$FontSpecifiers		=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F[A-Z]+)' ;
+	protected static	$FontSpecifiers		=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F\w+)' ;
 
 
 	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
 	protected static	$UnicodeToSimpleAscii	=  array
 	   (
 		0x00A0			=>  ' ',				// Non-breakable space
-		0x00C6			=>  'AE',				// AE with ligature (&AElig;)
+		0x00AD			=>  '',					// Break Opportunity After: generally provide a line break opportunity after the character 
+ 		0x00C6			=>  'AE',				// AE with ligature (&AElig;)
 		0x00E6			=>  'ae',				// ae with ligature (&aelig;)
 		0x1680			=>  ' ',				// OGHAM space mark
 		0x0152			=>  'OE',				// OE with ligature (&OElig;)
@@ -213,11 +216,20 @@ abstract class  PdfObjectBase		// extends  Object
 		0x200B			=>  ' ',				// Zero-width space
 		0x200C			=>  ' ',				// Zero-width non-joiner
 		0x200D			=>  '',					// Zero-width joiner
+		0x2010			=>  '-',				// Narrow hyphen
+		0x2011			=>  '-',				// Non-breaking hyphen
+		0x2012			=>  '-',				// Figure dash (has the same width as digits)
+		0x2013			=>  '-',				// EN dash (used to indicate range of values)
+		0x2014			=>  ' - ',				// EM dash (used to make a break in a flow of sentences)
+		0x2015			=>  '- ',				// Horizontal bar, used to introduce quoted text
 		0x2028			=>  "\n",				// Line separator
 		0x2029			=>  "\n",				// Paragraph separator
 		0x202F			=>  ' ',				// Narrow non-break space
+		0x2053			=>  '~',				// Large tilde
 		0x205F			=>  ' ',				// Medium mathematical space
 		0x2060			=>  '',					// Word joiner
+		0x207B			=>  '-',				// Superscript minus
+		0x208B			=>  '-',				// Subscript minus
 		0x2160			=>  'I',				// Roman numeral : I
 		0x2161			=>  'II',				// Roman numeral : II
 		0x2162			=>  'III',				// Roman numeral : III
@@ -250,6 +262,11 @@ abstract class  PdfObjectBase		// extends  Object
 		0x217D			=>  'c',				// Roman numeral : c
 		0x217E			=>  'd',				// Roman numeral : d
 		0x217F			=>  'm',				// Roman numeral : m
+		0x2122			=>  '-',				// Minus sign (arithmetic operator)
+		0x2758			=>  '|',				// Light vertical bar
+		0x2759			=>  '|',				// Medium vertical bar
+		0x2E3A			=>  '-',				// Two-EM dash
+		0x2E3B			=>  '-',				// Three-EM dash
 		0x3000			=>  ' ',				// Ideographic space
 		0xA728			=>  'TZ',				// TZ with ligature
 		0xA729			=>  'tz',				// tz with ligature
@@ -276,6 +293,11 @@ abstract class  PdfObjectBase		// extends  Object
 		0xFB04			=>  'ffl',				// ffl with ligature
 		0xFB05			=>  'ft',				// ft with ligature
 		0xFB06			=>  'st',				// st with ligature
+		0xFE31			=>  '|',				// Vertical em dash
+		0xFE32			=>  '|',				// Vertical en dash
+		0xFE58			=>  '-',				// Small em dash
+		0xFE63			=>  '-',				// Small ASCII hyphen
+		0xFF0D			=>  '-',				// Full-width hyphen variant of ascii hyphen
 		0xFEFF			=>  ' ',				// Zero-width non-breaking space
 	    ) ;
 
@@ -861,7 +883,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.5" ;
+	const		VERSION					=  "1.5.6" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -936,6 +958,26 @@ class  PdfToText 	extends PdfObjectBase
 	public			$MaxExtractedImages		=  false ;
 	// Location of the CID tables directory
 	public static		$CIDTablesDirectory ;
+	// Loacation of the Font metrics directory, for the Adobe standard 14 fonts
+	public static		$FontMetricsDirectory ;
+	// Standard Adobe font names, and their corresponding file in $FontMetricsDirectory
+	public static		$AdobeStandardFontMetrics	=  array 
+	   (
+		'courier'		=>  'courier.fm',
+		'courier-bold'		=>  'courierb.fm',
+		'courier-oblique'	=>  'courieri.fm',
+		'courier-boldoblique'	=>  'courierbi.fm',
+		'helvetica'		=>  'helvetica.fm',
+		'helvetica-bold'	=>  'helveticab.fm',
+		'helvetica-oblique'	=>  'helveticai.fm',
+		'helvetica-boldoblique'	=>  'helveticabi.fm',
+		'symbol'		=>  'symbol.fm',
+		'times-roman'		=>  'times.fm',
+		'times-bold'		=>  'timesb.fm',
+		'times-bolditalic'	=>  'timesbi.fm',
+		'times-italic'		=>  'timesi.fm',
+		'zapfdingbats'		=>  'zapfdingbats.fm'
+	    ) ;
 	// Author information 
 	public			$Author				=  '' ;
 	public			$CreatorApplication		=  '' ;
@@ -1246,6 +1288,7 @@ class  PdfToText 	extends PdfObjectBase
 
 			// Location of the directory containing CID fonts
 			self::$CIDTablesDirectory	=  dirname ( __FILE__ ) . DIRECTORY_SEPARATOR . 'CIDTables' ;
+			self::$FontMetricsDirectory	=  dirname ( __FILE__ ) . DIRECTORY_SEPARATOR . 'FontMetrics' ;
 
 			// The string that contains all the Rtl character prefixes in UTF-8 - An optimization used by the __rtl_process() method
 			self::$RtlCharacterPrefixes	=  implode ( '', array_keys ( self::$RtlCharacterPrefixLengths ) ) ;
@@ -3799,10 +3842,6 @@ class  PdfToText 	extends PdfObjectBase
 		// Whether we should compute enhanced statistics
 		$enhanced_statistics		=  $this -> EnhancedStatistics ;
 
-		// Last know (x,y) coordinates
-		$last_known_x			=  0.0 ;
-		$last_known_y			=  0.0 ;
-
 		// Text leading value set by the TL instruction
 		$text_leading			=  0.0 ;
 
@@ -3917,8 +3956,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					// TD instruction
 					case	'D' :
-						$Tm [4]		 +=  ( double ) $operand_stack [0] ;
-						$Tm [5]		 +=  ( double ) $operand_stack [1] ;
+						$Tm [4]		 +=  ( double ) $operand_stack [0] * $Tm [0] ;
+						$Tm [5]		 +=  ( double ) $operand_stack [1] * $Tm [3] ;
 						$text_leading	 -=  $Tm [5] ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'TD' ] ++ ;
@@ -3927,7 +3966,7 @@ class  PdfToText 	extends PdfObjectBase
 					// T* instruction
 					case	'*' :
 						$Tm [4]		 =  0.0 ;
-						$Tm [5]		+=  $current_font_height ;
+						$Tm [5]		-=  $text_leading ; //$current_font_height ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
 						break ;
@@ -3976,16 +4015,6 @@ class  PdfToText 	extends PdfObjectBase
 				$e		=  ( double ) $operand_stack [4] ;
 				$f		=  ( double ) $operand_stack [5] ;
 
-				if  ( ! $e ) 
-					$e		=  $last_known_x ;
-				else
-					$last_known_x	=  $e ;
-					
-				if  ( ! $f ) 
-					$f		=  $last_known_y ;
-				else
-					$last_known_y	=  $f ;
-
 				$CTM		=  array ( $a, $b, $c, $d, $e, $f ) ;
 				$operand_stack	=  array ( ) ;
 
@@ -4015,8 +4044,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					$fragment	=  array
 					   (
-						'x'		=>  $r [4],
-						'y'		=>  $r [5],
+						'x'		=>  ( $r [4]  <  0 ) ?  0.0 : $r [4],
+						'y'		=>  ( $r [5]  <  0 ) ?  0.0 : $r [5],
 						'page'		=>  $page_number,
 						'template'	=>  $current_template,
 						'font'		=>  $current_font_name,
@@ -4704,6 +4733,18 @@ class  PdfToText 	extends PdfObjectBase
 						if  ( round ( $previous_fragment [ 'y' ] - $fragment [ 'y' ] )  >  ceil ( $min_height ) )
 							$result		.=  $this -> EOL ;
 					    }
+				    }
+				// No width information is associated with the current font
+				else
+				   {
+					if  ( $font_object )
+						$ending_x		 =  $previous_fragment [ 'x' ] + $font_object -> GetStringWidth ( $previous_fragment [ 'text' ],
+																$this -> ExtraTextWidth ) ;
+					else
+						$ending_x		 =  0 ;
+
+					if  ( $ending_x  <  $fragment [ 'x' ] )
+						$result		.=  $separator ;
 				    }
 			    }
 
@@ -5976,13 +6017,7 @@ class  PdfTexterFont		extends PdfObjectBase
 					warning ( "Unknown font type #$font_type found for object #$resource_id, character map #$cmap_id." ) ;
 		    }
 
-		// Retrieve the character widths for this font. This means :
-		// - Retrieving the /FirstChar, /LastChar and /Widths entries from the font definition. /Widths is an array of individual character
-		//   widths, between the /FirstChar and /LastChar entries. A value of zero in this array means "Use the default width"...
-		// - ... which is given by the /MissingWidth parameter, normally put in the font descriptor whose object id is given by the 
-		//   /FontDescriptor entry of the font definition
-		// Well, to be considered, given the number of buggy PDFs around the world, we won't care about the /LastChar entry and we won't
-		// check whether the /Widths array contains (LastChar - FirstChar + 1) integer values...
+		// Get font data ; include font descriptor information if present
 		$font_data	=  $pdf_objects [ $resource_id ] ;
 
 		if  ( preg_match ( '/FontDescriptor \s+ (?P<id> \d+) \s+ \d+ \s+ R/imsx', $font_data, $match ) )
@@ -5993,8 +6028,41 @@ class  PdfTexterFont		extends PdfObjectBase
 			// with the font definition
 			if  ( isset ( $pdf_objects [ $descriptor_id ] ) )
 				$font_data	.=  $pdf_objects [ $descriptor_id ] ;
-		    }
+		    }	
 
+		// Type1 fonts belong to the Adobe 14 standard fonts available. Information about the character widths is never embedded in the PDF
+		// file, but must be taken from external data (in the FontMetrics directory).
+		if  ( preg_match ( '#/SubType \s* /Type1#ix', $font_data ) )
+		   {
+			preg_match ( '#/BaseFont \s* / ([\w]+ \+)? (?P<font> [^\s\[</]+)#ix', $font_data, $match ) ;
+			$font_name	=  $match [ 'font' ] ;
+			$lc_font_name	=  strtolower ( $font_name ) ;
+
+			// Do that only if a font metrics file exists...
+			if  ( isset ( PdfToText::$AdobeStandardFontMetrics [ $lc_font_name ] ) )
+			   {
+				$metrics_file	=  PdfToText::$FontMetricsDirectory . '/' . PdfToText::$AdobeStandardFontMetrics [ $lc_font_name ] ;
+
+				if  ( file_exists ( $metrics_file ) )
+				   {
+					require_once ( $metrics_file ) ;
+
+					// Build the CharacterWidths table
+					foreach  ( $charwidths  as  $char => $width )
+						$this -> CharacterWidths [ chr ( $char ) ]	=  ( double ) $width ;
+
+					$this -> GotWidthInformation	=  true ;
+				    }
+			    }
+	 	    }
+
+		// Retrieve the character widths for this font. This means :
+		// - Retrieving the /FirstChar, /LastChar and /Widths entries from the font definition. /Widths is an array of individual character
+		//   widths, between the /FirstChar and /LastChar entries. A value of zero in this array means "Use the default width"...
+		// - ... which is given by the /MissingWidth parameter, normally put in the font descriptor whose object id is given by the 
+		//   /FontDescriptor entry of the font definition
+		// Well, to be considered, given the number of buggy PDFs around the world, we won't care about the /LastChar entry and we won't
+		// check whether the /Widths array contains (LastChar - FirstChar + 1) integer values...
 		// Get the entries 
 		$first_char	=  false ;
 		$widths		=  false ;
@@ -6022,8 +6090,7 @@ class  PdfTexterFont		extends PdfObjectBase
 			   {
 				$value		=  ( double ) trim ( $widths [$i] ) ;
 
-				if  ( $value )
-					$this -> CharacterWidths [ chr ( $first_char + $i ) ]	=  $value  ;
+				$this -> CharacterWidths [ chr ( $first_char + $i ) ]	=  ( $value ) ?  $value : $this -> DefaultWidth ;
 			    }
 
 			$this -> GotWidthInformation	=  true ;
