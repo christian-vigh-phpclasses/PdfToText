@@ -24,14 +24,22 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.6]	[Date : 2017/04/21]     [Author : CV]
-	. Added font metrics information for the Adobe Standard 14 fonts, which are hardcoded (in new directory
-	  FontMetrics). This includes Times, Helvetica and Courier with their variations (bold, italic, etc.)
-	  along with the Symbol and ZapDingbats fonts. Currently, font information relates to individual 
-	  character widths, which are used for page layout rendering.
-	. Enhanced layout rendering, which was giving strange results due to improper handling of certain
-	  positioning instructions.
-	. Complemented the $UnicodeToSimpleAscii table to include special hyphens
+    [Version : 1.5.7]	[Date : 2017/04/26]     [Author : CV]
+	. Added the possibility to extract form data :
+	  - Added the HasFormData(), GetFormCount() and GetFormData() methods
+	  - Data extraction based on XML form templates, which maps form fields to human-readable ones
+	  - Form data is returned as an object inherited from the PdfToTextFormData class
+	. Added the PDFOPT_DEBUG_SHOW_COORDINATES option, which shows coordinates of every text block in the 
+	  output text. This option has been designed for the future feature to be implemented, that will allow
+	  to capture text areas.
+	. Added the Subject and Keywords properties regarding author information
+	. Changed the text/document_strxpos() methods to use the mb_strxpos() functions instead of strxpos().
+	  The supplied searched string must be encoded in UTF-8.
+	. Added the PdfToTextBase::GetStringParameter() method, which is able to retrieve parameter values such
+	  as :
+		/FlagName (parameter value)
+	  and :
+		/FlagName <parameter value as hexdigits>
 	
     (...)
 
@@ -47,12 +55,17 @@
         Implements an exception thrown when an error is encountered while decoding PDF files.
 
   ==============================================================================================================*/
-class  PdfToTextException			extends  Exception 
+
+// PdfToText exception -
+//	Base class for all other PdfToText exceptions.
+class  PdfToTextException			//extends  Exception 
    {
 	public static	$IsObject		=  false ;
     } ;
 
 
+// PdfToTextDecodingException -
+//	Thrown when unexpected data is encountered while analyzing PDF contents.
 class  PdfToTextDecodingException		extends  PdfToTextException 
    { 
 	public function  __construct ( $message, $object_id = false )
@@ -69,6 +82,8 @@ class  PdfToTextDecodingException		extends  PdfToTextException
     }
 
 
+// PdfToTextDecryptionException -
+//	Thrown when something unexpected is encountered while processing encrypted data.
 class  PdfToTextDecryptionException		extends  PdfToTextException
    {
 	public function  __construct ( $message, $object_id = false )
@@ -85,6 +100,9 @@ class  PdfToTextDecryptionException		extends  PdfToTextException
     }
 
 
+// PdfToTextTimeoutException -
+//	Thrown when the PDFOPT_ENFORCE_EXECUTION_TIME or PDFOPT_ENFORCE_GLOBAL_EXECUTION_TIME option is set, and
+//	the script took longer than the allowed execution time limit.
 class  PdfToTextTimeoutException		extends  PdfToTextException
    { 
 	// Set to true if the reason why the max execution time was reached because of too many invocations of the Load() method
@@ -105,6 +123,22 @@ class  PdfToTextTimeoutException		extends  PdfToTextException
 		parent::__construct ( $text ) ;
 	    }
     }
+
+
+// PdfToTextFormTemplateException -
+//	Thrown if the xml template passed to the GetFormData() method contains an error.
+class  PdfToTextFormTemplateException		extends  PdfToTextException 
+   { 
+	public function  __construct ( $message )
+	   {
+		$text	=  "Pdf form template error" ;
+
+		$text	.=  " : $message" ;
+
+		parent::__construct ( $text ) ;
+	    }
+    }
+
 
 
 /*==============================================================================================================
@@ -188,7 +222,7 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static	$FontSpecifiers		=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F\w+)' ;
+	protected static	$FontSpecifiers		=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F\w+) ' ;
 
 
 	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
@@ -526,6 +560,56 @@ abstract class  PdfObjectBase		// extends  Object
 
 
 	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetStringParameter - Retrieve a string flag value.
+	
+	    PROTOTYPE
+	        $result		=  $this -> GetStringParameter ( $parameter, $object_data ) ;
+	
+	    DESCRIPTION
+	        Retrieves the value of a string parameter ; for example :
+
+			/U (parameter value)
+
+		or :
+
+			/U <hexdigits>
+	
+	    PARAMETERS
+	        $parameter (string) -
+	                Parameter name.
+
+		$object_data (string) -
+			Object containing the parameter.
+	
+	    RETURN VALUE
+	        The parameter value.
+	
+	    NOTES
+	        description
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetStringParameter ( $parameter, $object_data )
+	   { 
+		if  ( preg_match ( '#' . $parameter . ' \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $match ) )
+			$result		=  $this -> ProcessEscapedString ( $match [ 'value' ] ) ;
+		else if  ( preg_match ( '#' . $parameter . ' \s* \< \s* (?P<value> [^>]+) \>#ix', $object_data, $match ) )
+		   {
+			$hexdigits	=  $match [ 'value' ] ;
+			$result		=  '' ;
+
+			for  ( $i = 0, $count = strlen ( $hexdigits ) ; $i  <  $count ; $i +=  2 )
+				$result		.=  chr ( hexdec ( substr ( $hexdigits, $i, 2 ) ) ) ;
+		    }
+		else	
+			$result		=  '' ;
+
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
 
 	    GetUTCDate -
 	        Reformats an Adobe UTC date to a format that can be understood by the strtotime() function.
@@ -578,6 +662,21 @@ abstract class  PdfObjectBase		// extends  Object
 			stripos ( $object_data, '/BaseFont' )  !==  false  ||
 				( ! preg_match ( '#/Type \s* /FontDescriptor#ix', $object_data )  &&
 					preg_match ( '#/Type \s* /Font#ix', $object_data ) )
+		    ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    IsFormData -
+		Checks if the current object contents specify references to font data.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  IsFormData ( $object_data )
+	   {
+		return
+		   (
+			preg_match ( '#\bR \s* \( \s* datasets \s* \)#imsx', $object_data ) 
 		    ) ;
 	    }
 
@@ -883,7 +982,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.6" ;
+	const		VERSION					=  "1.5.7" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -907,6 +1006,9 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_LAYOUT_MASK			=  0x00000C00 ;		// Mask to isolate the targeted layout
 
 	const		PDFOPT_ENHANCED_STATISTICS		=  0x00001000 ;		// Compute statistics on PDF language instructions
+	const		PDFOPT_DEBUG_SHOW_COORDINATES		=  0x00002000 ;		// Include text coordinates ; implies the PDFOPT_BASIC_LAYOUT option
+											// This option can be useful if you want to use capture areas and get information about
+											// their coordinates
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -944,7 +1046,7 @@ class  PdfToText 	extends PdfObjectBase
 	// negative value means adding more space between the two text units it separates.
 	public			$Separator			=  ' ' ;
 	// Separator to be used between pages in the $Text property
-	public		$PageSeparator			=  "\n" ;
+	public			$PageSeparator			=  "\n" ;
 	// Minimum value (in 1/1000 of text units) that separates two text chunks that can be considered as a real space
 	public			$MinSpaceWidth			=  200 ;
 	// Pdf options
@@ -985,6 +1087,8 @@ class  PdfToText 	extends PdfObjectBase
 	public			$CreationDate			=  '' ;
 	public			$ModificationDate		=  '' ;
 	public			$Title				=  '' ;
+	public			$Subject			=  '' ;
+	public			$Keywords			=  '' ; 
 	protected		$GotAuthorInformation		=  false ;
 	// Unique and arbitrary file identifier, as specified in the PDF file
 	// Well, in fact, there are two IDs, but the PDF specification does not mention the goal of the second one
@@ -1034,6 +1138,12 @@ class  PdfToText 	extends PdfObjectBase
 	protected		$EncryptionData			=  false ;
 	// A flag coming from the constructor options, telling if enhanced statistics are enabled
 	protected		$EnhancedStatistics ;
+
+	// Form data 
+	protected		$FormData ;
+	protected		$FormDataObjectNumbers ;
+	protected		$FormDataDefinitions ;
+	protected		$FormaDataObjects ;
 
 	// Indicates whether global static initializations have been made
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
@@ -1431,6 +1541,8 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> CreationDate			=  '' ;
 		$this -> ModificationDate		=  '' ;
 		$this -> Title				=  '' ;
+		$this -> Subject			=  '' ;
+		$this -> Keywords			=  '' ;
 		$this -> GotAuthorInformation		=  false ;
 		$this -> ID				=  '' ;
 		$this -> ID2				=  '' ; 
@@ -1442,6 +1554,14 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> RtlCharacterBuffer		=  array ( ) ;
 		$this -> CharacterMapBuffer		=  array ( ) ;
 		$this -> FontObjectsBuffer		=  array ( ) ;
+		$this -> FormData			=  array ( ) ;
+		$this -> FormDataObjectNumbers		=  false ;
+		$this -> FomDataDefinitions		=  array ( ) ;
+		$this -> FormDataObjects		=  array ( ) ;
+
+		// Enable the PDFOPT_BASIC_LAYOUT_OPTION is PDFOPT_DEBUG_SHOW_COORDINATES is specified
+		if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
+			$this -> Options	|=  self::PDFOPT_BASIC_LAYOUT ;
 
 		// Page layout options needs more instructions to be retained - select the appropriate list of useless instructions
 		if  ( $this -> Options  &  self::PDFOPT_BASIC_LAYOUT )
@@ -1634,6 +1754,11 @@ class  PdfToText 	extends PdfObjectBase
 				   {
 					$this -> FontTable -> AddFontMap ( $object_number, $object_data ) ;
 				    }
+				// Retrieve form data if present
+				else if  ( $this -> IsFormData ( $object_data ) )
+				   {
+					$this -> RetrieveFormData ( $object_number, $object_data, $pdf_objects ) ;
+				    }
 				// Ignore other objects that do not contain an encoded stream
 				else 
 				   {
@@ -1698,6 +1823,11 @@ class  PdfToText 	extends PdfObjectBase
 			   {
 				$this -> FontTable -> Add ( $object_number, $decoded_stream_data, $pdf_objects ) ;
 			    }
+			// Retrieve form data if present
+			else if  ( $this -> IsFormData ( $object_data ) )
+			   {
+				$this -> RetrieveFormData ( $object_number, $decoded_stream_data, $pdf_objects ) ;
+			    }
 			// Plain text (well, in fact PDF drawing instructions)
 			else if  ( $this -> IsText ( $object_data, $decoded_stream_data ) )
 			   {
@@ -1737,9 +1867,32 @@ class  PdfToText 	extends PdfObjectBase
 				if  ( $text_data )
 					$this -> PageMap -> AddTemplateObject ( $object_number, $text_data ) ;
 			    }
-			else if  ( self::$DEBUG  >  1 )
-				echo "\n----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
+			// This may be here the opportunity to look into the $FormData property and replace object ids with their corresponding data
+			else
+			   {
+				$found		=  false ;
+
+				foreach  ( $this -> FormData  as  &$form_entry )
+				   {
+					if  ( is_integer ( $form_entry [ 'values' ] )  &&  $object_number  ==  $form_entry [ 'values' ] )
+					   {
+						$form_entry [ 'values' ]	=  $decoded_stream_data ;
+						$found				=  true ;
+					    }
+					else if  ( is_integer ( $form_entry [ 'form' ] )  &&  $object_number  ==  $form_entry [ 'form' ] )
+					   {
+						$form_entry [ 'form' ]	=  $decoded_stream_data ;
+						$found				=  true ;
+					    }
+				    }
+
+				if  ( ! $found  &&  self::$DEBUG  >  1 )
+					echo "\n----------------------------------- UNRECOGNIZED #$object_number :\n$decoded_stream_data\n" ;
+			    }
 		    }
+
+		// Form data object numbers
+		$this -> FormDataObjectNumbers	=  array_keys ( $this -> FormData ) ;
 
 		// Associate character maps with declared fonts
 		foreach  ( $cmaps  as  $cmap )
@@ -1758,6 +1911,8 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> FontTable -> AddPageFontMap ( $mapped_fonts ) ;
 
 		// Extract text from the collected text elements
+		$document_fragments	=  array ( ) ;
+
 		foreach ( $this -> PageMap -> Pages as  $page_number => $page_objects )
 		   {
 			// Checks if this page is selected
@@ -1796,7 +1951,13 @@ class  PdfToText 	extends PdfObjectBase
 						echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
 				    }
 
-				$this -> Pages [ $page_number ]		=  $this -> __assemble_text_fragments ( $page_fragments ) ;
+				$this -> Pages [ $page_number ]		=  $this -> __assemble_text_fragments ( $page_number, $page_fragments, $page_width, $page_height ) ;
+				$document_fragments [ $page_number ]	=  array 
+				   (
+					'fragments'		=>  $page_fragments,
+					'page-width'		=>  $page_width,
+					'page_height'		=>  $page_height 
+				    ) ;
 			    }
 		    }
 
@@ -1939,7 +2100,7 @@ class  PdfToText 	extends PdfObjectBase
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  text_strpos ( $search, $start = 0 )
 	   {
-		$offset		=  strpos ( $this -> Text, $search, $start ) ;
+		$offset		=  mb_strpos ( $this -> Text, $search, $start, 'UTF-8' ) ;
 
 		if  ( $offset  !==  false )
 			return ( array ( $this -> GetPageFromOffset ( $offset ), $offset ) ) ;
@@ -1950,7 +2111,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	public function  text_stripos ( $search, $start = 0 )
 	   {
-		$offset		=  stripos ( $this -> Text, $search, $start ) ;
+		$offset		=  mb_stripos ( $this -> Text, $search, $start, 'UTF-8' ) ;
 
 		if  ( $offset  !==  false )
 			return ( array ( $this -> GetPageFromOffset ( $offset ), $offset ) ) ;
@@ -2007,7 +2168,7 @@ class  PdfToText 	extends PdfObjectBase
 		$result		=  array ( ) ;
 		$index		=  0 ;
 
-		while ( ( $index =  strpos ( $this -> Text, $text, $index ) )  !==  false )
+		while ( ( $index =  mb_strpos ( $this -> Text, $text, $index, 'UTF-8' ) )  !==  false )
 		   {
 			$page	=  $this -> GetPageFromOffset ( $index ) ;
 
@@ -2033,7 +2194,7 @@ class  PdfToText 	extends PdfObjectBase
 		$result		=  array ( ) ;
 		$index		=  0 ;
 
-		while ( ( $index =  stripos ( $this -> Text, $text, $index ) )  !==  false )
+		while ( ( $index =  mb_stripos ( $this -> Text, $text, $index, 'UTF-8' ) )  !==  false )
 		   {
 			$page	=  $this -> GetPageFromOffset ( $index ) ;
 
@@ -2122,6 +2283,88 @@ class  PdfToText 	extends PdfObjectBase
 
 		return ( $status ) ;
 	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    HasFormData -
+		Returns true if the PDF file contains form data or not.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  HasFormData ( )
+	   {
+		return ( count ( $this -> FormData )  >  0 ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    GetFormCount -
+		Returns the number of top-level forms contained in the PDF file.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetFormCount ( )
+	   {
+		return ( count ( $this -> FormData ) ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetFormData - Returns form data, if any
+	
+	    PROTOTYPE
+	        $object		=  $pdf -> GetFormData ( $template = null, $form_index = 0 ) ;
+	
+	    DESCRIPTION
+	        Retrieves form data if present.
+	
+	    PARAMETERS
+	        $template (string) -
+	                An XML file describing form data using human-readable names for field values.
+			If not specified, the inline form definitions will be used, together with the field names 
+			specified in the PDF file.
+
+		$form_index (integer) -
+			Form index in the PDF file. So far, I really don't know if a PDF file can have multiple forms.
+	
+	    RETURN VALUE
+	        An object derived from the PdfToTextFormData class.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetFormData ( $template = null, $form_index = 0 )
+	   {
+		if  ( isset ( $this -> FormDataObjects [ $form_index ] ) )
+			return ( $this -> FormDataObjects [ $form_index ] ) ;
+
+		if  ( $form_index  >  count ( $this -> FormDataObjectNumbers ) )
+			error ( new PdfToTextFormTemplateException ( "Invalid form index #$form_index." ) ) ;
+
+		$form_data	=  $this -> FormData [ $this -> FormDataObjectNumbers [ $form_index ] ] ;
+
+		if  ( $template )
+		   {
+			if  ( ! file_exists ( $template ) )
+				error ( new PdfToTextFormTemplateException ( "Form data template file \"$template\" not found." ) ) ;
+
+			$xml_data	=  file_get_contents ( $template ) ;  
+			$definitions	=  new PdfToTextFormDefinitions ( $xml_data, $form_data [ 'form' ] ) ; ;
+		    }
+		else
+		   {
+			$definitions	=  new PdfToTextFormDefinitions ( null, $form_data [ 'form' ] ) ;
+		    }
+
+		$object		=  $definitions [ $form_index ]	-> GetFormDataFromPdfObject ( $form_data [ 'values' ] ) ;
+
+		$this -> FormDataDefinitions []		=  $definitions ;
+		$this -> FormDataObjects []		=  $object ;
+
+		return ( $object ) ;
+	    }
+
+
 
 
 	/**************************************************************************************************************
@@ -4020,17 +4263,20 @@ class  PdfToText 	extends PdfObjectBase
 
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'cm' ] ++ ;
 			    }
-			// Q/q instructions (restore/save graphic context)
-			else if  ( $length  ===  1  &&  ( $token_start  ===  'q'  ||  $token_start  ===  'Q' ) )
+			// q/Q instructions (save/restore graphic context)
+			else if  ( $token  ===  'q'  )
 			   {
-				if  ( $token_start  ===  'q' )
-				   {
-					$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $CTM, $Tm ) ;
-				    }
-				else if  ( $graphic_stack_size )
-				   {
+				$graphic_stack [ $graphic_stack_size ++ ]	=  array ( $CTM, $Tm ) ;
+				$operand_stack					=  array ( ) ;
+			    }
+			else if  ( $token  ===  'Q' )
+			    {
+				if  ( $graphic_stack_size )
 					list ( $CTM, $Tm )				=  $graphic_stack [ -- $graphic_stack_size ] ;
-				    }
+				else if  ( self::$DEBUG )
+					warning ( "Tried to restore graphics context from an empty stack." ) ;
+
+				$operand_stack					=  array ( ) ;
 			    }
 			// Text array in the [...] notation. Well, in fact, even non-array constructs are returned as an array by the
 			// __next_token() function, for the sake of simplicity
@@ -4051,12 +4297,31 @@ class  PdfToText 	extends PdfObjectBase
 						'font'		=>  $current_font_name,
 						'font-height'	=>  abs ( $current_font_height * $Tm [3] ),
 						'text'		=>  $text,
-						'CTM'	=>  $CTM, 'Tm' => $Tm, 'NEW' => $r, 'CURHEIGHT' => $current_font_height
 					    ) ;
 
-					$page_fragments []	=  $fragment ;
+					// Add debug information when needed
+					if  ( self::$DEBUG )
+					   {
+						$fragment	=  array_merge
+						   (
+							$fragment, 
+							array 
+							   (
+								'CTM'			=>  $CTM, 
+								'Tm'			=>  $Tm, 
+								'New Tm'		=>  $r, 
+								'Real font height'	=>  $current_font_height, 
+								'Page width'		=>  $page_attributes [ 'width' ], 
+								'Page height'		=>  $page_attributes ['height' ]
+							    )
+						    ) ;
+					    }
 
+					// Add this text fragment to the list
+					$page_fragments []	=  $fragment ;
 					$page_fragment_count ++ ;
+
+					$operand_stack		=  array ( ) ;
 				    }
 			    }
 			// BT instruction
@@ -4112,7 +4377,6 @@ class  PdfToText 	extends PdfObjectBase
 		    }
 
 		usort ( $page_fragments, array ( $this, '__sort_page_fragments' ) ) ;
-		//dump ( $page_fragments ) ;
 	    }
 
 
@@ -4142,8 +4406,8 @@ class  PdfToText 	extends PdfObjectBase
 		$r	=  array ( ) ;
 		$r [0]	=  ( $scale_1x * $scale_2x ) + ( $ma [1] * $mb [2]   ) ;
 		$r [1]	=  ( $scale_1x * $mb [1]   ) + ( $ma [1] * $scale_2y ) ;
-		$r [2]	=  ( $scale_1y * $scale_2x ) + ( $ma [3] * $mb [2]   ) ;
-		$r [3]	=  ( $scale_1y * $mb [1]   ) + ( $ma [3] * $scale_2y ) ;
+		$r [2]	=  ( $scale_1y * $scale_2x ) + ( $scale_1y * $mb [2]   ) ;
+		$r [3]	=  ( $scale_1y * $mb [1]   ) + ( $scale_1y* $scale_2y ) ;
 		$r [4]	=  ( $ma [4]   * $scale_2x ) + ( $ma [5] * $mb [2]   ) + $mb [4] ;
 		$r [5]	=  ( $ma [4]   * $mb [1]   ) + ( $ma [5] * $scale_2y ) + $mb [5] ;
 
@@ -4673,40 +4937,62 @@ class  PdfToText 	extends PdfObjectBase
 
 	// __assemble_text_fragments -
 	//	Assembles text fragments collected by the ExtractTextWithLayout function.
-	private function  __assemble_text_fragments ( $fragments )
+	private function  __assemble_text_fragments ( $page_number, &$fragments, &$page_width, &$page_height )
 	   {
 		$fragment_count		=  count ( $fragments ) ;
 
+		// No fragment no cry...
 		if  ( ! $fragment_count )
 			return ( '' ) ;
 
+		// Retrieve the page attributes 
+		$page_attributes	=  $this -> PageMap -> PageAttributes [ $page_number ] ;
+
+		// Some buggy PDF do not specify page width or page height so, during the processing of text fragments,
+		// page width & height will be set to the largest x/y coordinate
+		if  ( isset ( $page_attributes [ 'width' ] )  &&  $page_attributes [ 'width' ] )
+		   {
+			$page_width		=  $page_attributes [ 'width' ] ;
+			$got_page_width		=  true ;
+		    }
+		else
+		   {
+			$page_width		=  0 ;
+			$got_page_width		=  false ;
+		    }
+
+		if  ( isset ( $page_attributes [ 'height' ] )  &&  $page_attributes [ 'height' ] )
+		   {
+			$page_height		=  $page_attributes [ 'height' ] ;
+			$got_page_height	=  true ;
+		    }
+		else
+		   {
+			$page_height		=  0 ;
+			$got_page_height	=  false ;
+		    }
+
 		// Take the first text fragment
-		$result			=  $fragments [0] [ 'text' ] ;
-		$previous_fragment	=  $fragments [0] ;
+		$result			 =  '' ;
+		$previous_fragment	 =  &$fragments [0] ;
+		$font_object		 =  $this -> __compute_fragment_width ( $previous_fragment ) ;
+
+		if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
+			$result		.=  $this -> __debug_get_coordinates ( $fragments [0] ) ;
+
+		$result			.=  $previous_fragment [ 'text' ] ;
 
 		// Block separator
 		$separator		=  ( $this -> BlockSeparator ) ?  $this -> BlockSeparator : ' ' ;
 
+
 		// Loop through consecutive ones
 		for  ( $i = 1 ; $i  <  $fragment_count ; $i ++ )
 		   {
-			$fragment		=  $fragments [$i] ;
-
-			// We have to find out which PHP font object is used for the previous text fragment, so that we will be able to compute the length of
-			// a string. To avoid repeated calls to the PdfTexterFontTable::GetFontObject() method, we are buffering them in the FontObjectsBuffer
-			// property.
-			$object_reference	=  $previous_fragment [ 'page' ] . ':' . $previous_fragment [ 'template' ] . ':' . $previous_fragment [ 'font' ] ;
-
-			if  ( isset ( $this -> FontObjectsBuffer [ $object_reference ] ) ) 
-				$font_object	=  $this -> FontObjectsBuffer [ $object_reference ] ;
-			else
-			   {
-				$font_object		=  $this -> FontTable -> GetFontObject ( $previous_fragment [ 'page' ], $previous_fragment [ 'template' ], $previous_fragment [ 'font' ] ) ;
-				$this -> FontObjectsBuffer [ $object_reference ]	=  $font_object ;
-			    }
+			$fragment		=  &$fragments [$i] ;
 
 			// The width of the previous text fragment will be computed only if its associated font contains character widths information
-			$previous_width		=  ( $font_object ) ?  $font_object -> GetStringWidth ( $previous_fragment [ 'text' ], $this -> ExtraTextWidth ) : false ;
+			$previous_width		=  $previous_fragment [ 'width' ] ;
 
 			// Since we allow slight variations of the y-position (for example, because of super- or sub-scripted text), we retain the highest font 
 			// height between the previous text fragment and the current one
@@ -4748,15 +5034,79 @@ class  PdfToText 	extends PdfObjectBase
 				    }
 			    }
 
-			// Catenate the result
-			$result		.=  $fragment [ 'text' ] ;
-
 			// Remember the current fragment
-			$previous_fragment	=  $fragment ;
+			$previous_fragment	=  &$fragment ;
+
+			// Compute the width for the new previous fragment
+			$font_object		=  $this -> __compute_fragment_width ( $previous_fragment ) ;
+
+			// Catenate the result
+			if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
+				$result		.=  $this -> __debug_get_coordinates ( $fragment ) ;
+
+			$result		.=  $fragment [ 'text' ] ;
 		    }
+
+		// Don't forget the compute the width of the very last fragment
+		$fragment	=  &$fragments [ $fragment_count - 1 ] ;
+		$this -> __compute_fragment_width ( $fragment ) ;
+
+		// Update the page dimensions with the coordinates of the last text fragment, if they were not specified in the PDF file
+		if  ( ! $got_page_width )
+		   {
+			$w	=  $previous_fragment [ 'x' ] + $previous_fragment [ 'width' ] ;
+
+			if  ( $w  >  $page_width )
+				$page_width	=  $w ;
+		    }
+
+		if  ( ! $got_page_height )
+		   {
+			$h	=  $previous_fragment [ 'y' ] + $previous_fragment [ 'font-height' ] ;
+
+			if  ( $h  >  $page_height )
+				$page_height	=  $h ;
+		    }
+
+		// Add page information if the PDFOPT_DEBUG_SHOW_COORDINATES option has been specified
+		if  ( $this -> Options  &  self::PDFOPT_DEBUG_SHOW_COORDINATES )
+			$result		=  "[Page : $page_number, width = $page_width, height = $page_height]" . $this -> EOL . $result ;
 
 		// All done, return
 		return ( $result ) ;
+	    }
+
+
+	// __compute_fragment_width -
+	//	Compute the width of the specified text fragment and add the width entry accordingly.
+	//	Returns the font object associated with this fragment
+	private function  __compute_fragment_width ( &$fragment )
+	   {
+		// To avoid repeated calls to the PdfTexterFontTable::GetFontObject() method, we are buffering them in the FontObjectsBuffer property.
+		$object_reference	=  $fragment [ 'page' ] . ':' . $fragment [ 'template' ] . ':' . $fragment [ 'font' ] ;
+
+		if  ( isset ( $this -> FontObjectsBuffer [ $object_reference ] ) ) 
+			$font_object	=  $this -> FontObjectsBuffer [ $object_reference ] ;
+		else
+		   {
+			$font_object		=  $this -> FontTable -> GetFontObject ( $fragment [ 'page' ], $fragment [ 'template' ], $fragment [ 'font' ] ) ;
+			$this -> FontObjectsBuffer [ $object_reference ]	=  $font_object ;
+		    }
+
+		// The width of the previous text fragment will be computed only if its associated font contains character widths information
+		$fragment [ 'width' ]		=  ( $font_object ) ?  $font_object -> GetStringWidth ( $fragment [ 'text' ], $this -> ExtraTextWidth ) : 0 ;
+
+		// Return the font object
+		return ( $font_object ) ;
+	    }
+
+
+	// __debug_get_coordinates -
+	//	Returns the coordinates of the specified text fragment, in debug mode.
+	private function  __debug_get_coordinates ( $fragment )
+	   {
+		return ( "\n[x:" . round ( $fragment [ 'x' ], 0 ) . ', y:' . round ( $fragment [ 'y' ], 0 ) . 
+			 ", w: " . round ( $fragment [ 'width' ], 0 ) . ", h:" . round ( $fragment [ 'font-height' ], 0 ) . "]" ) ;
 	    }
  
 
@@ -5450,7 +5800,7 @@ class  PdfToText 	extends PdfObjectBase
 		static		$re		=  '#
 							(?P<info>
 								/
-								(?P<keyword> (Author) | (Creator) | (Producer) | (Title) | (CreationDate) | (ModDate) )
+								(?P<keyword> (Author) | (Creator) | (Producer) | (Title) | (CreationDate) | (ModDate) | (Keywords) | (Subject) )
 								\s* 
 								(?P<opening> [(<])
 							)
@@ -5458,7 +5808,7 @@ class  PdfToText 	extends PdfObjectBase
 		static		$object_re	=  '#
 							(?P<info>
 								/
-								(?P<keyword> (Author) | (Creator) | (Producer) | (Title) | (CreationDate) | (ModDate) )
+								(?P<keyword> (Author) | (Creator) | (Producer) | (Title) | (CreationDate) | (ModDate) | (Keywords) | (Subject) )
 								\s* 
 								(?P<object_ref>
 									(?P<object> \d+)
@@ -5548,6 +5898,8 @@ class  PdfToText 	extends PdfObjectBase
 					case  'creator'		:  $this -> CreatorApplication		=  $value ; break ;
 					case  'producer'	:  $this -> ProducerApplication		=  $value ; break ;
 					case  'title'		:  $this -> Title			=  $value ; break ;
+					case  'keywords'	:  $this -> Keywords			=  $value ; break ;
+					case  'subject'		:  $this -> Subject			=  $value ; break ;
 					case  'creationdate'	:  $this -> CreationDate		=  $this -> GetUTCDate ( $value ) ; break ;
 					case  'moddate'		:  $this -> ModificationDate		=  $this -> GetUTCDate ( $value ) ; break ;
 				    }
@@ -5560,10 +5912,72 @@ class  PdfToText 	extends PdfObjectBase
 				echo ( "Creator application  : " . $this -> CreatorApplication . "\n" ) ;
 				echo ( "Producer application : " . $this -> ProducerApplication . "\n" ) ;
 				echo ( "Title                : " . $this -> Title . "\n" ) ;
+				echo ( "Subject              : " . $this -> Subject . "\n" ) ;
+				echo ( "Keywords             : " . $this -> Keywords . "\n" ) ;
 				echo ( "Creation date        : " . $this -> CreationDate . "\n" ) ;
 				echo ( "Modification date    : " . $this -> ModificationDate . "\n" ) ;
 			    }
 		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        RetrieveFormData - Retrieves raw form data
+	
+	    PROTOTYPE
+	        $this -> RetrieveFormData ( $object_id, $object_data ) ;
+	
+	    DESCRIPTION
+	        Retrieves raw form data (form definition and field values definition).
+	
+	    PARAMETERS
+	        $object_id (integer) -
+	                Id of the object containing the author information.
+
+		$object_data (string) -
+			Object contents.
+
+		$pdf_objects (array) -
+			Array whose keys are the PDF object ids, and values their corresponding contents.
+		
+	    NOTES
+	        This function only memorizes the contents of form data definitions. The actual data will be processed
+		only if the GetFormData() function is called.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  RetrieveFormData ( $object_id, $object_data, $pdf_objects )
+	   {
+		// Retrieve the object that contains the field values
+		preg_match ( '#\b R \s* \( \s* datasets \s* \) \s* (?P<object> \d+) \s+ \d+ \s+ R#imsx', $object_data, $field_match ) ;
+		$field_object		=  $field_match [ 'object' ] ;
+
+		if  ( ! isset ( $pdf_objects [ $field_object ] ) )
+		   {
+			if  ( self::$DEBUG )
+				warning ( "Field definitions object #$field_object not found in object #$object_id." ) ;
+
+			return ;
+		    }
+
+		// Retrieve the object that contains the form definition
+		preg_match ( '#\b R \s* \( \s* form \s* \) \s* (?P<object> \d+) \s+ \d+ \s+ R#imsx', $object_data, $form_match ) ;
+		$form_object		=  $form_match [ 'object' ] ;
+
+		if  ( ! isset ( $pdf_objects [ $form_object ] ) )
+		   {
+			if  ( self::$DEBUG )
+				warning ( "Form definitions object #$form_object not found in object #$object_id." ) ;
+
+			return ;
+		    }
+		// Add this entry to form data information
+		$this -> FormData [ $object_id ]	=  array
+		   ( 
+			'values'	=>  ( integer ) $field_object,
+			'form'		=>  ( integer ) $form_object
+		    ) ;
 	    }
 
 
@@ -5640,6 +6054,18 @@ class  PdfToText 	extends PdfObjectBase
 	    }
     }
 
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                      FONT TABLE MANAGEMENT                                       ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
 
 /*==============================================================================================================
 
@@ -5922,6 +6348,17 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
     }
 
 
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                         FONT MANAGEMENT                                          ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
 
 /*==============================================================================================================
 
@@ -6045,7 +6482,7 @@ class  PdfTexterFont		extends PdfObjectBase
 
 				if  ( file_exists ( $metrics_file ) )
 				   {
-					require_once ( $metrics_file ) ;
+					require ( $metrics_file ) ;
 
 					// Build the CharacterWidths table
 					foreach  ( $charwidths  as  $char => $width )
@@ -7004,6 +7441,18 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	    }
     }
 
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                     CHARACTER MAP MANAGEMENT                                     ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
 
 /*==============================================================================================================
 
@@ -8319,6 +8768,18 @@ class  PdfTexterPageMap		extends  PdfObjectBase
     }
     
 
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                         IMAGE MANAGEMENT                                         ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
+
 /*==============================================================================================================
 
     class PdfImage -
@@ -8932,6 +9393,17 @@ class  PdfFaxImage		extends  PdfImage
     }
 
 
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                      ENCRYPTION MANAGEMENT                                       ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
 
 /*==============================================================================================================
 
@@ -9058,26 +9530,20 @@ class  PdfEncryptionData		extends  PdfObjectBase
 			$this -> KeyLength	=  40 ;
 
 		// Owner and user passwords
-		preg_match ( '#/U \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $user_match ) ;
-		$this -> UserKey		=  $this -> ProcessEscapedString ( $user_match [ 'value' ] ) ;
-
-		preg_match ( '#/O \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $owner_match ) ;
-		$this -> OwnerKey		=  $this -> ProcessEscapedString ( $owner_match [ 'value' ] ) ;
+		$this -> UserKey		=  $this -> GetStringParameter ( '/U', $object_data ) ;
+		$this -> OwnerKey		=  $this -> GetStringParameter ( '/O', $object_data ) ;
 
 		// Owner and user encryption strings
-		preg_match ( '#/UE \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $user_match ) ;
-		$this -> UserEncryptionString	=  ( isset ( $user_match  [ 'value' ] ) ) ?  $this -> ProcessEscapedString ( $user_match  [ 'value' ] ) : false ;
-
-		preg_match ( '#/OE \s* \( \s* (?P<value> [^)]+) \)#ix', $object_data, $owner_match ) ;
-		$this -> OwnerEncryptionString	=  ( isset ( $owner_match [ 'value' ] ) ) ?  $this -> ProcessEscapedString ( $owner_match [ 'value' ] ) : false ;
+		$this -> UserEncryptionString	=  $this -> GetStringParameter ( '/UE', $object_data ) ;
+		$this -> OwnerEncryptionString	=  $this -> GetStringParameter ( '/OE', $object_data ) ;
 
 		// EncryptMetadata flag
 		if  ( preg_match ( '# /EncryptMetadata (?P<value> (true) | (1) | (false) | (0) )#imsx', $object_data, $encryption_match ) )
 		   {
 			if  ( ! strcasecmp ( $encryption_match [ 'value' ], 'true' )  ||  ! strcasecmp ( $encryption_match [ 'value' ], 'false' ) )
-				$this -> EncryptionMetadata		=  true ;
+				$this -> EncryptMetadata		=  true ;
 			else
-				$this -> EncryptionMetadata		=  false ;
+				$this -> EncryptMetadata		=  false ;
 		    }
 		else
 			$this -> EncryptMetadata	=  false ;
@@ -9214,8 +9680,6 @@ class  PdfEncryptionData		extends  PdfObjectBase
 		//return ( $this -> Decrypter -> Decrypt ( $object_data ) ) ;
 		//return ( "BT (coucou)Tj ET" ) ;
 	    }
-
-
     }
 
 
@@ -9360,3 +9824,987 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
   return c ^ state[(tx + ty) % 256];
 }
 */
+
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                        CAPTURE MANAGEMENT                                        ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
+
+
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                       FORM DATA MANAGEMENT                                       ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
+
+
+/*==============================================================================================================
+
+    class PdfToTextFormDefinitions -
+        Analyzes a template XML file that describes PDF form data and maps PDF field names to human-readable
+	names.
+	The GetFormData() returns an object containing the mapped properties with their respective values.
+
+  ==============================================================================================================*/
+class  PdftoTextFormDefinitions		// extends		Object
+					implements	\ArrayAccess, \Countable, \IteratorAggregate
+   {
+	static private	$ClassDefinitionCount	=  0 ;
+
+	// Class name, as specified in the XML template
+	protected	$ClassName ;
+	// Form definitions (a template may contain several versions of the same for definition)
+	protected	$Definitions ;
+	// Form definitions coming from the PDF file
+	protected	$PdfDefinitions ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+	    Constructor -
+		Parses the supplied XML template.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $xml_data, $pdf_xml_data )
+	   {
+		// Get PDF XML form data definitions
+		$this -> __get_pdf_form_definitions ( $pdf_xml_data ) ;
+
+		// Create XML data from scratch, if none specified
+		if  ( ! $xml_data  )
+			$xml_data	=  $this -> __create_default_xml_data ( $this -> PdfDefinitions ) ;
+
+		// Decode XML the hard way, without XSD
+		$xml		=  simplexml_load_string ( $xml_data ) ;
+		$root_entry	=  $xml -> getName ( ) ;
+		$definitions	=  array ( ) ;
+		$class_name	=  "PdfFormData" ;
+
+		if  ( strcasecmp ( $root_entry, "forms" ) ) 
+			error ( new PdfToTextFormTemplateException ( "Root entry must be <forms>, <$root_entry> was found." ) ) ;
+
+		// Get the attribute values of the <forms> tag
+		foreach  ( $xml -> attributes ( )  as  $attribute_name => $attribute_value )
+		   {
+			switch  ( strtolower ( $attribute_name ) )
+			   {
+				case	'class' :
+					$class_name	=  ( string ) $attribute_value ;
+
+					if  ( class_exists ( $class_name, false ) )
+						error ( new PdfToTextFormTemplateException ( "Class \"$class_name\" specified in XML template already exists." ) ) ;
+
+					break ;
+
+				default :
+					error ( new PdfToTextFormTemplateException ( "Invalid attribute \"$attribute_name\" in <forms> tag." ) ) ;
+			    }
+		    }
+
+		// Don't know if it will be useful, but try to avoid class name collisions by appending a sequential number if necessary
+		if  ( class_exists ( $class_name, false ) )
+		   {
+			self::$ClassDefinitionCount ++ ;
+			$class_name	.=  '_' . self::$ClassDefinitionCount ;
+		    }
+
+		// Loop through each child <form> entry
+		foreach  ( $xml -> children ( )  as  $child )
+		   {
+			$child_name	=  $child -> getName ( ) ;
+
+			switch ( strtolower ( $child_name ) )
+			   {
+				case	'form' :
+					$definitions []		=  new PdfToTextFormDefinition ( $class_name, $child, $this -> PdfDefinitions ) ;
+					break ;
+
+				default :
+					error ( new PdfToTextFormTemplateException ( "Invalid tag <$child_name>." ) ) ;
+			    }
+		    }
+
+		// Ensure that there is at least one form definition
+		if  ( ! count ( $definitions ) )
+			error ( new PdfToTextFormTemplateException ( "No <form> definition found." ) ) ;
+
+		// Save to properties
+		$this -> ClassName		=  $class_name ;
+		$this -> Definitions		=  $definitions ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+		Internal methods.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+
+	// __get_pdf_form_definitions -
+	//	Retrieves the form field definitions coming from the PDF file.
+	private function  __get_pdf_form_definitions ( $pdf_data )
+	   {
+		preg_match_all ( '#(?P<field> <field .*? </field \s* >)#imsx', $pdf_data, $matches ) ;
+		
+		foreach  ( $matches [ 'field' ]  as  $field )
+		   {
+			$xml_field	=  simplexml_load_string ( $field ) ;
+
+			foreach  ( $xml_field -> attributes ( )  as  $attribute_name => $attribute_value )
+			   {
+				switch  ( strtolower ( $attribute_name ) )
+				   {
+					case	'name' :
+						$field_name		=  ( string ) $attribute_value ;
+
+						if  ( isset ( $this -> PdfDefinitions [ $field_name ] ) )
+							$this -> PdfDefinitions [ $field_name ] [ 'occurrences' ] ++ ;
+						else
+						   {
+							$this -> PdfDefinitions [ $field_name ]		=  array
+							   (
+								'name'		=>  $field_name,
+								'occurrences'	=>  1
+							    ) ;
+						    }
+
+						break ;
+				    }
+			    }
+		    }
+	    }
+
+
+	// __create_default_xml_data -
+	//	When no XML template has been specified, creates a default one based of the form definitions located in the PDF file.
+	private function  __create_default_xml_data ( $pdf_definitions )
+	   {
+		$result		=  "<forms>" . PHP_EOL .
+				   "\t<form version=\"1.0\">" . PHP_EOL ;
+
+		foreach  ( $pdf_definitions  as  $name => $field )
+		   {
+			$name		 =  str_replace ( '-', '_', $name ) ;		// Just in case of
+			$result		.=  "\t\t<field name=\"$name\" form-field=\"$name\" type=\"string\"/>" . PHP_EOL ;
+		    }
+
+		$result		.=  "\t</form>" . PHP_EOL .
+				    "</forms>" . PHP_EOL ;
+
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+
+		Interfaces implementations to retrieve form definitions.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( count ( $this - Definitions ) ) ; }
+
+
+	public function  getIterator ( )
+	   { return ( new \ArrayIterator ( $this -> Definitions ) ) ; }
+
+
+	public function  offsetExists ( $offset )
+	   { return ( $offset  >=  0  &&  $offset  <  count ( $this -> Definitions ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   { return ( $this -> Definitions [ $offset ] ) ; }
+
+
+	public function  offsetSet ( $offset, $value ) 
+	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
+
+
+	public function  offsetunset ( $offset ) 
+	   { error ( new PdfToTextException ( "Unsupported operation." ) ) ; }
+    }	
+
+
+/*==============================================================================================================
+
+    class PdfToTextFormDefinition -
+        Holds the description of a form inside a form XML template.
+
+  ==============================================================================================================*/
+class  PdfToTextFormDefinition		// extends  Object
+   {
+	// Class of the object returned by GetFormData( )
+	public		$ClassName ;
+
+	// Form version
+	public		$Version ;
+
+	// Field definitions
+	public		$FieldDefinitions		=  array ( ) ;
+
+	// Field groups (ie, fields that are the results of the concatenation of several form fields)
+	public		$Groups				=  array ( ) ;
+
+	// Pdf field definitions
+	public		$PdfDefinitions ;
+	
+	// Class definition in PHP, whose instance will be returned by GetFormData()
+	private		$ClassDefinition		=  false ;
+
+	// Direct access to field definitions either through their template name or PDF name
+	private		$FieldDefinitionsByName		=  array ( ) ;
+	private		$FieldDefinitionsByPdfName	=  array ( ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Analyze the contents of an XML template form definition.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $class_name, $form_definition, $pdf_definitions )
+	   {
+		$this -> ClassName		=  $class_name ;
+		$this -> PdfDefinitions		=  $pdf_definitions ;
+		$field_count			=  0 ;
+
+		// Get <form> tag attributes
+		foreach  ( $form_definition -> attributes ( )  as  $attribute_name => $attribute_value )
+		   {
+			switch ( strtolower ( $attribute_name ) ) 
+			   {
+				case	'version' :
+					$this -> Version	=  ( string ) $attribute_value ;
+					break ;
+
+				default :
+					error ( new PdfToTextFormTemplateException ( "Invalid attribute \"$attribute_name\" in <form> tag." ) ) ;
+			    }
+		    }
+
+		// Loop through subtags
+		foreach  ( $form_definition -> children ( )  as  $child )
+		   {
+			$tag_name	=  $child -> getName ( ) ;
+
+			// Check subtags
+			switch  ( strtolower ( $tag_name ) )
+			   {
+				// <group> :
+				//	A group is used to create a property that is the concatenation of several existing properties.
+				case	'group' :
+					$fields		=  array ( ) ;
+					$separator	=  '' ;
+					$name		=  false ;
+
+					// Loop through attribute names
+					foreach  ( $child -> attributes ( )  as  $attribute_name => $attribute_value )
+					   {
+						switch  ( $attribute_name )
+						   {
+							// "name" attribute" :
+							//	The name of the property, as it will appear in the output object.
+							case	'name' :
+								$name		=  self::ValidatePhpName ( ( string ) $attribute_value ) ;
+								break ;
+
+							// "separator" attribute :
+							//	Separator to be used when concatenating the underlying properties.
+							case	'separator' :
+								$separator	=  ( string ) $attribute_value ;
+								break ;
+
+							// "fields" :
+							//	A list of comma-separated field names, whose values will be concatenated together
+							//	using the specified separator.
+							case	'fields' :
+								$items		=  explode ( ',', ( string ) $attribute_value ) ;
+
+								if  ( ! count ( $items ) )
+									error ( new PdfToTextFormTemplateException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
+
+								foreach  ( $items  as  $item )
+									$fields []	=  self::ValidatePhpName ( $item ) ;
+
+								break ;
+
+							// Other attribute names : not allowed
+							default :
+								error ( new PdfToTextFormTemplateException ( "Invalid attribute \"$attribute_name\" in <group> tag." ) ) ;
+						    }
+					    }
+
+					// Check that at least one field has been specified
+					if  ( ! count ( $fields ) )
+						error ( new PdfToTextFormTemplateException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
+
+					// Check that the mandatory property name has been specified
+					if  ( ! $name )
+						error ( new PdfToTextFormTemplateException ( "The \"name\" attribute is mandatory in <group> tag." ) ) ;
+
+					// Add this new grouped property to the list of existing groups
+					$this -> Groups []	=  array
+					   (
+						'name'		=>  $name,
+						'separator'	=>  $separator,
+						'fields'	=>  $fields
+					    ) ;
+
+					break ;
+
+				// <field> :
+				//	Field definition.
+				case	'field' :
+					$field_def							=  new PdfToTextFormFieldDefinition ( $child ) ;
+					$this -> FieldDefinitions []					=  $field_def ;
+					$this -> FieldDefinitionsByName [ $field_def -> Name ]		=
+					$this -> FieldDefinitionsByPdfName [ $field_def -> PdfName ]	=  $field_count ;
+					$field_count ++ ;
+					break ;
+
+				// Don't allow other attribute names
+				default :
+					error ( new PdfToTextFormTemplateException ( "Invalid tag <$tag_name> in <form> definition." ) ) ;
+			    }
+		    }
+
+		// Check that everything is ok (ie, that there is no duplicate fields)
+		$this -> __paranoid_checks ( ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetClassDefinition - Returns the class definition for the urrent form.
+	
+	    PROTOTYPE
+	        $def	=   $form_def -> GetClassDefinition ( ) ;
+	
+	    DESCRIPTION
+	        Returns a string containing the PHP class definition that will contain the properties defined in the XML
+		form template.
+	
+	    RETURN VALUE
+	        Returns a string containing the PHP class definition for the current form.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetClassDefinition ( )
+	   {
+		// Return the existing definition, if this method has been called more than once
+		if  ( $this -> ClassDefinition )
+			return ( $this -> ClassDefinition ) ;
+
+		$class_def	=  "// Class " . $this -> ClassName . " : " . $this -> Version . PHP_EOL .
+				   "class {$this -> ClassName}\t\textends PdfToTextFormData" . PHP_EOL .
+				   "   {" . PHP_EOL ;
+
+		// Get the maximum width of constant and field names
+		$max_width	=  0 ;
+
+		foreach  ( $this -> FieldDefinitions  as  $def )
+		   {
+			$length1	=  strlen ( $def -> Name ) ;
+			$length2	=  strlen ( $def -> PdfName ) ;
+
+			if  ( $length1  >  $max_width  ||  $length2  >  $max_width )
+				$max_width	=  max ( $length1, $length2 ) ;
+
+			foreach  ( $def -> Constants  as  $constant )
+			   {
+				$length		=  strlen ( $constant [ 'name' ] ) ;
+
+				if  ( $length  >  $max_width )
+					$max_width	=  $length ;
+			    }
+		    }
+
+		// First, write out the constant definitions 
+		$all_constants	=  array ( ) ;
+
+		foreach  ( $this -> FieldDefinitions  as  $def )
+		   {
+			foreach  ( $def -> Constants  as  $constant )
+			   {
+				$name	=  $constant [ 'name' ] ;
+				$value	=  $constant [ 'value' ] ;
+
+				if  ( isset ( $all_constants [ $name ] ) )
+				   {
+					if  ( $all_constants [ $name ]  !=  $value )
+						error ( new PdfToTextFormTemplateException ( "Constant \"$name\" is defined more than once with different values." ) ) ;
+				    }
+				else
+				   {
+					$all_constants [ $name ]	 =  $value ;
+
+					if  ( ! is_numeric ( $value ) )
+						$value		=  '"' . addslashes ( $value ) . '"' ;
+
+					$class_def			.=  "\tconst\t" . str_pad ( $name, $max_width, " ", STR_PAD_RIGHT ) . "\t = $value ; " . PHP_EOL ;
+				    }
+			    }
+		    }
+
+		$class_def	.=  PHP_EOL . PHP_EOL ;
+
+		// Then write property definitions
+		foreach  ( $this -> FieldDefinitions  as  $def )
+		   {
+			$class_def	.=  "\t/** @formdata */" . PHP_EOL .
+					     "\tprotected\t\t\${$def -> Name} ;" . PHP_EOL ;
+		    }
+
+		$class_def	.=  PHP_EOL . PHP_EOL ;
+
+		// And finally, grouped properties
+		foreach  ( $this -> Groups  as  $group ) 
+		   {
+			$class_def	.=  "\t/**" . PHP_EOL .
+					    "\t\t@formdata" . PHP_EOL .
+					    "\t\t@group(" . implode ( ',', $group [ 'fields' ] ) . ')' . PHP_EOL .
+					    "\t\t@separator(" . str_replace ( ')', '\)', $group [ 'separator' ] ) . ')' . PHP_EOL .
+					    "\t */" . PHP_EOL .
+					    "\tprotected\t\t\${$group [ 'name' ]} ;" . PHP_EOL .PHP_EOL ;
+		    }
+
+		// Constructor
+		$class_def	.=  PHP_EOL . PHP_EOL .
+				    "\t// Class constructor" . PHP_EOL .
+				    "\tpublic function  __construct ( )" . PHP_EOL .
+				    "\t   {" . PHP_EOL .
+				    "\t\tparent::__construct ( ) ;" . PHP_EOL .
+				    "\t    }" . PHP_EOL ;
+
+		$class_def	.=  "    }" . PHP_EOL ;
+
+		// Save the definition, if a second call occurs
+		$this -> ClassDefinition	=  $class_def ;
+
+		// All done, return
+		return ( $class_def ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetFormData - Returns a form data object containing properties mapped to the form data.
+	
+	    PROTOTYPE
+	        $object		=  $form_def -> GetFormData ( $fields ) ;
+	
+	    DESCRIPTION
+	        Returns an object containing properties mapped to actual form data.
+	
+	    PARAMETERS
+	        $fields (array) -
+	                An associative array whoses keys are the PDF form field names, and values their values as stored
+			in the PDF file.
+	
+	    RETURN VALUE
+	        Returns an object of the class, as defined by the template specified to PdfToTextFormDefinitions
+		class constructor.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetFormData ( $fields = array ( ) )
+	   {
+		if  ( ! class_exists ( $this -> ClassName, false ) )
+		   {
+			$class_def	=  $this -> GetClassDefinition ( ) ;
+			eval ( $class_def ) ;
+		    }
+
+		$class_name	=  $this -> ClassName ;
+		$object		=  new  $class_name ( ) ;
+
+		foreach  ( $fields  as  $name => $value )
+		   {
+			if  ( isset ( $this -> FieldDefinitionsByPdfName [ $name ] ) )
+			   {
+				$property		=  $this -> FieldDefinitions [ $this -> FieldDefinitionsByPdfName [ $name ] ] -> Name ;
+				$object -> $property	=  $this -> __process_field_value ( $value ) ;
+			    }
+		    }
+
+		return ( $object ) ;
+	    }
+
+
+	// __process_field_values -
+	//	Translates html entities and removes carriage returns (which are apparently used for multiline field) to 
+	//	replace them with newlines.
+	private function  __process_field_value ( $value )
+	   {
+		$value		=  html_entity_decode ( $value ) ;
+		$result		=  '' ;
+
+		for  ( $i = 0, $length = strlen ( $value ) ; $i  <  $length ; $i ++ )
+		   {
+			if  ( $value [$i]  !==  "\r" )
+				$result		.=  $value [$i] ;
+			else
+			   {
+				if  ( isset ( $value [ $i + 1 ] ) )
+				   {
+					if  ( $value [ $i + 1 ]  !==  "\n" )
+						$result		.=  "\n" ;
+				    }
+				else
+					$result		.=  "\n" ;
+			    }
+		    }
+
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetformDataFromPdfObject - Same as GetFormData(), except that it operates on XML data.
+	
+	    PROTOTYPE
+	        $object		=  $pdf -> GetFormDataFromPdfObject ( $pdf_data ) ;
+	
+	    DESCRIPTION
+	        Behaves the same as GetFormData(), except that it takes as input the XML contents of a PDF object.
+	
+	    PARAMETERS
+	        $pdf_data (string) -
+	                XML data coming from the PDF file.
+	
+	    RETURN VALUE
+	        Returns an object of the class, as defined by the template specified to PdfToTextFormDefinitions
+		class constructor.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetFormDataFromPdfObject ( $pdf_data )
+	   {
+		// simplexml_ functions do not like tags that contain a colon - replace them with a dash
+		$pdf_data	=  preg_replace ( '/(<[^:]+?)(:)/', '$1-', $pdf_data ) ;
+
+		// Load the xml data 
+		$xml		=  simplexml_load_string ( $pdf_data ) ;
+
+		// Get the form field values
+		$fields		=  array ( ) ;
+
+		$this -> __get_pdfform_data ( $fields, $xml ) ;
+
+		// Return the object
+		return ( $this -> GetFormData ( $fields ) ) ;
+	    }
+
+
+	// __getpdfform_data -
+	//	Retrieve the form field values from the specified PDF object, specified as XML
+	private function  __get_pdfform_data ( &$fields, $xml )
+	   {
+		$tag_name		=  $xml -> getName ( ) ;
+
+		if  ( isset ( $this -> PdfDefinitions [ $tag_name ] ) )
+			$fields [ $tag_name ]	=  ( string )  $xml ;
+		else
+		   {
+			foreach  ( $xml -> children ( )  as  $child )
+			   {
+				$this -> __get_pdfform_data ( $fields, $child ) ;
+			    }
+		    }
+	    }
+
+
+	// __paranoid_checks -
+	//	Checks for several kinds of inconsistencies in the supplied XML template.
+	private function  __paranoid_checks ( )
+	   {
+		// Check that field names, PDF field names and constant names are unique
+		$names			=  array ( ) ;
+		$pdf_names		=  array ( ) ;
+		$constant_names		=  array ( ) ;
+
+		foreach  ( $this -> FieldDefinitions  as  $def )
+		   {
+			if  ( ! isset ( $this -> PdfDefinitions [ $def -> PdfName ] ) )
+				error ( new PdfToTextFormTemplateException ( "Field \"{$def -> PdfName}\" is not defined in the PDF file." ) ) ;
+
+			if  ( isset ( $names [ $def -> Name ] ) )
+				error ( new PdfToTextFormTemplateException ( "Field \"{$def -> Name}\" is defined more than once." ) ) ;
+
+			$names [ $def -> Name ]		=  true ;
+
+			if  ( isset ( $pdf_names [ $def -> PdfName ] ) )
+				error ( new PdfToTextFormTemplateException ( "PDF Field \"{$def -> PdfName}\" is referenced more than once." ) ) ;
+
+			$pdf_names [ $def -> PdfName ]	=  true ;
+
+			foreach  ( $def -> Constants  as  $constant )
+			   {
+				$constant_name		=  $constant [ 'name' ] ;
+
+				if  ( isset ( $constant_names [ $constant_name ] )  &&  $constant_names [ $constant_name ]  !=  $constant [ 'value' ] )
+					error ( new PdfToTextFormTemplateException ( "Constant \"$constant_name\" is defined more than once with different values." ) ) ;
+
+				$constant_names [ $constant_name ]	=  $constant [ 'value' ] ;
+			    }
+		    }
+
+		// Check that group names are unique and that the fields they are referencing exist
+		$group_names	=  array ( ) ;
+
+		foreach ( $this -> Groups  as  $group )
+		   {
+			if  ( isset ( $group_names [ $group [ 'name' ] ] ) )
+				error ( new PdfToTextFormTemplateException ( "Group \"{$group [ 'name' ]}\" is defined more than once." ) ) ;
+
+			if  ( isset ( $names [ $group [ 'name' ] ] ) )
+				error ( new PdfToTextFormTemplateException ( "Group \"{$group [ 'name' ]}\" has the same name as an existing field." ) ) ;
+
+			foreach ( $group [ 'fields' ]  as  $field_name )
+			   {
+				if  ( ! isset ( $names [ $field_name ] ) )
+					error ( new PdfToTextFormTemplateException ( "Field \"$field_name\" of group \"{$group [ 'name' ]}\" does not exist." ) ) ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    ValidatePhpName -
+		Checks that the specified name (declared in the XML template) is a valid PHP name.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  ValidatePhpName ( $name )
+	   {
+		$name	=  trim ( $name ) ;
+
+		if  ( ! preg_match ( '/^ [a-z_][a-z0-9_]* $/ix', $name ) )
+			error ( new PdfToTextFormTemplateException ( "Invalid PHP name \"$name\"." ) ) ;
+
+		return ( $name ) ;
+	    }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextFormFieldDefinition -
+        Contains an XML template form field definition.
+
+  ==============================================================================================================*/
+class  PdfToTextFormFieldDefinition	// extends  Object
+   {
+	// Supported field types
+	const		TYPE_STRING		=  1 ;			// String
+	const		TYPE_CHOICE		=  2 ;			// Choice (must have <constant> subtags)
+
+	// Official name (as it will appear in the class based on the XML template)
+	public		$Name			=  false ;
+	// Field name, as specified in the input PDF file
+	public		$PdfName		=  false ;
+	// Field type
+	public		$Type			=  self::TYPE_STRING ;
+	// Available constant values for this field when the "type" attribute has the value "choice"
+	public		$Constants		=  array ( ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Builds the field definition object.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $field_node ) 
+	   {
+		// Loop through attributes
+		foreach  ( $field_node -> attributes ( )  as  $attribute_name => $attribute_value )
+		   {
+			switch  ( strtolower ( $attribute_name ) )
+			   {
+				// "name" attribute :
+				//	Specifies the field name as it will appear in the output class. Must be a valid PHP name.
+				case	'name' :
+					$this -> Name		=  PdfToTextFormDefinition::ValidatePhpName ( ( string ) $attribute_value ) ;
+					break ;
+
+				// "form-field" attribute :
+				//	Corresponding field name in the input PDF form.
+				case	'form-field' :
+					$this -> PdfName	=  ( string ) $attribute_value ;
+					break ;
+
+				// "type" :
+				//	Field type. Can be either :
+				//	- "string" :
+				//		The field value can be any type of string.
+				//	- "choice" :
+				//		The field value has one of the values defined by the <case> or <default> subtags.
+				case	'type' :
+					switch ( strtolower ( ( string ) $attribute_value ) )
+					   {
+						case	'string' :
+							$this -> Type	=  self::TYPE_STRING ;
+							break ;
+							
+						case	'choice' :
+							$this -> Type	=  self::TYPE_CHOICE ;
+							break ;
+
+						default :
+							error ( new PdfToTextFormTemplateException ( "Invalid value \"$attribute_value\" for the \"$attribute_name\" attribute of the <field> tag." ) ) ;
+					    }
+			    }
+		    }
+
+		// The "name" and "form-field" attributes are mandatory
+		if  ( ! $this -> Name )
+			error ( new PdfToTextFormTemplateException ( "The \"name\" attribute is mandatory for the <field> tag." ) ) ;
+
+		if  ( ! $this -> PdfName )
+			error ( new PdfToTextFormTemplateException ( "The \"form-field\" attribute is mandatory for the <field> tag." ) ) ;
+
+		// For "type=choice" entries, we have to look for <case> or <default> subtags
+		if  ( $this -> Type  ===  self::TYPE_CHOICE )
+		   {
+			foreach  ( $field_node -> children ( )  as  $child )
+			   {
+				$tag_name	=  $child -> getName ( ) ;
+				$lcname		=  strtolower ( $tag_name ) ;
+				$is_default	=  false ;
+
+				switch ( $lcname )
+				   {
+					// Default value to be used when no PDF field value matches the defined constants
+					case	'default' :
+						$is_default		=  true ;
+
+					// "case" attribute :
+					//	Maps a value to  constant name that will be defined in the generated class.
+					case	'case' :
+						$constant_value		=  "" ;
+						$constant_name		=  false ;
+
+						// Retrieve attributes
+						foreach  ( $child -> attributes ( )  as  $attribute_name => $attribute_value )
+						   {
+							switch  ( strtolower ( $attribute_name ) )
+							   {
+								// "value" attribute :
+								//	PDF form field value.
+								case	'value'	:
+									$constant_value		=  ( string ) $attribute_value ;
+									break ;
+
+								// "constant" attribute :
+								//	Associated constant.
+								case	'constant' :
+									$constant_name		=  PdfToTextFormDefinition::ValidatePhpName ( ( string ) $attribute_value ) ;
+									break ;
+
+								// Bail out if any unrecognized attribute has been specified
+								default :
+									error ( new PdfToTextFormTemplateException ( "Invalid tag <$tag_name> in <field> definition." ) ) ;
+							    }
+						    }
+
+						// Each <case> entry must have a "constant" attribute
+						if  ( $constant_value  ===  false  &&  ! $is_default )
+							error ( new PdfToTextFormTemplateException ( "Missing constant value in <case> tag." ) ) ;
+
+						if  ( $constant_name  ===  false )
+							error ( new PdfToTextFormTemplateException ( "Attribute \"constant-name\" is required for <$tag_name> tag." ) ) ;
+
+						// Add this to the list of existing constants
+						$this -> Constants []	=  array
+						   (
+							'name'		=>  $constant_name,
+							'value'		=>  $constant_value,
+							'default'	=>  $is_default
+						    ) ;
+
+						break ;
+
+					// Check for unrecognized tags
+					default :
+						error ( new PdfToTextFormTemplateException ( "Invalid tag <$tag_name> in <field> definition." ) ) ;
+				    }
+			    }
+		    }
+	    }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextFormData -
+        Base class for all Pdf form templates data.
+
+  ==============================================================================================================*/
+class  PdfToTextFormData		// extends  Object 
+   {
+	// Doc comments provide information about form data fields (mainly to handle grouped field values)
+	// The $__Properties array gives information about the form data fields themselves
+	private		$__Properties	=  array ( ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Retrieve information about the derived class properties, which are specified by the derived class
+		generated on the fly.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( )
+	   {
+		// Get class properties
+		$reflection	=  new \ReflectionClass ( $this ) ;
+		$properties	=  $reflection -> getProperties ( ) ;
+		
+		// Loop through class properties
+		foreach  ( $properties  as  $property )
+		   {
+			$propname	=  $property -> getName ( ) ;
+			$doc_comment	=  $property -> getDocComment ( ) ;
+
+			$fields		=  false ;
+			$separator	=  false ;
+
+			// A doc comment may indicate either :
+			// - A form data field (@formdata)
+			// - A grouped field ; in this case, we will have the following tags :
+			//	. @formdata
+			//	. @group(field_list) : list of fields grouped for this property
+			//	. @separator(string) : a separator used when catenating grouped fields
+			if  ( $doc_comment ) 
+			   {
+				// The @formdata tag must be present
+				if  ( strpos ( $doc_comment, '@formdata' )  ===  false )
+					continue ;
+
+				// @group(fields) pattern
+				if  ( preg_match ( '/group \s* \( \s* (?P<fields> [^)]+) \)/imsx', $doc_comment, $match ) )
+				   {
+					$items	=  explode ( ',', $match [ 'fields' ] ) ;
+					$fields =  array ( ) ;
+
+					foreach  ( $items  as  $item )
+						$fields	[]	=  $item ;
+				    }
+
+				// @separator(string) pattern
+				if  ( preg_match ( '/separator \s* \( \s* (?P<separator> ( (\\\)) | (.) )+  \) /imsx', $doc_comment, $match ) )
+				   {
+					$separator	=  stripslashes ( $match [ 'separator' ]) ;
+				    }
+			     }
+			// Ignore non-formdata properties
+			else 
+				continue ;
+
+			// Property belongs to the form - add it to the list of available properties
+			$this -> __Properties [ $propname ]	=  array
+			   (
+				'name'		=>  $propname,
+				'fields'	=>  $fields,
+				'separator'	=>  $separator
+			    ) ;
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    __get -
+		Returns the underlying property value for this PDF data field.
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __get ( $member )
+	   {
+		if  ( ! isset ( $this -> __Properties [ $member ] ) )
+			warning ( new PdfToTextFormTemplateException ( "Undefined property \"$member\"." ) ) ;
+
+		return ( $this -> $member ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    __set -
+		Sets the underlying property value for this PDF data field.
+		When the property is a compound one, sets individual members as well.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __set  ( $member, $value )
+	   {
+		// Property exists : some special processing will be needed
+		if  ( isset ( $this -> __Properties [ $member ] ) )
+		   {
+			$prop_entry	=  $this -> __Properties [ $member ] ;
+
+			// Non-compound property
+			if  ( ! $prop_entry [ 'fields' ] )
+			   {
+				$this -> $member	=  $value ;
+
+				// However, we have to check that this property belongs to a compound property and change
+				// the compound property valu accordingly
+				foreach  ( $this -> __Properties  as  $name => $property )
+				   {
+					if  ( $property [ 'fields' ] )
+					   {
+						if  ( in_array ( $member, $property [ 'fields' ] ) )
+						   {
+							$values		=  array ( ) ;
+
+							foreach  ( $property [ 'fields' ]  as  $value )
+								$values	[]	=  $this -> $value ;
+
+							// Change compound property value accordingly, using the specified separator
+							$this -> $name	=  implode ( $property [ 'separator' ], $values ) ;
+						    }
+					    }
+				    }
+			    }
+			// Compound property : we will have to explode it in separate parts, using the compound property separator,
+			// then set individual property values
+			else
+			   {
+				$values		=  explode ( $prop_entry [ 'separator' ], $value ) ;
+				$value_count	=  count ( $values ) ;
+				$field_count	=  count ( $prop_entry [ 'fields' ] ) ;
+
+				if  ( $value_count  <  $field_count )
+					error ( new PdfToTextFormTemplateException ( "Not enough value parts specified for the \"$member\" property ($value)." ) ) ;
+				else if  ( $value_count  >  $field_count )
+					error ( new PdfToTextFormTemplateException ( "Too much value parts specified for the \"$member\" property ($value)." ) ) ;
+
+				$this -> $member	=  $value ;
+
+				for  ( $i = 0 ; $i  <  $value_count ; $i ++ )
+				   {
+					$sub_member		=  $prop_entry [ 'fields' ] [$i] ;
+					$this -> $sub_member	=  $values [$i] ;
+				    }
+			    }
+		    }
+		// Property does not exist : let PHP act as the default way
+		else
+			$this -> $member	=  $value ;
+	    }
+    }
