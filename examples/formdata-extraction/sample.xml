@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+
+<forms class="W9">
+	<form version="Form W-9 (Rev. December 2014)">
+		<field name="Name"				form-field="f1_1"	type="string"/>
+		<field name="BusinessName"			form-field="f1_2"	type="string"/>
+		<field name="FederalTaxClassification"		form-field="c1_1"	type="choice">
+			<case value="1"		constant="TAXCLASS_INDIVIDUAL"/>
+			<case value="2"		constant="TAXCLASS_C_CORPORATION"/>
+			<case value="3"		constant="TAXCLASS_S_CORPORATION"/>
+			<case value="4"		constant="TAXCLASS_PARTNERSHIP"/>
+			<case value="5"		constant="TAXCLASS_TRUST_ESTATE"/>
+			<case value="6"		constant="TAXCLASS_LIMITED_LIABILITY_COMPANY"/>
+			<default		constant="TAXCLASS_UNDEFINED"/>
+		</field>
+		<field name="LLCClassification"			form-field="f1_3"	type="string"/>
+		<field name="OtherFederalTaxClassification"	form-field="c1_7"	type="choice">
+			<case value="7"		constant="TAXCLASS_OTHER"/>
+			<default		constant="TAXCLASS_UNDEFINED"/>
+		</field>		
+		<field name="OtherFederalTaxInfo"		form-field="f1_4"	type="string"/>
+		<field name="ExemptPayeeCode"			form-field="f1_5"	type="string"/>
+		<field name="FATCAExemptionCode"		form-field="f1_6"	type="string"/>
+		<field name="Address"				form-field="f1_7"	type="string"/>
+		<field name="City"				form-field="f1_8"	type="string"/>
+		<field name="RequesterCoordinates"		form-field="f1_9"	type="string"/>
+		<field name="AccountNumbers"			form-field="f1_10"	type="string"/>
+
+		<field name="SSN_1"				form-field="f1_11"	type="string"/>
+		<field name="SSN_2"				form-field="f1_12"	type="string"/>
+		<field name="SSN_3"				form-field="f1_13"	type="string"/>
+
+		<field name="EIN_1"				form-field="f1_14"	type="string"/>
+		<field name="EIN_2"				form-field="f1_15"	type="string"/>
+
+		<group name="SSN" separator="-" fields="SSN_1, SSN_2, SSN_3"/>
+		<group name="EIN" separator="-" fields="EIN_1, EIN_2"/>
+	</form>
+</forms>
