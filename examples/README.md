@@ -1,4 +1,4 @@
-All the examples under this directory have 4 files :
+Almost all the examples under this directory have 4 files :
 
 - **sample.pdf** : A sample pdf file whose text contents are to be extracted
 - **sample.txt** : The original text contents for *sample.pdf*. All the *sample.txt* files have been generated using the following process :
