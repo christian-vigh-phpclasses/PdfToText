@@ -66,9 +66,9 @@ $map	=  array
 		60 => 'Y',
 		61 => 'Z',
 		62 => '[',
-		63 => self::UNKNOWN_CID,
+		63 => '\\',
 		64 => ']',
-		65 => self::UNKNOWN_CID,
+		65 => '^',
 		66 => '_',
 		67 => '`',
 		68 => 'a',
@@ -269,7 +269,7 @@ $map	=  array
 			124 => self::UNKNOWN_CID,
 			125 => self::UNKNOWN_CID,
 			126 => self::UNKNOWN_CID,
-			127 => self::UNKNOWN_CID,
+			127 => self::UNKNOWN_CID
 		    ),
 		1	=> array 
 		   (
