@@ -57,6 +57,14 @@ This is why the **PdfToText** class tracks the following information from the dr
 
 These symptoms will not appear if the *PDFOPT\_BASIC\_LAYOUT* option is specified.
 
+# ADVANCED FEATURES #
+
+The class is able to :
+
+- Render basic page layout (ie, the text is drawn in the same order that Acrobat Reader renders it) using the *PDFOPT\_BASIC\_LAYOUT* option.
+- Retrieve form data as a standalone object, using the *GetFormData()* method.
+- *(coming soon)* Capture areas of text within a page
+
 # KNOWN ISSUES #
 
 Here is a list about known issues for the **PdfToText** class ;  I'm working on solving them, so I hope this whole paragraph will soon completely disappear !
@@ -146,6 +154,21 @@ Given a byte offset in the Text property, returns its page number in the pdf doc
 
 Page numbers start from 1.
 
+### GetFormData ###
+
+	$object 	=  $pdf -> GetFormData ( $template_xml, $index = 0 ) ;
+
+Retrieves the form data for the specified top-level form index. Data is returned as an object inheriting from class **PdfToTextFormData**, which provides ony helper functions to its derived classes. 
+
+Data retrieval can be based on a template XML file, or, when the *$template\_xml* parameter is null, a default template will be created using the field names defined in the PDF file.
+
+See the *Form templates* later in this file to get more information on how templates are used and how form data objects are built. 
+
+### HasFormData ###
+
+	$status 	=  $df -> HasFormData ( ) ;
+
+Returns true if the PDF file contains form data.
 
 ### text\_strpos, text\_stripos ###
 
@@ -407,6 +430,10 @@ Note that image data will be extracted only if the PDFOPT\_GET\_IMAGE\_DATA is e
 
 This property is set to *true* if the Pdf file is encrypted through some kind of password protection scheme.
 
+### Keywords ###
+
+Keywords, as recorded in the author information part.
+
 ### MaxExecutionTime ###
 
 Specifies a maximum execution time in seconds for processing a single file. If this limit is reached, a **PdfToTextTimeoutException** exception will be thrown before PHP terminates the script. This allows the script to gracefully handle the error instead of PHP itself.
@@ -498,6 +525,7 @@ will be rendered as :
 
 - *PDFOPT\_ENFORCE\_EXECUTION\_TIME* : when specified, the **MaxExecutionTime** property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process a single file may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
+- *PDFOPT\_DEBUG\_SHOW\_COORDINATES* : Shows the graphics coordinates before each part of text in the output. This option is useful if you want to define capture areas.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### Pages ###
@@ -517,6 +545,10 @@ Application used to generate the PDF file contents.
 A string to be used for separating blocks when a negative offset less than -1000 thousands of characters is specified between two sequences of characters specified as an array notation. This trick is often used when a pdf file contains tabular data.
 
 The default value is a space.
+
+### Subject ###
+
+Subject written in the author information part.
 
 ### Statistics ###
 
@@ -627,3 +659,237 @@ This exception is thrown only if one of the following conditions occur :
 
 - The *PDFOPT\_ENFORCE\_EXECUTION\_TIME* option has been set, and processing one file took more time than the number of seconds computed from	the **$MaxExecutionTime** property
 - The *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* option has been set, and processing all the files your script had to process took more than the number of seconds computed from the **$MaxGlobalExecutionTime** static property
+
+### PdfToTextFormTemplateException ###
+
+Thrown when an error is detected while parsing a template file for retrieving form data, or when retrieving form data.
+
+# Form data extraction #
+
+Extracting form data is fairly simple : use the *GetFormData()* method and it will return you an object containing all the field values contained in your PDF file, whether they have been filled or not.
+
+You have two ways to retrieve form data :
+
+- Either by supplying an XML template, that maps actual form field names to more readable names. It provides additional features such as the ability of grouping field values together
+- Or by relying on the default behavior, which will return the form field names as they are defined in the PDF file.
+
+Both methods return a new object inheriting from the **PdfToTextFormData** class, which mainly contain helper functions that have no interest for the caller.
+
+The derived class returned by the *GetFormData()* method has a set of properties that give you access to the form fields contents.
+
+The examples given in the following sections are based on the file "sample.pdf", located in the examples directory "examples/formdata-extraction". It has been taken from a very common form used in the US, located here :
+
+[ https://www.irs.gov/pub/irs-pdf/fw9.pdf]( https://www.irs.gov/pub/irs-pdf/fw9.pdf " https://www.irs.gov/pub/irs-pdf/fw9.pdf")
+
+## Getting form data without a template ##
+
+Gettig form data without a template is very simply ; just execute the following code :
+
+	$pdf 		=  new PdfToText ( 'sample.pdf' ) ;
+	$form_data	=  $pdf -> GetFormData ( null ) ;
+
+Of course, we should have checked first that form data is present in the PDF file by calling :
+
+	if  ( $pdf -> HasFormData ( ) )
+		$form_data	=  $pdf -> GetFormData ( null ) ;
+
+The object returned in *$form\_data* has the following definition :
+
+	$form_data = (object) PdfFormData
+	   {
+	        protected            $f1_1                            = (string[6]) "ZZNAME"
+	        protected            $f1_2                            = (string[14]) "ZZBUSINESSNAME"
+	        protected            $c1_1                            = (string[1]) "6"
+	        protected            $f1_3                            = (string[1]) "C"
+	        protected            $c1_7                            = (string[1]) "7"
+	        protected            $f1_4                            = (string[7]) "ZZOTHER"
+	        protected            $f1_5                            = (string[4]) "EX01"
+	        protected            $f1_6                            = (string[4]) "EX02"
+	        protected            $f1_7                            = (string[9]) "ZZADDRESS"
+	        protected            $f1_8                            = (string[6]) "ZZCITY"
+	        protected            $f1_9                            = (string[28]) "ZZREQUESTERNAME\naddress\ncity"
+	        protected            $f1_10                           = (string[16]) "ZZACCOUNTNUMBERS"
+	        protected            $f1_11                           = (string[3]) "123"
+	        protected            $f1_12                           = (string[2]) "45"
+	        protected            $f1_13                           = (string[4]) "6789"
+	        protected            $f1_14                           = (string[2]) "EI"
+	        protected            $f1_15                           = (string[5]) "ZZEMP"
+	    }
+
+You can open file *sample.pdf* to verify that the data listed above is conformant to the one contained in the PDF file.
+
+However, you will see that the field names are not very explicit : *$f1\_1*, *$f1\_2*, etc. Moreover, information such as social security number is splitted in three parts :  *$f1\_11*, *$f1\_12* and *$f1\_13*.
+
+This is why you may want to spend some time designing a template XML file that maps PDF field names to human-readable ones...
+
+## Getting form data with a template ##
+
+Using an XML template does not require many changes to your existing code ; you just need to supply the path of your XML template when calling the *GetFormData()* method :
+
+	$pdf 		=  new PdfToText ( 'sample.pdf' ) ;
+	$form_data	=  $pdf -> GetFormData ( 'sample.xml' ) ;
+ 
+Using the supplied example, your *$form\_data* object will look like this :
+
+	$form_data = (object) W9
+	   {
+	        const  TAXCLASS_INDIVIDUAL                 =  1 ;
+	        const  TAXCLASS_C_CORPORATION              =  2 ;
+	        const  TAXCLASS_S_CORPORATION              =  3 ;
+	        const  TAXCLASS_PARTNERSHIP                =  4 ;
+	        const  TAXCLASS_TRUST_ESTATE               =  5 ;
+	        const  TAXCLASS_LIMITED_LIABILITY_COMPANY  =  6 ;
+	        const  TAXCLASS_UNDEFINED                  = ""  ;
+	        const  TAXCLASS_OTHER                      =  7 ;
+	
+	        protected            $Name                            = (string[6]) "ZZNAME"
+	        protected            $BusinessName                    = (string[14]) "ZZBUSINESSNAME"
+	        protected            $FederalTaxClassification        = (string[1]) "6"
+	        protected            $LLCClassification               = (string[1]) "C"
+	        protected            $OtherFederalTaxClassification   = (string[1]) "7"
+	        protected            $OtherFederalTaxInfo             = (string[7]) "ZZOTHER"
+	        protected            $ExemptPayeeCode                 = (string[4]) "EX01"
+	        protected            $FATCAExemptionCode              = (string[4]) "EX02"
+	        protected            $Address                         = (string[9]) "ZZADDRESS"
+	        protected            $City                            = (string[6]) "ZZCITY"
+	        protected            $RequesterCoordinates            = (string[28]) "ZZREQUESTERNAME\naddress\ncity"
+	        protected            $AccountNumbers                  = (string[16]) "ZZACCOUNTNUMBERS"
+	        protected            $SSN_1                           = (string[3]) "123"
+	        protected            $SSN_2                           = (string[2]) "45"
+	        protected            $SSN_3                           = (string[4]) "6789"
+	        protected            $EIN_1                           = (string[2]) "EI"
+	        protected            $EIN_2                           = (string[5]) "ZZEMP"
+	        protected            $SSN                             = (string[11]) "123-45-6789"
+	        protected            $EIN                             = (string[8]) "EI-ZZEMP"
+	    }
+	
+You can notice some important differences with the templateless version :
+
+- The class name is **W9** instead of **PdfFormData** ; this information comes from the template file
+- Constants have been defined ; they also come from the template file 
+- Form fields have an explicit name, such as *BusinessName* (instead of *f1\2) or *ExemptPayeeCode* (instead of *f1\5)
+- Two new properties have appeared : *SSN* and *EIN*. In the original form, the social security number is divided into three parts : *f1\_11*, *f1\_12* and *f1\_13*. These fields have been renamed to *SSN\_1*, *SSN\_2* and *SSN\_3* respectively, by the template XML file. But it also defined *SSN* and *EIN*, which are *grouped* properties. *SSN* has been defined to be the concatenation of the *SSN\_1*, *SSN\_2* and *SSN\_3* properties, and *EIN* the concatenation of the *EIN\_1* and *EIN\_2* properties.
+
+All of the above have been defined in the template file, and the parent class, *PdfToTextFormData*, is able to handle any modifications made to any of the properties involved in a grouped property. For example, if you modify the *SSN\_1* property, then the *SSN* property will be rebuilt accordingly. Similarly, if you modify the *SSN* property, then the *SSN\_1*, *SSN\_2* and *SSN\_3* properties will be changed accordingly.
+
+This internal work is performed by the **PdfFormData**, from which any class returned by the *GetFormData() method inherits.
+
+Now, this is time to have a look at what is a template. This is described in the next section.
+
+## A typical form template ##
+
+Here is the typical form that has been designed to extract form data from our sample PDF file :
+
+	<?xml version="1.0" encoding="utf-8" ?>
+	
+	<forms class="W9">
+		<form version="Form W-9 (Rev. December 2014)">
+			<field name="Name"							form-field="f1_1"	type="string"/>
+			<field name="BusinessName"					form-field="f1_2"	type="string"/>
+			<field name="FederalTaxClassification"		form-field="c1_1"	type="choice">
+				<case value="1"		constant="TAXCLASS_INDIVIDUAL"/>
+				<case value="2"		constant="TAXCLASS_C_CORPORATION"/>
+				<case value="3"		constant="TAXCLASS_S_CORPORATION"/>
+				<case value="4"		constant="TAXCLASS_PARTNERSHIP"/>
+				<case value="5"		constant="TAXCLASS_TRUST_ESTATE"/>
+				<case value="6"		constant="TAXCLASS_LIMITED_LIABILITY_COMPANY"/>
+				<default			constant="TAXCLASS_UNDEFINED"/>
+			</field>
+			<field name="LLCClassification"				form-field="f1_3"	type="string"/>
+			<field name="OtherFederalTaxClassification"	form-field="c1_7"	type="choice">
+				<case value="7"		constant="TAXCLASS_OTHER"/>
+				<default			constant="TAXCLASS_UNDEFINED"/>
+			</field>		
+			<field name="OtherFederalTaxInfo"			form-field="f1_4"	type="string"/>
+			<field name="ExemptPayeeCode"				form-field="f1_5"	type="string"/>
+			<field name="FATCAExemptionCode"			form-field="f1_6"	type="string"/>
+			<field name="Address"						form-field="f1_7"	type="string"/>
+			<field name="City"							form-field="f1_8"	type="string"/>
+			<field name="RequesterCoordinates"			form-field="f1_9"	type="string"/>
+			<field name="AccountNumbers"				form-field="f1_10"	type="string"/>
+	
+			<field name="SSN_1"							form-field="f1_11"	type="string"/>
+			<field name="SSN_2"							form-field="f1_12"	type="string"/>
+			<field name="SSN_3"							form-field="f1_13"	type="string"/>
+	
+			<field name="EIN_1"							form-field="f1_14"	type="string"/>
+			<field name="EIN_2"							form-field="f1_15"	type="string"/>
+	
+			<group name="SSN" separator="-" fields="SSN_1, SSN_2, SSN_3"/>
+			<group name="EIN" separator="-" fields="EIN_1, EIN_2"/>
+		</form>
+	</forms>
+
+The root tag is specified by *&lt;forms&gt;*. Subtags are *&lt;form&gt;* definitions.
+
+Currently, the following are implemented :
+
+- The *class* attribute of the *&lt;forms&gt;* tag gives the name of the class (inheriting from **PdfToTextFormData**) that will be returned by the *GetFormData()* method, for all the child *&lt;form&gt;* entries.
+- Each *&lt;form&gt;* entry has a *version* attribute ; this will be used in the future to handle different versions of the same PDF form.
+
+Please note that the above information could be subject to changes in future releases.
+
+### Defining fields ###
+
+Form fields can currently be of three types :
+
+- String fields
+- Choice fields. This is typically used for radiobutton-like checkboxes, which represent a unique field that can have different value, depending on what is checked. Choice fields allow you to associate constants to each individual value.
+- Grouped fields. Grouped fields are *virtual* fields that are the result of the concatenation of several existing fields.
+
+A (somewhat) tedious way to get the knowledge of which PDF form field contains which data is :
+
+- Open your PDF form. Fill the values. You may have to test individual values when you are faced with checkboxes (in our above example, properties *FederalTaxClassification* and *OtherFederalTaxClassifications* appear like checkboxes, whose values range from 1 to 7 ; however they have been separated into two fields)
+- Make a print_r() of the value returned by the *GetFormData()* method, without specifying any template
+- The above steps should help you recognize which field contains what, and design your template accordingly
+
+#### String fields ####
+
+String fields within a form are basically specified with the following XML **field** construct :
+
+		<field name="SSN_1"	form-field="f1_11"	type="string"/>
+
+The attributes are the following :
+
+- **name** : Property name, as it will be present in the class returned by the *GetFormData()* method.
+- **form-field** : corresponding name in the PDF form definition. 
+- **type** : *string*
+
+#### Choice fields ####
+
+Choice fields are typically used for a group of checkboxes that behave like radiobuttons :
+
+			<field name="FederalTaxClassification"		form-field="c1_1"	type="choice">
+				<case value="1"		constant="TAXCLASS_INDIVIDUAL"/>
+				<case value="2"		constant="TAXCLASS_C_CORPORATION"/>
+				<case value="3"		constant="TAXCLASS_S_CORPORATION"/>
+				<case value="4"		constant="TAXCLASS_PARTNERSHIP"/>
+				<case value="5"		constant="TAXCLASS_TRUST_ESTATE"/>
+				<case value="6"		constant="TAXCLASS_LIMITED_LIABILITY_COMPANY"/>
+				<default			constant="TAXCLASS_UNDEFINED"/>
+			</field>
+
+They basically contain the same information as *string* fields, except that the *type* attribute is set to **choice**.
+
+They can be paired to a set of constants defined either through the *&lt;case&gt;* or *&lt;default&gt;* tags :
+
+- *&lt;case&gt;* tags allow you to associate a named constant with a specific value
+- *&lt;default&gt;* allow you to associate a named constant when none of the *&lt;case&gt;* tags defined matches the form value.
+
+Note that each defined constant, such as *TAXCLASS\_INDIVIDUAL* in the above example, will be defined as a class constant in the object returned by the *GetFormData()* method.
+
+#### Grouped fields ####
+
+Grouped fields allow you to create new properties, coming from the concatenation of existing fields. A typical definition looks like this :
+
+		<group name="SSN" separator="-" fields="SSN_1, SSN_2, SSN_3"/>
+
+In our template example, we have seen that the social security number (SSN) was splitted into three parts : *SSN\_1*, *SSN\_2* and *SSN\_3*. The above example creates an *SSN* property, which is the result of the concatenation of the specified fields.
+
+The required attributes are the following :
+
+- *name* : Name of the grouped property
+- *fields* : A comma-separated list of existing field names that should be grouped together
+- *separator* : Separator string used to separate each component of the grouped field.
+
+Note that modifying the value of a property referenced by a grouped field will modify the corresponding grouped field value. Similarly, modifying the grouped field value will modify its associated properties.

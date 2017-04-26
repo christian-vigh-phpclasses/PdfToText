@@ -24,7 +24,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Rafael Rojas Torres, who gave me the idea of handling password-protected pdf files. Although not yet implemented, this definitely is on my roadmap.
 - Rolf Kellner , who had issues with unicode translations on far-east and middle-east languages. I have not yet solved them, but I'm still working on it !
 - Yuri Kadeev, who had issues with data presented in tabular format. I won't be able to solve all of them, but it helped me a lot to solve issues presented by other users.
-- Steve Majors, from CashFlowProducts.com, who gave me several samples to work on and even provided me with an access to his bug-tracking system
+- Steve Majors, from CashFlowProducts.com, who gave me several samples to work on and even provided me with an access to his bug-tracking system. He also gave me the idea to implement PDF form data extraction.
 - Antonio Jùnior, who gave me a sample using text images encoded in a format I did not handle yet ; still under work...
 - Tom Perro and the user named *srizoophari*, because they gave me the idea of implementing some features which allow for searching text page by page (and handle page contents separately, instead of a single block of text)
 - Shishant Todi, who gave me pdf samples built in a very strange way. I'm still working on them !
@@ -47,6 +47,8 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Thomas Bourgeois, who sent me a very comprehensive set of small PDF samples showing issues, some of them were existing for long
 - Rob Webster, who sent me my first sample using the LZW compression algorithm
 - Darren Jett for his support in helping me to start implementing page layout rendering
+- Manuel Osuna, who gave me the idea of defining text capture areas inside a PDF file
+- Luis Manuel Reyes, who submitted me samples that helped me improve text layout rendering
 - And much more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !

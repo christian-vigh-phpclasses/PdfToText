@@ -1,3 +1,29 @@
+    [Version : 1.5.7]	[Date : 2017/04/26]     [Author : CV]
+	. Added the possibility to extract form data :
+	  - Added the HasFormData(), GetFormCount() and GetFormData() methods
+	  - Data extraction based on XML form templates, which maps form fields to human-readable ones
+	  - Form data is returned as an object inherited from the PdfToTextFormData class
+	. Added the PDFOPT_DEBUG_SHOW_COORDINATES option, which shows coordinates of every text block in the 
+	  output text. This option has been designed for the future feature to be implemented, that will allow
+	  to capture text areas.
+	. Added the Subject and Keywords properties regarding author information
+	. Changed the text/document_strxpos() methods to use the mb_strxpos() functions instead of strxpos().
+	  The supplied searched string must be encoded in UTF-8.
+	. Added the PdfToTextBase::GetStringParameter() method, which is able to retrieve parameter values such
+	  as :
+		/FlagName (parameter value)
+	  and :
+		/FlagName <parameter value as hexdigits>
+
+    [Version : 1.5.6]	[Date : 2017/04/21]     [Author : CV]
+	. Added font metrics information for the Adobe Standard 14 fonts, which are hardcoded (in new directory
+	  FontMetrics). This includes Times, Helvetica and Courier with their variations (bold, italic, etc.)
+	  along with the Symbol and ZapDingbats fonts. Currently, font information relates to individual 
+	  character widths, which are used for page layout rendering.
+	. Enhanced layout rendering, which was giving strange results due to improper handling of certain
+	  positioning instructions.
+	. Complemented the $UnicodeToSimpleAscii table to include special hyphens
+
     [Version : 1.5.5]	[Date : 2017/04/20]     [Author : CV]
 	. Added the $UnicodeToSimpleAscii table, which maps Unicode characters which can have an ASCII
 	  equivalent. For example, German "fi" with ligature (U+FB01) becomes ASCII string "fi" ; special
