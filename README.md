@@ -154,6 +154,12 @@ Given a byte offset in the Text property, returns its page number in the pdf doc
 
 Page numbers start from 1.
 
+### GetFormCount ###
+
+	$count 		=  $pdf -> GetFormCount ( ) ;
+
+Returns the actual number of top-level forms defined in the PDF file.
+
 ### GetFormData ###
 
 	$object 	=  $pdf -> GetFormData ( $template_xml, $index = 0 ) ;
@@ -767,12 +773,12 @@ You can notice some important differences with the templateless version :
 
 - The class name is **W9** instead of **PdfFormData** ; this information comes from the template file
 - Constants have been defined ; they also come from the template file 
-- Form fields have an explicit name, such as *BusinessName* (instead of *f1\2) or *ExemptPayeeCode* (instead of *f1\5)
+- Form fields have an explicit name, such as *BusinessName* (instead of *f1\_2*) or *ExemptPayeeCode* (instead of *f1\_5*)
 - Two new properties have appeared : *SSN* and *EIN*. In the original form, the social security number is divided into three parts : *f1\_11*, *f1\_12* and *f1\_13*. These fields have been renamed to *SSN\_1*, *SSN\_2* and *SSN\_3* respectively, by the template XML file. But it also defined *SSN* and *EIN*, which are *grouped* properties. *SSN* has been defined to be the concatenation of the *SSN\_1*, *SSN\_2* and *SSN\_3* properties, and *EIN* the concatenation of the *EIN\_1* and *EIN\_2* properties.
 
 All of the above have been defined in the template file, and the parent class, *PdfToTextFormData*, is able to handle any modifications made to any of the properties involved in a grouped property. For example, if you modify the *SSN\_1* property, then the *SSN* property will be rebuilt accordingly. Similarly, if you modify the *SSN* property, then the *SSN\_1*, *SSN\_2* and *SSN\_3* properties will be changed accordingly.
 
-This internal work is performed by the **PdfFormData**, from which any class returned by the *GetFormData() method inherits.
+This internal work is performed by the **PdfToTextFormData**, from which any class returned by the *GetFormData()* method inherits.
 
 Now, this is time to have a look at what is a template. This is described in the next section.
 
