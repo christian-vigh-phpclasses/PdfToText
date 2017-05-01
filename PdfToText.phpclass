@@ -24,22 +24,8 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.7]	[Date : 2017/04/26]     [Author : CV]
-	. Added the possibility to extract form data :
-	  - Added the HasFormData(), GetFormCount() and GetFormData() methods
-	  - Data extraction based on XML form templates, which maps form fields to human-readable ones
-	  - Form data is returned as an object inherited from the PdfToTextFormData class
-	. Added the PDFOPT_DEBUG_SHOW_COORDINATES option, which shows coordinates of every text block in the 
-	  output text. This option has been designed for the future feature to be implemented, that will allow
-	  to capture text areas.
-	. Added the Subject and Keywords properties regarding author information
-	. Changed the text/document_strxpos() methods to use the mb_strxpos() functions instead of strxpos().
-	  The supplied searched string must be encoded in UTF-8.
-	. Added the PdfToTextBase::GetStringParameter() method, which is able to retrieve parameter values such
-	  as :
-		/FlagName (parameter value)
-	  and :
-		/FlagName <parameter value as hexdigits>
+    [Version : 1.5.8]	[Date : 2017/05/01]     [Author : CV]
+	. Added undocumented aliases for stream encoding (for example, /Fl stands for /FlateDecode).
 	
     (...)
 
@@ -132,6 +118,21 @@ class  PdfToTextFormTemplateException		extends  PdfToTextException
 	public function  __construct ( $message )
 	   {
 		$text	=  "Pdf form template error" ;
+
+		$text	.=  " : $message" ;
+
+		parent::__construct ( $text ) ;
+	    }
+    }
+
+
+// PdfToTextCaptureTemplateException -
+//	Thrown if the xml template passed to the SetCaptures() method contains an error.
+class  PdfToTextCaptureTemplateException		extends  PdfToTextException 
+   { 
+	public function  __construct ( $message )
+	   {
+		$text	=  "Pdf capture template error" ;
 
 		$text	.=  " : $message" ;
 
@@ -467,24 +468,38 @@ abstract class  PdfObjectBase		// extends  Object
 	 *-------------------------------------------------------------------------------------------------------------*/
 	protected function  GetEncodingType ( $object_id, $object_data )
 	   {
-		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (ASCII85Decode) | (FlateDecode) | (DCTDecode) | ' .
-						                   '(LZWDecode) | (RunLengthDecode) | (CCITTFaxDecode) | (JBIG2Decode) | (JPXDecode) ) #imsx', $object_data, $match ) ;
+		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (AHx) | (ASCII85Decode) | (A85) | (FlateDecode) | (Fl) | (DCTDecode) | (DCT) | ' .
+						                   '(LZWDecode) | (LZW) | (RunLengthDecode) | (RL) | (CCITTFaxDecode) | (CCF) | (JBIG2Decode) | (JPXDecode) ) #imsx', 
+						$object_data, $match ) ;
 
 		if  ( ! $status )
 			return ( self::PDF_TEXT_ENCODING ) ;
 
 		switch ( strtolower ( $match [ 'encoding' ] ) )
 		    {
-		    	case 	'asciihexdecode' 	:  return ( self::PDF_ASCIIHEX_ENCODING  ) ;
-		    	case 	'ascii85decode' 	:  return ( self::PDF_ASCII85_ENCODING   ) ;
-		    	case	'flatedecode'		:  return ( self::PDF_FLATE_ENCODING     ) ;
-			case    'dctdecode'		:  return ( self::PDF_DCT_ENCODING       ) ;
-			case	'lzwdecode'		:  return ( self::PDF_LZW_ENCODING       ) ; 
+		    	case 	'asciihexdecode' 	:  
+			case	'ahx'			:  return ( self::PDF_ASCIIHEX_ENCODING  ) ;
 
-			case	'ccittfaxdecode'	:  // return ( self::PDF_CCITT_FAX_ENCODING ) ;
+		    	case 	'ascii85decode' 	:  
+			case	'a85'			:  return ( self::PDF_ASCII85_ENCODING   ) ;
 
-			case	'runlengthdecode'	: 
+		    	case	'flatedecode'		:  
+			case	'fl'			:  return ( self::PDF_FLATE_ENCODING     ) ;
+
+			case    'dctdecode'		:  
+			case	'dct'			:  return ( self::PDF_DCT_ENCODING       ) ;
+
+			case	'lzwdecode'		:  
+			case	'lzw'			:  return ( self::PDF_LZW_ENCODING       ) ; 
+
+			case	'ccittfaxdecode'	: 
+			case	'ccf'			:
+
+			case	'runlengthdecode'	:
+			case	'rl'			:
+
 			case	'jbig2decode'		: 
+
 			case	'jpxdecode'		:
 				if  ( PdfToText::$DEBUG  >  1 )
 					warning ( "Encoding type \"{$match [ 'encoding' ]}\" not yet implemented for pdf object #$object_id." ) ;
@@ -970,6 +985,23 @@ abstract class  PdfObjectBase		// extends  Object
 
 		return ( $data ) ;
 	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    ValidatePhpName -
+		Checks that the specified name (declared in the XML template) is a valid PHP name.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  ValidatePhpName ( $name )
+	   {
+		$name	=  trim ( $name ) ;
+
+		if  ( ! preg_match ( '/^ [a-z_][a-z0-9_]* $/ix', $name ) )
+			error ( new PdfToTextFormTemplateException ( "Invalid PHP name \"$name\"." ) ) ;
+
+		return ( $name ) ;
+	    }
     }
 
 
@@ -982,7 +1014,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.7" ;
+	const		VERSION					=  "1.5.8" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1139,11 +1171,18 @@ class  PdfToText 	extends PdfObjectBase
 	// A flag coming from the constructor options, telling if enhanced statistics are enabled
 	protected		$EnhancedStatistics ;
 
+	// Document text fragments, with their absolute (x,y) position, approximate width and height
+	protected		$DocumentFragments ;
+
 	// Form data 
 	protected		$FormData ;
 	protected		$FormDataObjectNumbers ;
 	protected		$FormDataDefinitions ;
 	protected		$FormaDataObjects ;
+
+	// Capture data
+	protected		$CaptureDefinitions ;
+	protected		$CaptureObject ;
 
 	// Indicates whether global static initializations have been made
 	// This is mainly used for variables such as $Utf8PlaceHolder, which is initialized to a different value
@@ -1558,6 +1597,9 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> FormDataObjectNumbers		=  false ;
 		$this -> FomDataDefinitions		=  array ( ) ;
 		$this -> FormDataObjects		=  array ( ) ;
+		$this -> CaptureDefinitions		=  false ;
+		$this -> CaptureObject			=  false ; 
+		$this -> DocumentFragments		=  array ( ) ;
 
 		// Enable the PDFOPT_BASIC_LAYOUT_OPTION is PDFOPT_DEBUG_SHOW_COORDINATES is specified
 		if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
@@ -1911,8 +1953,6 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> FontTable -> AddPageFontMap ( $mapped_fonts ) ;
 
 		// Extract text from the collected text elements
-		$document_fragments	=  array ( ) ;
-
 		foreach ( $this -> PageMap -> Pages as  $page_number => $page_objects )
 		   {
 			// Checks if this page is selected
@@ -1951,8 +1991,9 @@ class  PdfToText 	extends PdfObjectBase
 						echo "\n----------------------------------- MISSING OBJECT #$page_object for page #$page_number\n" ;
 				    }
 
-				$this -> Pages [ $page_number ]		=  $this -> __assemble_text_fragments ( $page_number, $page_fragments, $page_width, $page_height ) ;
-				$document_fragments [ $page_number ]	=  array 
+				$this -> Pages [ $page_number ]			=  $this -> __assemble_text_fragments ( $page_number, $page_fragments, $page_width, $page_height ) ;
+
+				$this -> DocumentFragments [ $page_number ]	=  array 
 				   (
 					'fragments'		=>  $page_fragments,
 					'page-width'		=>  $page_width,
@@ -2365,6 +2406,68 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        SetCaptures, SetCapturesFromString - Defines document parts to be captured.
+	
+	    PROTOTYPE
+	        $pdf -> SetCaptures ( $xml_file ) ;
+		$pdf -> SetCapturesFromString ( $xml_data ) ;
+	
+	    DESCRIPTION
+	        Defines document parts to be captured.
+		SetCaptures() takes the definitions for the areas to be captured from an XML file, while
+		SetCapturesFromString() takes them from a string representing xml capture definitions.
+	
+	    NOTES
+	        - See file README.md for an explanation on the format of the XML capture definition file.
+		- The SetCaptures() methods must be called before the Load() method.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SetCaptures ( $xml_file )
+	   {
+		if  ( ! file_exists ( $xml_file ) )
+			error ( new PdfToTextException ( "File \"$xml_file\" does not exist." ) ) ;
+
+		$xml_data	=  file_get_contents ( $xml_file ) ;
+
+		$this -> SetCapturesFromString ( $xml_data )  ;
+
+	    }
+
+
+	public function  SetCapturesFromString ( $xml_data )
+	   {
+		// Setting capture areas implies having the PDFOPT_BASIC_LAYOUT option
+		$this -> Options	|=  self::PDFOPT_BASIC_LAYOUT ;
+
+		$this -> CaptureDefinitions		=  new PdfToTextCaptureDefinitions ( $xml_data ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetCaptures - Returns captured data.
+	
+	    PROTOTYPE
+	        $object		=  $pdf -> GetCaptures ( ) ;
+	
+	    DESCRIPTION
+	        Returns the object that contains captured data.
+	
+	    RETURN VALUE
+	        An object of type PdfToTextCaptures, or false if an error occurred.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetCaptures ( )
+	   {
+		if  ( ! $this -> CaptureObject )
+			$this -> CaptureObject	=  $this -> CaptureDefinitions -> GetObject ( $this -> DocumentFragments ) ;
+
+		return ( $this -> CaptureObject ) ;
+	    }
 
 
 	/**************************************************************************************************************
@@ -9862,7 +9965,7 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
 
   ==============================================================================================================*/
 class  PdftoTextFormDefinitions		// extends		Object
-					implements	\ArrayAccess, \Countable, \IteratorAggregate
+					implements	ArrayAccess, Countable, IteratorAggregate
    {
 	static private	$ClassDefinitionCount	=  0 ;
 
@@ -10020,7 +10123,7 @@ class  PdftoTextFormDefinitions		// extends		Object
 
 
 	public function  getIterator ( )
-	   { return ( new \ArrayIterator ( $this -> Definitions ) ) ; }
+	   { return ( new ArrayIterator ( $this -> Definitions ) ) ; }
 
 
 	public function  offsetExists ( $offset )
@@ -10120,7 +10223,7 @@ class  PdfToTextFormDefinition		// extends  Object
 							// "name" attribute" :
 							//	The name of the property, as it will appear in the output object.
 							case	'name' :
-								$name		=  self::ValidatePhpName ( ( string ) $attribute_value ) ;
+								$name		=  PdfToTextObjectBase::ValidatePhpName ( ( string ) $attribute_value ) ;
 								break ;
 
 							// "separator" attribute :
@@ -10139,7 +10242,7 @@ class  PdfToTextFormDefinition		// extends  Object
 									error ( new PdfToTextFormTemplateException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
 
 								foreach  ( $items  as  $item )
-									$fields []	=  self::ValidatePhpName ( $item ) ;
+									$fields []	=  PdfToTextObjectBase::ValidatePhpName ( $item ) ;
 
 								break ;
 
@@ -10394,7 +10497,7 @@ class  PdfToTextFormDefinition		// extends  Object
 		class constructor.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  GetFormDataFromPdfObject ( $pdf_data )
+	protected function  GetFormDataFromPdfObject ( $pdf_data )
 	   {
 		// simplexml_ functions do not like tags that contain a colon - replace them with a dash
 		$pdf_data	=  preg_replace ( '/(<[^:]+?)(:)/', '$1-', $pdf_data ) ;
@@ -10482,23 +10585,6 @@ class  PdfToTextFormDefinition		// extends  Object
 					error ( new PdfToTextFormTemplateException ( "Field \"$field_name\" of group \"{$group [ 'name' ]}\" does not exist." ) ) ;
 			    }
 		    }
-	    }
-
-
-	/*--------------------------------------------------------------------------------------------------------------
-	
-	    ValidatePhpName -
-		Checks that the specified name (declared in the XML template) is a valid PHP name.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	public static function  ValidatePhpName ( $name )
-	   {
-		$name	=  trim ( $name ) ;
-
-		if  ( ! preg_match ( '/^ [a-z_][a-z0-9_]* $/ix', $name ) )
-			error ( new PdfToTextFormTemplateException ( "Invalid PHP name \"$name\"." ) ) ;
-
-		return ( $name ) ;
 	    }
     }
 
@@ -10674,7 +10760,7 @@ class  PdfToTextFormData		// extends  Object
 	public function  __construct ( )
 	   {
 		// Get class properties
-		$reflection	=  new \ReflectionClass ( $this ) ;
+		$reflection	=  new ReflectionClass ( $this ) ;
 		$properties	=  $reflection -> getProperties ( ) ;
 		
 		// Loop through class properties
