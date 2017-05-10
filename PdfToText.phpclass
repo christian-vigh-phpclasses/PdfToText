@@ -24,8 +24,16 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.5.8]	[Date : 2017/05/01]     [Author : CV]
-	. Added undocumented aliases for stream encoding (for example, /Fl stands for /FlateDecode).
+    [Version : 1.6.0]	[Date : 2017/05/08]     [Author : CV]
+	. Added the possibility to capture areas of text :
+	  - The SetCaptures() and SetCapturesFromString() methods define the pages and areas of text within the
+	    pages to be captured (see file README.md for more information). It can be used to define rectangle
+	    shapes or line/columns information
+	  - The GetCaptures() method returns an object containing the captured text areas
+	  - Added the PDFOPT_LOOSE_X_CAPTURE and PDFOPT_LOOSE_Y_CAPTURE to include text that might exceed the
+	    captured area, but whose top/left coordinates are included in the captured area.
+	. Complemented the Adobe 4 standard character set encodings, to include Polish characters.
+	. Exported the Adobe standard character sets to external file 'adobe-charsets.map'.
 	
     (...)
 
@@ -44,7 +52,7 @@
 
 // PdfToText exception -
 //	Base class for all other PdfToText exceptions.
-class  PdfToTextException			//extends  Exception 
+class  PdfToTextException			extends  Exception 
    {
 	public static	$IsObject		=  false ;
     } ;
@@ -111,9 +119,9 @@ class  PdfToTextTimeoutException		extends  PdfToTextException
     }
 
 
-// PdfToTextFormTemplateException -
+// PdfToTextFormException -
 //	Thrown if the xml template passed to the GetFormData() method contains an error.
-class  PdfToTextFormTemplateException		extends  PdfToTextException 
+class  PdfToTextFormException		extends  PdfToTextException 
    { 
 	public function  __construct ( $message )
 	   {
@@ -126,9 +134,9 @@ class  PdfToTextFormTemplateException		extends  PdfToTextException
     }
 
 
-// PdfToTextCaptureTemplateException -
+// PdfToTextCaptureException -
 //	Thrown if the xml template passed to the SetCaptures() method contains an error.
-class  PdfToTextCaptureTemplateException		extends  PdfToTextException 
+class  PdfToTextCaptureException		extends  PdfToTextException 
    { 
 	public function  __construct ( $message )
 	   {
@@ -939,6 +947,79 @@ abstract class  PdfObjectBase		// extends  Object
 
 
 	/*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        Unescape - Processes escape sequences from the specified string.
+
+	    PROTOTYPE
+	        $value	=  $this -> Unescape ( $text ) ;
+
+	    DESCRIPTION
+	        Processes escape sequences within the specified text. The recognized escape sequences are like the
+		C-language ones : \b (backspace), \f (form feed), \r (carriage return), \n (newline), \t (tab).
+		All other characters prefixed by "\" are returned as is.
+
+	    PARAMETERS
+	        $text (string) -
+	                Text to be unescaped.
+
+	    RETURN VALUE
+	        Returns the unescaped value of $text.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  Unescape ( $text )
+	   {
+		$length 	=  strlen ( $text ) ;
+		$result 	=  '' ;
+		$ord0		=  ord ( 0 ) ;
+
+		for  ( $i = 0 ; $i  <  $length ; $i ++ )
+		   {
+		   	$ch 	=  $text [$i] ;
+
+			if  ( $ch  ==  '\\'  &&  isset ( $text [$i+1] ) )
+			   {
+				$nch 	=  $text [++$i] ;
+
+				switch  ( $nch )
+				   {
+				   	case 	'b' 	:  $result .=  "\b" ; break ;
+				   	case 	't' 	:  $result .=  "\t" ; break ;
+				   	case 	'f' 	:  $result .=  "\f" ; break ;
+				   	case 	'r' 	:  $result .=  "\r" ; break ;
+				   	case 	'n' 	:  $result .=  "\n" ; break ;
+				   	default 	:  
+						// Octal escape notation 
+						if  ( $nch  >=  '0'  &&  $nch  <=  '7' )
+						   {
+							$ord		=  ord ( $nch ) - $ord0 ;
+							$digits		=  1 ;
+							$i ++ ;
+
+							while  ( $i  <  $length  &&  $digits  <  3  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
+							   {
+								$ord	=  ( $ord * 8 ) + ord ( $text [$i] ) - $ord0 ;
+								$i ++ ;
+								$digits ++ ;
+							    }
+
+							$i -- ;		// Count one character less since $i will be incremented at the end of the for() loop
+
+							$result .= chr ( $ord ) ;
+						    }
+						else
+							$result .=  $nch ;
+				    }
+			    }
+			else
+				$result 	.=  $ch ;
+		    }
+
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
 	        UnescapeHexCharacters - Unescapes characters in the #xy notation.
@@ -998,7 +1079,7 @@ abstract class  PdfObjectBase		// extends  Object
 		$name	=  trim ( $name ) ;
 
 		if  ( ! preg_match ( '/^ [a-z_][a-z0-9_]* $/ix', $name ) )
-			error ( new PdfToTextFormTemplateException ( "Invalid PHP name \"$name\"." ) ) ;
+			error ( new PdfToTextFormException ( "Invalid PHP name \"$name\"." ) ) ;
 
 		return ( $name ) ;
 	    }
@@ -1014,7 +1095,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.5.8" ;
+	const		VERSION					=  "1.6.0" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1041,6 +1122,10 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_DEBUG_SHOW_COORDINATES		=  0x00002000 ;		// Include text coordinates ; implies the PDFOPT_BASIC_LAYOUT option
 											// This option can be useful if you want to use capture areas and get information about
 											// their coordinates
+	const		PDFOPT_CAPTURE				=  0x00004000 ;		// Indicates that the caller wants to capture some text and use the SetCaptures() method
+											// It currently enables the PDFOPT_BASIC_LAYOUT option
+	const		PDFOPT_LOOSE_X_CAPTURE			=  0x00008000 ;		// Includes in captures text fragments whose dimensions may exceed the captured area dimensions
+	const		PDFOPT_LOOSE_Y_CAPTURE			=  0x00010000 ;
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -1181,7 +1266,7 @@ class  PdfToText 	extends PdfObjectBase
 	protected		$FormaDataObjects ;
 
 	// Capture data
-	protected		$CaptureDefinitions ;
+	public			$CaptureDefinitions ;
 	protected		$CaptureObject ;
 
 	// Indicates whether global static initializations have been made
@@ -1600,6 +1685,10 @@ class  PdfToText 	extends PdfObjectBase
 		$this -> CaptureDefinitions		=  false ;
 		$this -> CaptureObject			=  false ; 
 		$this -> DocumentFragments		=  array ( ) ;
+
+		// Enable the PDFOPT_BASIC_LAYOUT option if the PDFOPT_CAPTURE flag is specified
+		if  ( $this -> Options & self::PDFOPT_CAPTURE )
+			$this -> Options	|=  self::PDFOPT_BASIC_LAYOUT ;
 
 		// Enable the PDFOPT_BASIC_LAYOUT_OPTION is PDFOPT_DEBUG_SHOW_COORDINATES is specified
 		if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
@@ -2380,14 +2469,14 @@ class  PdfToText 	extends PdfObjectBase
 			return ( $this -> FormDataObjects [ $form_index ] ) ;
 
 		if  ( $form_index  >  count ( $this -> FormDataObjectNumbers ) )
-			error ( new PdfToTextFormTemplateException ( "Invalid form index #$form_index." ) ) ;
+			error ( new PdfToTextFormException ( "Invalid form index #$form_index." ) ) ;
 
 		$form_data	=  $this -> FormData [ $this -> FormDataObjectNumbers [ $form_index ] ] ;
 
 		if  ( $template )
 		   {
 			if  ( ! file_exists ( $template ) )
-				error ( new PdfToTextFormTemplateException ( "Form data template file \"$template\" not found." ) ) ;
+				error ( new PdfToTextFormException ( "Form data template file \"$template\" not found." ) ) ;
 
 			$xml_data	=  file_get_contents ( $template ) ;  
 			$definitions	=  new PdfToTextFormDefinitions ( $xml_data, $form_data [ 'form' ] ) ; ;
@@ -2464,7 +2553,10 @@ class  PdfToText 	extends PdfObjectBase
 	public function  GetCaptures ( )
 	   {
 		if  ( ! $this -> CaptureObject )
-			$this -> CaptureObject	=  $this -> CaptureDefinitions -> GetObject ( $this -> DocumentFragments ) ;
+		   {
+			$this -> CaptureDefinitions -> SetPageCount ( count ( $this -> Pages ) ) ;
+			$this -> CaptureObject	=  $this -> CaptureDefinitions -> GetCapturedObject ( $this -> DocumentFragments ) ;
+		    }
 
 		return ( $this -> CaptureObject ) ;
 	    }
@@ -3545,7 +3637,7 @@ class  PdfToText 	extends PdfObjectBase
 							// Characters are plain text
 			   			   	else
 							   {
-								$text	=  $this -> Unescape ( $text ) ;
+								$text	=  self::Unescape ( $text ) ;
 
 								for  ( $i = 1, $length = strlen ( $text ) - 1 ; $i  <  $length ; $i ++ )
 								   {
@@ -4188,6 +4280,9 @@ class  PdfToText 	extends PdfObjectBase
 		// Whether we should compute enhanced statistics
 		$enhanced_statistics		=  $this -> EnhancedStatistics ;
 
+		// Whether we should show debug coordinates
+		$show_debug_coordinates		=  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES ) ;
+
 		// Text leading value set by the TL instruction
 		$text_leading			=  0.0 ;
 
@@ -4389,8 +4484,7 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( $text  !==  '' )
 				   {
-					$r	=  $this -> __matrix_multiply ( $Tm, $CTM, $page_attributes [ 'width' ], $page_attributes [ 'height' ] ) ;
-
+					$r		=  $this -> __matrix_multiply ( $Tm, $CTM, $page_attributes [ 'width' ], $page_attributes [ 'height' ] ) ;
 					$fragment	=  array
 					   (
 						'x'		=>  ( $r [4]  <  0 ) ?  0.0 : $r [4],
@@ -5000,7 +5094,7 @@ class  PdfToText 	extends PdfObjectBase
 				// Characters are plain text
 				else
 				   {
-					$text	=  $this -> Unescape ( $text ) ;
+					$text	=  self::Unescape ( $text ) ;
 
 					for  ( $i = 1, $length = strlen ( $text ) - 1 ; $i  <  $length ; $i ++ )
 					   {
@@ -5208,8 +5302,8 @@ class  PdfToText 	extends PdfObjectBase
 	//	Returns the coordinates of the specified text fragment, in debug mode.
 	private function  __debug_get_coordinates ( $fragment )
 	   {
-		return ( "\n[x:" . round ( $fragment [ 'x' ], 0 ) . ', y:' . round ( $fragment [ 'y' ], 0 ) . 
-			 ", w: " . round ( $fragment [ 'width' ], 0 ) . ", h:" . round ( $fragment [ 'font-height' ], 0 ) . "]" ) ;
+		return ( "\n[x:" . round ( $fragment [ 'x' ], 3 ) . ', y:' . round ( $fragment [ 'y' ], 3 ) . 
+			 ", w: " . round ( $fragment [ 'width' ], 3 ) . ", h:" . round ( $fragment [ 'font-height' ], 3 ) . "]" ) ;
 	    }
  
 
@@ -5459,7 +5553,7 @@ class  PdfToText 	extends PdfObjectBase
 	   {
 		if  ( $char_offset  <=  - $this -> MinSpaceWidth )
 		   {
-			if  ( $this -> Options  &&  self::PDFOPT_REPEAT_SEPARATOR )
+			if  ( $this -> Options & self::PDFOPT_REPEAT_SEPARATOR )
 			   {
 				// If the MinSpaceWidth property is less than 1000 (text units), consider it has the value 1000
 				// so that an exuberant number of spaces will not be repeated
@@ -5475,7 +5569,7 @@ class  PdfToText 	extends PdfObjectBase
 			else 
 				$padding	=  $this -> Separator ;
 
-			return ( utf8_encode ( $this -> Unescape ( $padding ) ) ) ;
+			return ( utf8_encode ( self::Unescape ( $padding ) ) ) ;
 		    }
 		else
 			return ( '' ) ;
@@ -6084,77 +6178,6 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
-	/*--------------------------------------------------------------------------------------------------------------
-
-	    NAME
-	        Unescape - Processes escape sequences from the specified string.
-
-	    PROTOTYPE
-	        $value	=  $this -> Unescape ( $text ) ;
-
-	    DESCRIPTION
-	        Processes escape sequences within the specified text. The recognized escape sequences are like the
-		C-language ones : \b (backspace), \f (form feed), \r (carriage return), \n (newline), \t (tab).
-		All other characters prefixed by "\" are returned as is.
-
-	    PARAMETERS
-	        $text (string) -
-	                Text to be unescaped.
-
-	    RETURN VALUE
-	        Returns the unescaped value of $text.
-
-	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  Unescape ( $text )
-	   {
-		$length 	=  strlen ( $text ) ;
-		$result 	=  '' ;
-		$ord0		=  ord ( 0 ) ;
-
-		for  ( $i = 0 ; $i  <  $length ; $i ++ )
-		   {
-		   	$ch 	=  $text [$i] ;
-
-			if  ( $ch  ==  '\\'  &&  isset ( $text [$i+1] ) )
-			   {
-				$nch 	=  $text [++$i] ;
-
-				switch  ( $nch )
-				   {
-				   	case 	'b' 	:  $result .=  "\b" ; break ;
-				   	case 	't' 	:  $result .=  "\t" ; break ;
-				   	case 	'f' 	:  $result .=  "\f" ; break ;
-				   	case 	'r' 	:  $result .=  "\r" ; break ;
-				   	case 	'n' 	:  $result .=  "\n" ; break ;
-				   	default 	:  
-						// Octal escape notation 
-						if  ( $nch  >=  '0'  &&  $nch  <=  '7' )
-						   {
-							$ord		=  ord ( $nch ) - $ord0 ;
-							$digits		=  1 ;
-							$i ++ ;
-
-							while  ( $i  <  $length  &&  $digits  <  3  &&  $text [$i]  >=  '0'  &&  $text [$i]  <=  '7' )
-							   {
-								$ord	=  ( $ord * 8 ) + ord ( $text [$i] ) - $ord0 ;
-								$i ++ ;
-								$digits ++ ;
-							    }
-
-							$i -- ;		// Count one character less since $i will be incremented at the end of the for() loop
-
-							$result .= chr ( $ord ) ;
-						    }
-						else
-							$result .=  $nch ;
-				    }
-			    }
-			else
-				$result 	.=  $ch ;
-		    }
-
-		return ( $result ) ;
-	    }
     }
 
 
@@ -6254,7 +6277,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			$font_type	=  PdfTexterFont::FONT_ENCODING_PDF_MAP ;
 		    }
 		// Font uses the Windows Ansi encoding
-		else if  ( preg_match ( '#/Encoding \s* /WinAnsiEncoding#ix', $font_definition ) )
+		else if  ( preg_match ( '#/(Base)?Encoding \s* /WinAnsiEncoding#ix', $font_definition ) )
 		   {
 			$font_type	=  PdfTexterFont::FONT_ENCODING_WINANSI ;
 
@@ -6262,10 +6285,10 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$font_type	|=  PdfTexterFont::FONT_VARIANT_ISO8859_5 ;
 		    }
 		// Font uses the Mac Roman encoding
-		else if  ( preg_match ( '#/Encoding \s* /MacRomanEncoding#ix', $font_definition ) )
+		else if  ( preg_match ( '#/(Base)?Encoding \s* /MacRomanEncoding#ix', $font_definition ) )
 			$font_type	=  PdfTexterFont::FONT_ENCODING_MAC_ROMAN ;
 		// Experimental implementation of CID fonts
-		else if  ( preg_match ( '#/Encoding \s* /Identity-H#ix', $font_definition ) )
+		else if  ( preg_match ( '#/(Base)?Encoding \s* /Identity-H#ix', $font_definition ) )
 		   {
 			// A really experimental way of detecting eastern europe languages...
 			if  ( stripos ( $font_definition, '/ABCDEE+' )  !==  false )
@@ -7127,253 +7150,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 	// Correspondance between an encoding name and its corresponding character in the
 	// following format : Standard, Mac, Windows, Pdf
-	private static 		$Encodings 	=  array
-	   (
-		'A'			=>  array ( 0101, 0101, 0101, 0101 ),
-	   	'AE'			=>  array ( 0341, 0256, 0306, 0306 ),
-	   	'Aacute'		=>  array (    0, 0347, 0301, 0301 ),
-	   	'Acircumflex'		=>  array (    0, 0345, 0302, 0302 ),
-		'Adieresis'		=>  array (    0, 0200, 0304, 0304 ),
-		'Agrave'		=>  array (    0, 0313, 0300, 0300 ),
-		'Aring'			=>  array (    0, 0201, 0305, 0305 ),
-		'Atilde'		=>  array (    0, 0314, 0303, 0303 ),
-		'B'			=>  array ( 0102, 0102, 0102, 0102 ),
-	   	'C' 			=>  array ( 0103, 0103, 0103, 0103 ),
-		'Ccedilla'		=>  array (    0, 0202, 0307, 0307 ),
-		'D'			=>  array ( 0104, 0104, 0104, 0104 ),
-	   	'E' 			=>  array ( 0105, 0105, 0105, 0105 ),
-		'Eacute'		=>  array (    0, 0203, 0311, 0311 ),
-		'Ecircumflex'		=>  array (    0, 0346, 0312, 0312 ),
-		'Edieresis'		=>  array (    0, 0350, 0313, 0313 ),
-		'Egrave'		=>  array (    0, 0351, 0310, 0310 ),
-		'Eth' 			=>  array (    0,    0, 0320, 0320 ),
-		'Euro'			=>  array (    0,    0, 0200, 0240 ),
-		'F'			=>  array ( 0106, 0106, 0106, 0106 ),
-		'G'			=>  array ( 0107, 0107, 0107, 0107 ),
-		'H'			=>  array ( 0110, 0110, 0110, 0110 ),
-		'I'			=>  array ( 0111, 0111, 0111, 0111 ),
-	   	'Iacute'		=>  array (    0, 0352, 0315, 0315 ),
-	   	'Icircumflex'		=>  array (    0, 0353, 0316, 0316 ),
-		'Idieresis'		=>  array (    0, 0354, 0317, 0317 ),
-		'Igrave'		=>  array (    0, 0355, 0314, 0314 ),
-		'J'			=>  array ( 0112, 0112, 0112, 0112 ),
-		'K'			=>  array ( 0113, 0113, 0113, 0113 ),
-		'L'			=>  array ( 0114, 0114, 0114, 0114 ),
-		'Lslash'		=>  array ( 0350,    0,    0, 0225 ),
-		'M'			=>  array ( 0115, 0115, 0115, 0115 ),
-		'N'			=>  array ( 0116, 0116, 0116, 0116 ),
-		'Ntilde'		=>  array (    0, 0204, 0321, 0321 ),
-	   	'O'			=>  array ( 0117, 0117, 0117, 0117 ),
-		'OE' 			=>  array ( 0352, 0316, 0214, 0226 ),
-		'Oacute' 		=>  array (    0, 0356, 0323, 0323 ),
-		'Ocircumflex'		=>  array (    0, 0357, 0324, 0324 ),
-		'Odieresis'		=>  array (    0, 0205, 0326, 0326 ),
-		'Ograve'		=>  array (    0, 0361, 0322, 0322 ),
-		'Oslash' 		=>  array ( 0351, 0257, 0330, 0330 ),
-		'Otilde' 		=>  array (    0, 0315, 0325, 0325 ),
-	   	'P'			=>  array ( 0120, 0120, 0120, 0120 ),
-	   	'Q'			=>  array ( 0121, 0121, 0121, 0121 ),
-	   	'R'			=>  array ( 0122, 0122, 0122, 0122 ),
-	   	'S'			=>  array ( 0123, 0123, 0123, 0123 ),
-		'Scaron'		=>  array (    0,    0, 0212, 0227 ),
-		'T'			=>  array ( 0124, 0124, 0124, 0124 ),
-		'Thorn'			=>  array (    0,    0, 0336, 0336 ),
-		'U'			=>  array ( 0125, 0125, 0125, 0125 ),
-		'Uacute'		=>  array (    0, 0362, 0332, 0332 ),
-		'Ucircumflex'		=>  array (    0, 0363, 0333, 0333 ),
-		'Udieresis'		=>  array (    0, 0206, 0334, 0334 ),
-		'Ugrave'		=>  array (    0, 0364, 0331, 0331 ),
-		'V'			=>  array ( 0126, 0126, 0126, 0126 ),
-		'W'			=>  array ( 0127, 0127, 0127, 0127 ),
-		'X'			=>  array ( 0130, 0130, 0130, 0130 ),
-		'Y'			=>  array ( 0131, 0131, 0131, 0131 ),
-		'Yacute'		=>  array (    0,    0, 0335, 0335 ),
-		'Ydieresis'		=>  array (    0, 0331, 0237, 0230 ),
-		'Z'			=>  array ( 0132, 0132, 0132, 0132 ),
-	   	'Zcaron'		=>  array (    0,    0, 0216, 0231 ),
-		'a' 			=>  array ( 0141, 0141, 0141, 0141 ),
-		'aacute'		=>  array (    0, 0207, 0341, 0341 ),
-		'acircumflex'		=>  array (    0, 0211, 0342, 0342 ),
-		'acute'			=>  array ( 0302, 0253, 0264, 0264 ),
-		'adieresis'		=>  array (    0, 0212, 0344, 0344 ),
-		'ae'			=>  array ( 0361, 0276, 0346, 0346 ),
-		'agrave' 		=>  array (    0, 0210, 0340, 0340 ),
-		'ampersand' 		=>  array ( 0046, 0046, 0046, 0046 ),
-		'aring' 		=>  array (    0, 0214, 0345, 0345 ),
-		'asciicircum' 		=>  array ( 0136, 0136, 0136, 0136 ),
-		'asciitilde'		=>  array ( 0176, 0176, 0176, 0176 ),
-		'asterisk' 		=>  array ( 0052, 0052, 0052, 0052 ),
-		'at'			=>  array ( 0100, 0100, 0100, 0100 ),
-		'atilde'		=>  array (    0, 0213, 0343, 0343 ),
-		'b' 			=>  array ( 0142, 0142, 0142, 0142 ),
-		'backslash' 		=>  array ( 0134, 0134, 0134, 0134 ),
-		'bar' 			=>  array ( 0174, 0174, 0174, 0174 ),
-		'braceleft'		=>  array ( 0173, 0173, 0173, 0173 ),
-		'braceright' 		=>  array ( 0175, 0175, 0175, 0175 ),
-		'bracketleft' 		=>  array ( 0133, 0133, 0133, 0133 ),
-		'bracketright' 		=>  array ( 0135, 0135, 0135, 0135 ),
-		'breve'			=>  array ( 0306, 0371,    0, 0030 ),
-		'brokenbar' 		=>  array (    0,    0, 0246, 0246 ),
-		'bullet' 		=>  array ( 0267, 0245, 0225, 0200 ),
-		'c'			=>  array ( 0143, 0143, 0143, 0143 ),
-		'caron'			=>  array ( 0317, 0377,    0, 0031 ),
-		'ccedilla'		=>  array (    0, 0215, 0347, 0347 ),
-		'cedilla'		=>  array ( 0313, 0374, 0270, 0270 ),
-		'cent' 			=>  array ( 0242, 0242, 0242, 0242 ),
-		'circumflex' 		=>  array ( 0303, 0366, 0210, 0032 ),
-		'colon' 		=>  array ( 0072, 0072, 0072, 0072 ),
-		'comma'			=>  array ( 0054, 0054, 0054, 0054 ),
-		'copyright'		=>  array (    0, 0251, 0251, 0251 ),
-		'currency'		=>  array ( 0250, 0333, 0244, 0244 ),
-		'd'			=>  array ( 0144, 0144, 0144, 0144 ),
-		'dagger' 		=>  array ( 0262, 0240, 0206, 0201 ),
-		'daggerdbl' 		=>  array ( 0263, 0340, 0207, 0202 ),
-		'degree' 		=>  array (    0, 0241, 0260, 0260 ),
-		'dieresis'		=>  array ( 0310, 0254, 0250, 0250 ),
-		'divide' 		=>  array (    0, 0326, 0367, 0367 ),
-		'dollar' 		=>  array ( 0044, 0044, 0044, 0044 ),
-		'dotaccent' 		=>  array ( 0307, 0372,    0, 0033 ),
-		'dotlessi'		=>  array ( 0365, 0365, 0x131, 0232 ),
-		'e' 			=>  array ( 0145, 0145, 0145, 0145 ),
-		'eacute'		=>  array (    0, 0216, 0351, 0351 ),
-		'ecircumflex'		=>  array (    0, 0220, 0352, 0352 ),
-		'edieresis' 		=>  array (    0, 0221, 0353, 0353 ),
-		'egrave'		=>  array (    0, 0217, 0350, 0350 ),
-		'eight' 		=>  array ( 0070, 0070, 0070, 0070 ),
-		'ellipsis' 		=>  array ( 0274, 0311, 0205, 0203 ),
-		'emdash' 		=>  array ( 0320, 0321, 0227, 0204 ),
-		'endash' 		=>  array ( 0261, 0320, 0226, 0205 ),
-		'equal' 		=>  array ( 0075, 0075, 0075, 0075 ),
-		'eth'			=>  array (    0,    0, 0360, 0360 ),
-		'exclam' 		=>  array ( 0041, 0041, 0041, 0041 ),
-		'exclamdown' 		=>  array ( 0241, 0301, 0241, 0241 ),
-		'f' 			=>  array ( 0146, 0146, 0146, 0146 ),
-		'fi' 			=>  array ( 0256, 0336, 0xFB01, 0223 ),
-		'five' 			=>  array ( 0065, 0065, 0065, 0065 ),
-		'fl' 			=>  array ( 0257, 0337, 0xFB02, 0224 ),
-		'florin' 		=>  array ( 0246, 0304, 0203, 0206 ),
-		'four'			=>  array ( 0064, 0064, 0064, 0064 ),
-		'fraction'		=>  array ( 0244, 0332,    0, 0207 ),
-		'g' 			=>  array ( 0147, 0147, 0147, 0147 ),
-		'germandbls'		=>  array ( 0373, 0247, 0337, 0337 ),
-		'grave' 		=>  array ( 0301, 0140, 0140, 0140 ),
-		'greater' 		=>  array ( 0076, 0076, 0076, 0076 ),
-		'guillemotleft'		=>  array ( 0253, 0307, 0253, 0253 ),
-		'guillemotright' 	=>  array ( 0273, 0310, 0273, 0273 ),
-		'guilsinglleft'		=>  array ( 0254, 0334, 0213, 0210 ),
-		'guilsinglright'	=>  array ( 0255, 0335, 0233, 0211 ),
-		'h'			=>  array ( 0150, 0150, 0150, 0150 ),
-		'hungarumlaut'		=>  array ( 0315, 0375,    0, 0034 ),
-		'hyphen' 		=>  array ( 0055, 0055, 0055, 0055 ),
-		'i' 			=>  array ( 0151, 0151, 0151, 0151 ),
-		'iacute'		=>  array (    0, 0222, 0355, 0355 ),
-		'icircumflex' 		=>  array (    0, 0224, 0356, 0356 ),
-		'idieresis'		=>  array (    0, 0225, 0357, 0357 ),
-		'igrave' 		=>  array (    0, 0223, 0354, 0354 ),
-		'j' 			=>  array ( 0152, 0152, 0152, 0152 ),
-		'k' 			=>  array ( 0153, 0153, 0153, 0153 ),
-		'l' 			=>  array ( 0154, 0154, 0154, 0154 ),
-		'less'			=>  array ( 0074, 0074, 0074, 0074 ),
-		'logicalnot' 		=>  array (    0, 0302, 0254, 0254 ),
-		'lslash'		=>  array ( 0370,    0,    0, 0233 ),
-		'm'			=>  array ( 0155, 0155, 0155, 0155 ),
-		'macron'		=>  array ( 0305, 0370, 0257, 0257 ),
-		'minus' 		=>  array (    0,    0,    0, 0212 ),
-		'mu' 			=>  array (    0, 0265, 0265, 0265 ),
-		'multiply'		=>  array (    0,    0, 0327, 0327 ),
-		'n' 			=>  array ( 0156, 0156, 0156, 0156 ),
-		'nine' 			=>  array ( 0071, 0071, 0071, 0071 ),
-		'ntilde' 		=>  array (    0, 0226, 0361, 0361 ),
-		'numbersign' 		=>  array ( 0043, 0043, 0043, 0043 ),
-		'o'			=>  array ( 0157, 0157, 0157, 0157 ),
-		'oacute' 		=>  array (    0, 0227, 0363, 0363 ),
-		'ocircumflex' 		=>  array (    0, 0231, 0364, 0364 ),
-		'odieresis'		=>  array (    0, 0232, 0366, 0366 ),
-		'oe' 			=>  array ( 0372, 0317, 0234, 0234 ),
-		'ogonek' 		=>  array ( 0316, 0376,    0, 0035 ),
-		'ograve'		=>  array (    0, 0230, 0362, 0362 ),
-		'one' 			=>  array ( 0061, 0061, 0061, 0061 ),
-		'onehalf' 		=>  array (    0,    0, 0275, 0275 ),
-		'onequarter' 		=>  array (    0,    0, 0274, 0274 ),
-		'onesuperior'		=>  array (    0,    0, 0271, 0271 ),
-		'ordfeminine' 		=>  array ( 0343, 0273, 0252, 0252 ),
-		'ordmasculine' 		=>  array ( 0353, 0274, 0272, 0272 ),
-		'oslash'		=>  array ( 0371, 0277, 0370, 0370 ),
-		'otilde' 		=>  array (    0, 0233, 0365, 0365 ),
-		'p'			=>  array ( 0160, 0160, 0160, 0160 ),
-		'paragraph' 		=>  array ( 0266, 0246, 0266, 0266 ),
-		'parenleft' 		=>  array ( 0050, 0050, 0050, 0050 ),
-		'parenright'		=>  array ( 0051, 0051, 0051, 0051 ),
-		'percent' 		=>  array ( 0045, 0045, 0045, 0045 ),
-		'period' 		=>  array ( 0056, 0056, 0056, 0056 ),
-		'periodcentered'	=>  array ( 0264, 0341, 0267, 0267 ),
-		'perthousand' 		=>  array ( 0275, 0344, 0211, 0213 ),
-		'plus' 			=>  array ( 0053, 0053, 0053, 0053 ),
-		'plusminus' 		=>  array (    0, 0261, 0261, 0261 ),
-		'q' 			=>  array ( 0161, 0161, 0161, 0161 ),
-		'question' 		=>  array ( 0077, 0077, 0077, 0077 ),
-		'questiondown' 		=>  array ( 0277, 0300, 0277, 0277 ),
-		'quotedbl' 		=>  array ( 0042, 0042, 0042, 0042 ),
-		'quotedblbase' 		=>  array ( 0271, 0343, 0204, 0214 ),
-		'quotedblleft'		=>  array ( 0252, 0322, 0223, 0215 ),
-		'quotedblright'		=>  array ( 0272, 0323, 0224, 0216 ),
-		'quoteleft' 		=>  array ( 0140, 0324, 0221, 0217 ),
-		'quoteright'		=>  array ( 0047, 0325, 0222, 0220 ),
-		'quotesinglbase'	=>  array ( 0270, 0342, 0202, 0221 ),
-		'quotesingle'		=>  array ( 0251, 0047, 0047, 0047 ),
-		'r'			=>  array ( 0162, 0162, 0162, 0162 ),
-		'registered' 		=>  array (    0, 0250, 0256, 0256 ),
-		'ring' 			=>  array ( 0312, 0373,    0, 0036 ),
-		's'			=>  array ( 0163, 0163, 0163, 0163 ),
-		'scaron'		=>  array (    0,    0, 0232, 0235 ),
-		'section'		=>  array ( 0247, 0244, 0247, 0247 ),
-		'semicolon' 		=>  array ( 0073, 0073, 0073, 0073 ),
-		'seven' 		=>  array ( 0067, 0067, 0067, 0067 ),
-		'six' 			=>  array ( 0066, 0066, 0066, 0066 ),
-		'slash' 		=>  array ( 0057, 0057, 0057, 0057 ),
-		'space' 		=>  array ( 0040, 0040, 0040, 0040 ),
-		'sterling'		=>  array ( 0243, 0243, 0243, 0243 ),
-		't'			=>  array ( 0164, 0164, 0164, 0164 ),
-		'thorn' 		=>  array (    0,    0, 0376, 0376 ),
-		'three'			=>  array ( 0063, 0063, 0063, 0063 ),
-		'threequarters'		=>  array (    0,    0, 0276, 0276 ),
-		'threesuperior' 	=>  array (    0,    0, 0263, 0263 ),
-		'tilde'			=>  array ( 0304, 0367, 0230, 0037 ),
-		'trademark' 		=>  array (    0, 0252, 0231, 0222 ),
-		'two' 			=>  array ( 0062, 0062, 0062, 0062 ),
-		'twosuperior'		=>  array (    0,    0, 0262, 0262 ),
-		'u' 			=>  array ( 0165, 0165, 0165, 0165 ),
-		'uacute'		=>  array (    0, 0234, 0372, 0372 ),
-		'ucircumflex' 		=>  array (    0, 0236, 0373, 0373 ),
-		'udieresis'		=>  array (    0, 0237, 0374, 0374 ),
-		'ugrave' 		=>  array (    0, 0235, 0371, 0371 ),
-		'underscore' 		=>  array ( 0137, 0137, 0137, 0137 ),
-		'v' 			=>  array ( 0166, 0166, 0166, 0166 ),
-		'w' 			=>  array ( 0167, 0167, 0167, 0167 ),
-		'x' 			=>  array ( 0170, 0170, 0170, 0170 ),
-		'y' 			=>  array ( 0171, 0171, 0171, 0171 ),
-		'yacute' 		=>  array (    0,    0, 0375, 0375 ),
-		'ydieresis' 		=>  array (    0, 0330, 0377, 0377 ),
-		'yen' 			=>  array ( 0245, 0264, 0245, 0245 ),
-		'z'			=>  array ( 0172, 0172, 0172, 0172 ),
-		'zcaron' 		=>  array (    0,    0, 0236, 0236 ),
-		'zero' 			=>  array ( 0060, 0060, 0060, 0060 ),
-
-		// Additions which are not described in the PDF specifications - much more foreign characters are available !
-		// (see https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html)
-		// This table is currently far from being complete
-		'odblacute'		=>  array ( 0x151, 0x151, 0x151, 0x151 ),
-		'udblacute'		=>  array ( 0x171, 0x171, 0x171, 0x171 ),
-		'Odblacute'		=>  array ( 0x150, 0x150, 0x150, 0x150 ),
-		'Udblacute'		=>  array ( 0x170, 0x170, 0x170, 0x170 ),
-
-		// Don't know if these ones are official...
-		'a0'			=>  array ( 0x2D, 0x2D, 0x2D, 0x2D ),			// A long hyphen
-		'a1'			=>  array ( 0x2192, 0x2192, 0x2192, 0x2192 ),		// Right arrow
-		'a2'			=>  array ( 0x2D, 0x2D, 0x2D, 0x2D ),			// Another hyphen, not so long
-	   ) ;
-
-
+	private static 		$Encodings 	=  false ;
 	// Encoding type (one of the PDF_*_ENCODING constants)
 	public 		$Encoding ;
 	// Indicates whether this character map is a secondary one used for Unicode maps ; this must be set at
@@ -7395,6 +7172,15 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	   {
 		parent::__construct ( $object_id ) ;
 
+		// Load the default Adobe character sets, if not already done
+		if  ( self::$Encodings  ===  false )
+		   {
+			$charset_file		=  dirname ( __FILE__ ) . DIRECTORY_SEPARATOR . "adobe-charsets.php" ;
+			require ( $charset_file ) ;
+			self::$Encodings	=  $adobe_charsets ;
+		    }
+
+		// Fonts using default Adobe character sets and hexadecimal representations are one-byte long
 		$this -> HexCharWidth	=  2 ;
 
 		if  ( PdfToText::$DEBUG )
@@ -9934,20 +9720,6 @@ static Guchar rc4DecryptByte(Guchar *state, Guchar *x, Guchar *y, Guchar c) {
  **************************************************************************************************************
  ******                                                                                                  ******
  ******                                                                                                  ******
- ******                                        CAPTURE MANAGEMENT                                        ******
- ******                                                                                                  ******
- ******                                                                                                  ******
- **************************************************************************************************************
- **************************************************************************************************************
- **************************************************************************************************************/
-
-
-
-/**************************************************************************************************************
- **************************************************************************************************************
- **************************************************************************************************************
- ******                                                                                                  ******
- ******                                                                                                  ******
  ******                                       FORM DATA MANAGEMENT                                       ******
  ******                                                                                                  ******
  ******                                                                                                  ******
@@ -9999,7 +9771,7 @@ class  PdftoTextFormDefinitions		// extends		Object
 		$class_name	=  "PdfFormData" ;
 
 		if  ( strcasecmp ( $root_entry, "forms" ) ) 
-			error ( new PdfToTextFormTemplateException ( "Root entry must be <forms>, <$root_entry> was found." ) ) ;
+			error ( new PdfToTextFormException ( "Root entry must be <forms>, <$root_entry> was found." ) ) ;
 
 		// Get the attribute values of the <forms> tag
 		foreach  ( $xml -> attributes ( )  as  $attribute_name => $attribute_value )
@@ -10010,12 +9782,12 @@ class  PdftoTextFormDefinitions		// extends		Object
 					$class_name	=  ( string ) $attribute_value ;
 
 					if  ( class_exists ( $class_name, false ) )
-						error ( new PdfToTextFormTemplateException ( "Class \"$class_name\" specified in XML template already exists." ) ) ;
+						error ( new PdfToTextFormException ( "Class \"$class_name\" specified in XML template already exists." ) ) ;
 
 					break ;
 
 				default :
-					error ( new PdfToTextFormTemplateException ( "Invalid attribute \"$attribute_name\" in <forms> tag." ) ) ;
+					error ( new PdfToTextFormException ( "Invalid attribute \"$attribute_name\" in <forms> tag." ) ) ;
 			    }
 		    }
 
@@ -10038,13 +9810,13 @@ class  PdftoTextFormDefinitions		// extends		Object
 					break ;
 
 				default :
-					error ( new PdfToTextFormTemplateException ( "Invalid tag <$child_name>." ) ) ;
+					error ( new PdfToTextFormException ( "Invalid tag <$child_name>." ) ) ;
 			    }
 		    }
 
 		// Ensure that there is at least one form definition
 		if  ( ! count ( $definitions ) )
-			error ( new PdfToTextFormTemplateException ( "No <form> definition found." ) ) ;
+			error ( new PdfToTextFormException ( "No <form> definition found." ) ) ;
 
 		// Save to properties
 		$this -> ClassName		=  $class_name ;
@@ -10196,7 +9968,7 @@ class  PdfToTextFormDefinition		// extends  Object
 					break ;
 
 				default :
-					error ( new PdfToTextFormTemplateException ( "Invalid attribute \"$attribute_name\" in <form> tag." ) ) ;
+					error ( new PdfToTextFormException ( "Invalid attribute \"$attribute_name\" in <form> tag." ) ) ;
 			    }
 		    }
 
@@ -10239,7 +10011,7 @@ class  PdfToTextFormDefinition		// extends  Object
 								$items		=  explode ( ',', ( string ) $attribute_value ) ;
 
 								if  ( ! count ( $items ) )
-									error ( new PdfToTextFormTemplateException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
+									error ( new PdfToTextFormException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
 
 								foreach  ( $items  as  $item )
 									$fields []	=  PdfToTextObjectBase::ValidatePhpName ( $item ) ;
@@ -10248,17 +10020,17 @@ class  PdfToTextFormDefinition		// extends  Object
 
 							// Other attribute names : not allowed
 							default :
-								error ( new PdfToTextFormTemplateException ( "Invalid attribute \"$attribute_name\" in <group> tag." ) ) ;
+								error ( new PdfToTextFormException ( "Invalid attribute \"$attribute_name\" in <group> tag." ) ) ;
 						    }
 					    }
 
 					// Check that at least one field has been specified
 					if  ( ! count ( $fields ) )
-						error ( new PdfToTextFormTemplateException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
+						error ( new PdfToTextFormException ( "Empty \"fields\" attribute in <group> tag." ) ) ;
 
 					// Check that the mandatory property name has been specified
 					if  ( ! $name )
-						error ( new PdfToTextFormTemplateException ( "The \"name\" attribute is mandatory in <group> tag." ) ) ;
+						error ( new PdfToTextFormException ( "The \"name\" attribute is mandatory in <group> tag." ) ) ;
 
 					// Add this new grouped property to the list of existing groups
 					$this -> Groups []	=  array
@@ -10282,7 +10054,7 @@ class  PdfToTextFormDefinition		// extends  Object
 
 				// Don't allow other attribute names
 				default :
-					error ( new PdfToTextFormTemplateException ( "Invalid tag <$tag_name> in <form> definition." ) ) ;
+					error ( new PdfToTextFormException ( "Invalid tag <$tag_name> in <form> definition." ) ) ;
 			    }
 		    }
 
@@ -10350,7 +10122,7 @@ class  PdfToTextFormDefinition		// extends  Object
 				if  ( isset ( $all_constants [ $name ] ) )
 				   {
 					if  ( $all_constants [ $name ]  !=  $value )
-						error ( new PdfToTextFormTemplateException ( "Constant \"$name\" is defined more than once with different values." ) ) ;
+						error ( new PdfToTextFormException ( "Constant \"$name\" is defined more than once with different values." ) ) ;
 				    }
 				else
 				   {
@@ -10545,15 +10317,15 @@ class  PdfToTextFormDefinition		// extends  Object
 		foreach  ( $this -> FieldDefinitions  as  $def )
 		   {
 			if  ( ! isset ( $this -> PdfDefinitions [ $def -> PdfName ] ) )
-				error ( new PdfToTextFormTemplateException ( "Field \"{$def -> PdfName}\" is not defined in the PDF file." ) ) ;
+				error ( new PdfToTextFormException ( "Field \"{$def -> PdfName}\" is not defined in the PDF file." ) ) ;
 
 			if  ( isset ( $names [ $def -> Name ] ) )
-				error ( new PdfToTextFormTemplateException ( "Field \"{$def -> Name}\" is defined more than once." ) ) ;
+				error ( new PdfToTextFormException ( "Field \"{$def -> Name}\" is defined more than once." ) ) ;
 
 			$names [ $def -> Name ]		=  true ;
 
 			if  ( isset ( $pdf_names [ $def -> PdfName ] ) )
-				error ( new PdfToTextFormTemplateException ( "PDF Field \"{$def -> PdfName}\" is referenced more than once." ) ) ;
+				error ( new PdfToTextFormException ( "PDF Field \"{$def -> PdfName}\" is referenced more than once." ) ) ;
 
 			$pdf_names [ $def -> PdfName ]	=  true ;
 
@@ -10562,7 +10334,7 @@ class  PdfToTextFormDefinition		// extends  Object
 				$constant_name		=  $constant [ 'name' ] ;
 
 				if  ( isset ( $constant_names [ $constant_name ] )  &&  $constant_names [ $constant_name ]  !=  $constant [ 'value' ] )
-					error ( new PdfToTextFormTemplateException ( "Constant \"$constant_name\" is defined more than once with different values." ) ) ;
+					error ( new PdfToTextFormException ( "Constant \"$constant_name\" is defined more than once with different values." ) ) ;
 
 				$constant_names [ $constant_name ]	=  $constant [ 'value' ] ;
 			    }
@@ -10574,15 +10346,15 @@ class  PdfToTextFormDefinition		// extends  Object
 		foreach ( $this -> Groups  as  $group )
 		   {
 			if  ( isset ( $group_names [ $group [ 'name' ] ] ) )
-				error ( new PdfToTextFormTemplateException ( "Group \"{$group [ 'name' ]}\" is defined more than once." ) ) ;
+				error ( new PdfToTextFormException ( "Group \"{$group [ 'name' ]}\" is defined more than once." ) ) ;
 
 			if  ( isset ( $names [ $group [ 'name' ] ] ) )
-				error ( new PdfToTextFormTemplateException ( "Group \"{$group [ 'name' ]}\" has the same name as an existing field." ) ) ;
+				error ( new PdfToTextFormException ( "Group \"{$group [ 'name' ]}\" has the same name as an existing field." ) ) ;
 
 			foreach ( $group [ 'fields' ]  as  $field_name )
 			   {
 				if  ( ! isset ( $names [ $field_name ] ) )
-					error ( new PdfToTextFormTemplateException ( "Field \"$field_name\" of group \"{$group [ 'name' ]}\" does not exist." ) ) ;
+					error ( new PdfToTextFormException ( "Field \"$field_name\" of group \"{$group [ 'name' ]}\" does not exist." ) ) ;
 			    }
 		    }
 	    }
@@ -10654,17 +10426,17 @@ class  PdfToTextFormFieldDefinition	// extends  Object
 							break ;
 
 						default :
-							error ( new PdfToTextFormTemplateException ( "Invalid value \"$attribute_value\" for the \"$attribute_name\" attribute of the <field> tag." ) ) ;
+							error ( new PdfToTextFormException ( "Invalid value \"$attribute_value\" for the \"$attribute_name\" attribute of the <field> tag." ) ) ;
 					    }
 			    }
 		    }
 
 		// The "name" and "form-field" attributes are mandatory
 		if  ( ! $this -> Name )
-			error ( new PdfToTextFormTemplateException ( "The \"name\" attribute is mandatory for the <field> tag." ) ) ;
+			error ( new PdfToTextFormException ( "The \"name\" attribute is mandatory for the <field> tag." ) ) ;
 
 		if  ( ! $this -> PdfName )
-			error ( new PdfToTextFormTemplateException ( "The \"form-field\" attribute is mandatory for the <field> tag." ) ) ;
+			error ( new PdfToTextFormException ( "The \"form-field\" attribute is mandatory for the <field> tag." ) ) ;
 
 		// For "type=choice" entries, we have to look for <case> or <default> subtags
 		if  ( $this -> Type  ===  self::TYPE_CHOICE )
@@ -10706,16 +10478,16 @@ class  PdfToTextFormFieldDefinition	// extends  Object
 
 								// Bail out if any unrecognized attribute has been specified
 								default :
-									error ( new PdfToTextFormTemplateException ( "Invalid tag <$tag_name> in <field> definition." ) ) ;
+									error ( new PdfToTextFormException ( "Invalid tag <$tag_name> in <field> definition." ) ) ;
 							    }
 						    }
 
 						// Each <case> entry must have a "constant" attribute
 						if  ( $constant_value  ===  false  &&  ! $is_default )
-							error ( new PdfToTextFormTemplateException ( "Missing constant value in <case> tag." ) ) ;
+							error ( new PdfToTextFormException ( "Missing constant value in <case> tag." ) ) ;
 
 						if  ( $constant_name  ===  false )
-							error ( new PdfToTextFormTemplateException ( "Attribute \"constant-name\" is required for <$tag_name> tag." ) ) ;
+							error ( new PdfToTextFormException ( "Attribute \"constant-name\" is required for <$tag_name> tag." ) ) ;
 
 						// Add this to the list of existing constants
 						$this -> Constants []	=  array
@@ -10729,7 +10501,7 @@ class  PdfToTextFormFieldDefinition	// extends  Object
 
 					// Check for unrecognized tags
 					default :
-						error ( new PdfToTextFormTemplateException ( "Invalid tag <$tag_name> in <field> definition." ) ) ;
+						error ( new PdfToTextFormException ( "Invalid tag <$tag_name> in <field> definition." ) ) ;
 				    }
 			    }
 		    }
@@ -10823,7 +10595,7 @@ class  PdfToTextFormData		// extends  Object
 	public function  __get ( $member )
 	   {
 		if  ( ! isset ( $this -> __Properties [ $member ] ) )
-			warning ( new PdfToTextFormTemplateException ( "Undefined property \"$member\"." ) ) ;
+			warning ( new PdfToTextFormException ( "Undefined property \"$member\"." ) ) ;
 
 		return ( $this -> $member ) ;
 	    }
@@ -10876,9 +10648,9 @@ class  PdfToTextFormData		// extends  Object
 				$field_count	=  count ( $prop_entry [ 'fields' ] ) ;
 
 				if  ( $value_count  <  $field_count )
-					error ( new PdfToTextFormTemplateException ( "Not enough value parts specified for the \"$member\" property ($value)." ) ) ;
+					error ( new PdfToTextFormException ( "Not enough value parts specified for the \"$member\" property ($value)." ) ) ;
 				else if  ( $value_count  >  $field_count )
-					error ( new PdfToTextFormTemplateException ( "Too much value parts specified for the \"$member\" property ($value)." ) ) ;
+					error ( new PdfToTextFormException ( "Too much value parts specified for the \"$member\" property ($value)." ) ) ;
 
 				$this -> $member	=  $value ;
 
@@ -10894,3 +10666,1788 @@ class  PdfToTextFormData		// extends  Object
 			$this -> $member	=  $value ;
 	    }
     }
+
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                  CAPTURE DEFINITION MANAGEMENT                                   ******
+ ******         (none of the classes listed here are meant to be instantiated outside this file)         ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
+
+/*==============================================================================================================
+
+    class PdfToTextCaptureDefinitions -
+        Holds text capture definitions, whose XML data has been supplied to the PdfToText::SetCapture() method.
+
+  ==============================================================================================================*/
+class  PdfToTextCaptureDefinitions	// extends		Object 
+					implements	ArrayAccess, Countable, Iterator
+   {
+	// Shape definitions - The actual objects populating this array depend on the definitions supplied
+	// (rectangle, etc.)
+	protected	$ShapeDefinitions		=  array ( ) ;
+
+	// Shape field names - used for iteration
+	private		$ShapeNames ;
+
+	// Page count 
+	private		$PageCount			=  false ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    CONSTRUCTOR -
+		Analyzes the XML data defining the areas to be captured.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $xml_data )
+	   {
+		$xml		=  simplexml_load_string ( $xml_data ) ;
+		$root_entry	=  $xml -> getName ( ) ;
+
+		// Root tag must be <captures>
+		if  ( strcasecmp ( $root_entry, "captures" ) ) 
+			error ( new PdfToTextCaptureException ( "Root entry must be <captures>, <$root_entry> was found." ) ) ;
+
+		// Process the child nodes
+		foreach  ( $xml -> children ( )   as  $child )
+		   {
+			$tag_name		=  $child -> getName ( ) ;
+
+			switch  ( strtolower ( $tag_name ) )
+			   {
+				// <rectangle> :
+				//	An rectangle whose dimensions are given in the <page> subtags.
+				case	'rectangle' :
+					$shape_object	=  new PdfToTextCaptureRectangleDefinition ( $child ) ;
+					break ;
+
+				// <columns> :
+				//	A definition of columns and their applicable pages.
+				case	'lines' :
+					$shape_object	=  new PdfToTextCaptureLinesDefinition ( $child ) ;
+					break ;
+
+				// Complain if an unknown tag is found
+				default :
+					error ( new PdfToTextCaptureException ( "Invalid tag <$tag_name> found in root tag <captures>." ) ) ;
+			    }
+
+			// Shape names must be unique within the definitinos
+			if  ( isset ( $this -> ShapeDefinitions [ $shape_object -> Name ] ) )
+				error ( new PdfToTextCaptureLinesDefinition ( "The shape named \"{$shape_object -> Name}\" has been defined more than once." ) ) ;
+			else
+				$this -> ShapeDefinitions [ $shape_object -> Name ]	=  $shape_object ;
+		    }
+
+		// Build an array of shape names for the iterator interface
+		$this -> ShapeNames	=  array_keys ( $this -> ShapeDefinitions ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetCapturedObject - Creates an object reflecting the captured data.
+	
+	    PROTOTYPE
+	        $captures	=  $capture_definitions -> GetCapturedObject ( $document_fragments ) ;
+	
+	    DESCRIPTION
+	        Returns an object of type PdfToTextCapturedData,containing the data that has been captured, based on
+		the capture definitions.
+	
+	    PARAMETERS
+	        $document_fragments (type) -
+	                Document text fragments collected during the text layout rendering process.
+	
+	    RETURN VALUE
+	        An object of type PdfToTextCaptures, cntaining the captured data.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetCapturedObject ( $document_fragments )
+	   {
+		$captures	=  array ( ) ;
+
+		foreach  ( $this -> ShapeDefinitions  as  $shape )
+		   {
+			$capture	=  $shape -> ExtractAreas ( $document_fragments ) ;
+
+			foreach  ( $capture  as  $page => $items )
+			   {
+				$captures [ $page ] []	=  $items ;
+			    }
+		    }
+
+		 $captured_object	=  new PdfToTextCaptures ( $captures, $this -> PageCount ) ;
+
+		 return ( $captured_object ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        SetPageCount - Defines the total number of pages in the document.
+	
+	    PROTOTYPE
+	        $shape -> SetPageCount ( $count ) ;
+	
+	    DESCRIPTION
+	        At the time when XML definitions are processed, the total number of pages in the document is not yet 
+		known. Moreover, page ranges or page numbers can be expressed relative to the last page of the 
+		document (for example : 1..$-1, which means "from the first page to the last page - 1).
+		Setting the page count once it is known allows to process the expressions specified in the "number"
+		attribute of the <pages> tag so that the expressions are transformed into actual page numbers.
+	
+	    PARAMETERS
+	        $count (integer) -
+	                Number of pages in the document.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SetPageCount ( $count )
+	   {
+		$this -> PageCount	=  $count ;
+
+		foreach  ( $this -> ShapeDefinitions  as  $def )
+		   {
+			$def ->  SetPageCount ( $count ) ;
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetNodeAttributes - Retrieves an XML node's attributes.
+	
+	    PROTOTYPE
+	        $result		=  PdfToTextCaptureDefinitions::GetNodeAttributes ( $node, $attributes ) ;
+	
+	    DESCRIPTION
+	        Retrieves the attributes defined for the specified XML node.
+	
+	    PARAMETERS
+	        $node (SimpleXMLElement) -
+	                Node whose attributes are to be extracted.
+
+		$attributes (associative array) -
+			Associative array whose keys are the attribute names and whose values define a boolean 
+			indicating whether the attribute is mandatory or not.
+	
+	    RETURN VALUE
+	        Returns an associative whose key are the attribute names and whose values are the attribute values,
+		specified as a string.
+		For optional unspecified attributes, the value will be boolean false.
+	
+	    NOTES
+	        The method throws an exception if the node contains an unknown attribute, or if a mandatory attribute
+		is missing.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  GetNodeAttributes  ( $node, $attributes )
+	   {
+		$tag_name	=  $node -> getName ( ) ;
+
+		// Build the initial value for the resulting array
+		$result		=  array ( ) ;
+
+		foreach  ( array_keys ( $attributes )  as  $name )
+			$result	[ $name ]	=  false ;
+
+		// Loop through node attributes
+		foreach  ( $node -> attributes ( )  as  $attribute_name => $attribute_value )
+		   {
+			$attribute_name		=  strtolower ( $attribute_name ) ;
+
+			// Check that the attributes exists ; if yes, add it to the resulting array
+			if  ( isset ( $attributes [ $attribute_name ] ) )
+				$result [ $attribute_name ]	=  ( string ) $attribute_value ;
+			// Otherwise, throw an exception
+			else
+				error ( new PdfToTextCaptureLinesDefinition ( "Undefined attribute \"$attribute_name\" for node <$tag_name>." ) ) ;
+		    }
+
+		// Check that all mandatory attributes have been specified
+		foreach  ( $attributes  as  $attribute_name => $mandatory )
+		   {
+			if  ( $mandatory  &&  $result [ $attribute_name ]  ===  false )
+				error ( new PdfToTextCaptureLinesDefinition ( "Undefined attribute \"$attribute_name\" for node <$tag_name>." ) ) ;
+		    }
+
+		// All done, return
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        GetBooleanAttribute - Returns a boolean value associated to a string.
+	
+	    PROTOTYPE
+	        $bool	=  PdfToTextCaptureDefinitions::GetBooleanValue ( $value ) ;
+	
+	    DESCRIPTION
+	        Returns a boolean value corresponding to a boolean specified as a string.
+	
+	    PARAMETERS
+	        $value (string) -
+	                A boolean value represented as a string. 
+			The strings 'true', 'yes', 'on' and '1' will be interpreted as boolean true.
+			The strings 'false', 'no', 'off' and '0' will be interpreted as boolean false.
+	
+	    RETURN VALUE
+	        The boolean value corresponding to the specified string.
+	
+	    NOTES
+	        An exception is thrown if the supplied string is incorrect.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  GetBooleanAttribute ( $value )
+	   {
+		$lcvalue	=  strtolower ( $value ) ;
+
+		if  ( $lcvalue  ===  'true'  ||  $lcvalue  ===  'on'  ||  $lcvalue  === 'yes'  ||  $lcvalue  ===  '1'  ||  $value  ===  true )
+			return ( true ) ;
+		else if  ( $lcvalue  ===  'false'  ||  $lcvalue  ===  'off'  ||  $lcvalue  === 'no'  ||  $lcvalue  ===  '0'  ||  $value  ===  false )
+			return(  false ) ;
+		else
+			error ( new PdfToTextCaptureLinesDefinition ( "Invalid boolean value \"$value\"." ) ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Interfaces implementations.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+
+	// Countable interface
+	public function  count ( )
+	   { return ( count ( $this -> ShapeDefinitions ) ) ; }
+
+
+	// ArrayAccess interface
+	public function  offsetExists ( $offset )
+	   { return ( isset ( $this -> ShapeDefinitions [ $offset ] ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   { return ( $this -> ShapeDefinitions [ $offset ] ) ; }
+
+
+	public function  offsetSet ( $offset, $value )
+	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+
+
+	public function  offsetunset ( $offset )
+	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+
+
+	// Iterator interface -
+	//	Iteration is made through shape names, which are supplied by the $ShapeNames property
+	private		$__iterator_index	=  0 ;
+
+	public function  rewind ( )
+	   { $this -> __iterator_index = 0 ; }
+
+	public function  valid ( )
+	   { return ( $this -> __iterator_index  >=  0  &&  $this -> __iterator_index  <  count ( $this -> ShapeNames ) ) ; }
+
+	public function  key ( )
+	   { return ( $this -> ShapeNames [ $this -> __iterator_index ] ) ; }
+
+	public function  next ( )
+	   { $this -> __iterator_index ++ ; }
+
+	public function  current ( )
+	   { return ( $this -> ShapeDefinitions [ $this -> ShapeNames [ $this -> __iterator_index ] ] ) ; }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextCaptureShapeDefinition -
+        Base class for capturing shapes.
+
+  ==============================================================================================================*/
+abstract class  PdfToTextCaptureShapeDefinition		//extends  Object
+   {
+	const	SHAPE_RECTANGLE		=  1 ;
+	const	SHAPE_COLUMN		=  2 ;
+	const	SHAPE_LINE		=  3 ;
+
+	// Capture name
+	public		$Name ;
+	// Capture type - one of the SHAPE_* constants, assigned by derived classes.
+	public		$Type ;
+	// Applicable pages for this capture
+	public		$ApplicablePages ;
+	// Areas per page for this shape
+	public		$Areas		=  array ( ) ;
+	// Separator used when multiple elements are covered by the same shape
+	public		$Separator	=  " " ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     Constructor -
+		Initializes the base capture class.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $type )
+	   {
+		$this -> Type			=  $type ;
+		$this -> ApplicablePages	=  new PdfToTextCaptureApplicablePages ( ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     SetPageCount -
+		Sets the page count, so that all the applicable pages can be determined.
+		Derived classes can implement this function if some additional work is needed.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SetPageCount ( $count ) 
+	   {
+		$this -> ApplicablePages -> SetPageCount ( $count ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     GetFragmentData -
+		Extracts data from a text fragment (text + coordinates).
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetFragmentData ( $fragment, &$text, &$left, &$top, &$right, &$bottom )
+	   {
+		$left		=  ( double ) $fragment [ 'x' ] ;
+		$top		=  ( double ) $fragment [ 'y' ] ;
+		$right		=  $left + ( double ) $fragment [ 'width' ] - 1 ;
+		$bottom		=  $top  - ( double ) $fragment [ 'font-height' ] ;
+		$text		=  $fragment [ 'text' ] ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     GetAttributes -
+		Retrieves the attributes of the given XML node. Processes the following attributes, which are common to
+		all shapes :
+		- Name
+		- Separator
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetAttributes ( $node, $attributes  =  array ( ) )
+	   {
+		$attributes		=  array_merge ( $attributes, array ( 'name' => true, 'separator' => false ) ) ;
+		$shape_attributes	=  PdfToTextCaptureDefinitions::GetNodeAttributes ( $node, $attributes ) ;
+		$this -> Name		=  $shape_attributes [ 'name' ] ;
+
+		if  ( $shape_attributes [ 'separator' ]  !==  false )
+			$this -> Separator	=  PdfToText::Unescape ( $shape_attributes [ 'separator' ] ) ;
+
+		return ( $shape_attributes ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     ExtractAreas -
+		Extracts text contents from the document fragments.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public abstract function  ExtractAreas ( $document_fragments ) ;
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextCaptureRectangleDefinition -
+        A shape for capturing text in rectangle areas.
+
+  ==============================================================================================================*/
+class	PdfToTextCaptureRectangleDefinition		extends  PdfToTextCaptureShapeDefinition
+   {
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    CONSTRUCTOR -
+		Analyzes the contents of a <rectangle> XML node, which contains <page> child node giving the
+		applicable pages and the rectangle dimensions.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct  ( $node )
+	   {
+		parent::__construct ( self::SHAPE_RECTANGLE ) ;
+
+		$this -> GetAttributes ( $node ) ;
+
+		// Loop through node's children
+		foreach  ( $node -> children ( )  as  $child )
+		   {
+			$tag_name	=  $child -> getName ( ) ;
+
+			switch  ( strtolower ( $tag_name ) )
+			   {
+				// <page> tag : applicable page(s)
+				case	'page' :
+					// Retrieve the specified attributes
+					$page_attributes	=  PdfToTextCaptureDefinitions::GetNodeAttributes 
+					   (
+						$child,
+						array 
+						   (
+							'number'	=>  true,
+							'left'		=>  true,
+							'right'		=>  false,
+							'top'		=>  true,
+							'bottom'	=>  false,
+							'width'		=>  false,
+							'height'	=>  false 
+						    )
+					    ) ;
+
+					$page_number	=  $page_attributes [ 'number' ] ;
+
+					// Add this page to the list of applicable pages for this shape
+					$this -> ApplicablePages -> Add ( $page_number, $page_attributes ) ;
+
+					break ;
+
+				// Other tag : throw an exception
+				default :
+					error ( new PdfToTextCaptureException ( "Invalid tag <$tag_name> found in root tag <rectangle>." ) ) ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     ExtractAreas -
+		Extracts text contents from the document fragments.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  ExtractAreas ( $document_fragments )
+	   {
+		$result		=  array ( ) ;
+
+		// Loop through document fragments
+		foreach  ( $document_fragments  as  $page  =>  $page_contents )
+		   {
+			$fragments		=  $page_contents [ 'fragments' ] ;
+
+			// Ignore pages that are not applicable
+			if  ( ! isset ( $this -> ApplicablePages -> PageMap [ $page ] ) ) 
+				continue ;
+
+			// Loop through each text fragment of the page
+			foreach  ( $fragments  as  $fragment )
+			   {
+				$this -> GetFragmentData ( $fragment, $text, $left, $top, $right, $bottom ) ;
+
+				// Only handle text fragments that are within the specified area
+				if  ( $this -> Areas [ $page ] -> Contains ( $left, $top, $right, $bottom ) )
+				   {
+					// Normally, rectangle shapes are used to capture a single line...
+					if  ( ! isset ( $result [ $page ] ) )
+						$result [ $page ]	=  new PdfToTextCapturedRectangle ( $page, $this -> Name, $text, $left, $top, $right, $bottom, $this ) ;
+					// ... but you can also use them to capture multiple lines ; in this case, the "separator" attribute of the <rectangle> tag will 
+					// be used to separate items
+					else
+					   {
+						$existing_area	=  $result [ $page ] ;
+
+						$existing_area -> Top			=  max ( $existing_area -> Top   , $top    ) ;
+						$existing_area -> Bottom		=  min ( $existing_area -> Bottom, $bottom ) ;
+						$existing_area -> Left			=  min ( $existing_area -> Left  , $left   ) ;
+						$existing_area -> Right			=  max ( $existing_area -> Right , $right  ) ;
+						$existing_area -> Text		       .=  $this -> Separator . $text ;
+					    }
+				    }
+			    }
+		    }
+
+		// All done, return
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     SetPageCount -
+		Ensures that an Area is created for each related page.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SetPageCount ( $count ) 
+	   {
+		parent::SetPageCount ( $count ) ;
+
+		// Create a rectangle area for each page concerned - this can only be done when the number of pages is known
+		// (and the ApplicablePages object updated accordingly)
+		foreach  ( $this -> ApplicablePages -> ExtraPageMapData  as  $page => $data )
+			$this -> Areas [ $page ]		=  new PdfToTextCaptureArea ( $data ) ;
+	    }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextCaptureLinesDefinition -
+        A shape for capturing text in rectangle areas.
+
+  ==============================================================================================================*/
+class	PdfToTextCaptureLinesDefinition		extends  PdfToTextCaptureShapeDefinition
+   {
+	// Column areas
+	public		$Columns		=  array ( ) ;
+	// Top and bottom lines
+	public		$Tops			=  array ( ) ;
+	public		$Bottoms		=  array ( ) ;
+	// Column names
+	private		$ColumnNames		=  array ( ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    CONSTRUCTOR -
+		Analyzes the contents of a <columns> XML node, which contains <page> nodes giving a part of the column
+		dimensions, and <column> nodes which specify the name of the column and the remaining coordinates,
+		such as "left" or "width"
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct  ( $node )
+	   {
+		parent::__construct ( self::SHAPE_COLUMN ) ;
+
+		$shape_attributes	=  $this -> GetAttributes ( $node, array ( 'default' => false ) ) ;
+		$column_default		=  ( $shape_attributes [ 'default' ] )  ?  $shape_attributes [ 'default' ] : '' ;
+
+		// Loop through node's children
+		foreach  ( $node -> children ( )  as  $child )
+		   {
+			$tag_name	=  $child -> getName ( ) ;
+
+			switch  ( strtolower ( $tag_name ) )
+			   {
+				// <page> tag 
+				case	'page' :
+					// Retrieve the specified attributes
+					$page_attributes	=  PdfToTextCaptureDefinitions::GetNodeAttributes 
+					   (
+						$child,
+						array 
+						   (
+							'number'	=>  true,
+							'top'		=>  true,
+							'height'	=>  true,
+							'bottom'	=>  false
+						    )
+					    ) ;
+
+					// We have to store the y-coordinate of the first and last lines, to determine until which
+					// position we have to check for column contents.
+					// The "top" and "bottom" attributes of the <page> tag actually determine the top and bottom
+					// y-coordinates where to search for columns. However, we will have to rename the "bottom"
+					// attribute to "column-bottom", in order for it not to be mistaken with actual column rectangle
+					// (only the "height" attribute of the <page> tag gives the height of a line)
+					$page_attributes [ 'column-top' ]	=  $page_attributes [ 'top' ] ;
+					$page_attributes [ 'column-bottom' ]	=  ( double ) $page_attributes [ 'bottom' ] ;
+					unset ( $page_attributes [ 'bottom' ] ) ;
+					
+					// Add this page to the list of applicable pages for this shape
+					$this -> ApplicablePages -> Add ( $page_attributes [ 'number' ], $page_attributes ) ;
+
+					break ;
+
+				// <column> tag :
+				case	'column' :
+					$column_attributes	=  PdfToTextCaptureDefinitions::GetNodeAttributes 
+					   (
+						$child,
+						array 
+						   (
+							'name'		=>  true,
+							'left'		=>  false,
+							'right'		=>  false,
+							'width'		=>  false,
+							'default'	=>  false
+						    )
+					    ) ;	
+
+					$column_name		=  $column_attributes [ 'name' ] ;
+
+					// Build the final default value, if any one is specified ; the following special constructs are processed :
+					// - "%c" :
+					//	Replaced by the column name.
+					// - "%n" :
+					//	Replaced by the column index (starting from zero).
+					if  ( ! $column_attributes [ 'default' ] )
+						$column_attributes [ 'default' ]	=  $column_default ;
+
+					$substitutes		=  array
+					   (
+						'%c'		=>  $column_name,
+						'%n'		=>  count ( $this -> Columns )
+					    ) ;
+
+					$column_attributes [ 'default' ]	=  str_replace
+					   (
+						array_keys ( $substitutes ),
+						array_values ( $substitutes ),
+						$column_attributes [ 'default' ]
+					    ) ;
+
+					// Add the column definition to this object
+					if  ( ! isset ( $this -> Columns [ $column_name ] ) )
+					   {
+						$this -> Columns [ $column_attributes [ 'name' ] ]	=  $column_attributes ;
+						$this -> ColumnNames []					=  $column_attributes [ 'name' ] ;
+					    }
+					else
+						error ( new PdfToTextCaptureException ( "Column \"$column_name\" is defined more than once." ) ) ;
+
+					break ;
+
+				// Other tag : throw an exception
+				default :
+					error ( new PdfToTextCaptureException ( "Invalid tag <$tag_name> found in root tag <rectangle>." ) ) ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     ExtractAreas -
+		Extracts text contents from the document fragments.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  ExtractAreas ( $document_fragments )
+	   {
+		$result		=  array ( ) ;
+
+		// Loop through each page of document fragments
+		foreach  ( $document_fragments  as  $page  =>  $page_contents )
+		   {
+			$fragments		=  $page_contents [ 'fragments' ] ;
+
+			// Ignore this page if not included in the <columns> definition
+			if  ( ! isset ( $this -> ApplicablePages -> PageMap [ $page ] ) ) 
+				continue ;
+
+			// <columns> definition only gives the location of the first line of each column, together
+			// with its height.
+			// We will build as many new column areas as can fit on one page
+			$this_page_areas	=  $this -> Areas [ $page ] ;
+			$column_areas		=  array ( ) ;
+
+			for  ( $i = 0, $count = count ( $this_page_areas ) ; $i  <  $count ; $i ++ )
+			   {
+				// For now, duplicate the existing column areas - they will represent the 1st line of columns
+				$this_page_area		=  $this_page_areas [$i] ;
+				$new_area		=  clone ( $this_page_area ) ;
+				$column_areas [0] []	=  $new_area ;
+				$line_height		=  $new_area -> Height ;
+				$current_top		=  $new_area -> Top - $line_height ;
+				$current_line		=  0 ;
+
+				// Then build new column areas for each successive lines
+				while  ( $current_top - $line_height  >=  0 )
+				   {
+					$current_line ++ ;
+					$new_area				 =  clone ( $new_area ) ;
+					$new_area -> Top			-=  $line_height ;
+					$new_area -> Bottom			-=  $line_height ;
+
+					$column_areas [ $current_line ]	[]	 =  $new_area ;
+					$current_top				-=  $line_height ;
+				    }
+			    }
+
+			// Now extract the columns, line per line, from the current page's text fragments
+			$found_lines		=  array ( ) ;
+
+			foreach  ( $fragments  as  $fragment )
+			   {
+				$this -> GetFragmentData ( $fragment, $text, $left, $top, $right, $bottom ) ;
+
+				// Loop through each line of column areas, built from the above step
+				foreach ( $column_areas  as  $line => $column_areas_per_name )
+				    {
+					$index	=  0 ;			// Column index
+
+					// Process each column area
+					foreach  ( $column_areas_per_name  as  $column_area )
+					   {
+						// ... but only do something if the current column area is contained in the current fragment
+						if  ( $column_area -> Contains ( $left, $top, $right, $bottom ) )
+						   {
+							// The normal usage will be to capture one-line columns...
+							if  ( ! isset ( $found_lines [ $line ] [ $column_area -> Name ] ) )
+							   {
+								$found_lines [ $line ] [ $column_area -> Name ]	=
+									new PdfToTextCapturedColumn ( $page, $column_area -> Name, $text, 
+										$left, $top, $right, $bottom, $this ) ;
+							    }
+							// ... but you can also use them to capture multiple lines ; in this case, the "separator" attribute of the <lines> or
+							// <column> tag will be used to separate items
+							else
+							   {
+								$existing_area	=  $found_lines [ $line ] [ $column_area -> Name ] ;
+
+								$existing_area -> Top			=  max ( $existing_area -> Top   , $column_area -> Top    ) ;
+								$existing_area -> Bottom		=  min ( $existing_area -> Bottom, $column_area -> Bottom ) ;
+								$existing_area -> Left			=  min ( $existing_area -> Left  , $column_area -> Left   ) ;
+								$existing_area -> Right			=  max ( $existing_area -> Right , $column_area -> Right  ) ;
+								$existing_area -> Text		       .=  $this -> Separator . $text ;
+							    }
+						    }	
+
+						$index ++ ;
+					    }
+				     }
+			    }
+
+			// A final pass to provide default values for empty columns (usually, column values that are not represented in the PDF file)
+			// Also get the surrounding box for the whole line
+			$final_lines		=  array ( ) ;
+
+			foreach  ( $found_lines  as  $line => $columns_line )
+			   {
+				foreach  ( $this -> ColumnNames  as  $column_name )
+				   {
+					if  ( ! isset ( $columns_line [ $column_name ] ) ) 
+					   {
+						$found_lines [ $line ] [ $column_name ]	=
+							new PdfToTextCapturedColumn ( $page, $column_name, $this -> Columns [ $column_name ] [ 'default' ], 0, 0, 0, 0, $this ) ; 
+					    }
+				    }
+
+				// Get the (left,top) coordinates of the line
+				$line_left	=  $found_lines [ $line ] [ $this -> ColumnNames [0] ] -> Left ;
+				$line_top	=  $found_lines [ $line ] [ $this -> ColumnNames [0] ] -> Top ;
+
+				// Get the (right,bottom) coordinates - we have to find the last column whose value is not a default value
+				// (and therefore, has a non-zero Right coordinate)
+				$last		=  count ( $this -> ColumnNames ) - 1 ;
+				$line_right	=  0 ;
+				$line_bottom	=  0 ;
+
+				while  ( $last  >=  0  &&  ! $found_lines [ $line ] [ $this -> ColumnNames [ $last ] ] -> Right )
+					$last -- ;
+
+				if  ( $last  >  0 )
+				   {
+					$line_right	=  $found_lines [ $line ] [ $this -> ColumnNames [ $last ] ] -> Right ;
+					$line_bottom	=  $found_lines [ $line ] [ $this -> ColumnNames [ $last ] ] -> Bottom ;
+				    }
+
+				// Create a CaptureLine entry 
+				$final_lines []	=  new PdfToTextCapturedLine ( $page, $this -> Name, $columns_line, $line_left, $line_top, $line_right, $line_bottom, $this ) ;
+			    }
+
+			// The result for this page will be a CapturedLines object
+			$result [ $page ]	=  new  PdfToTextCapturedLines ( $this -> Name, $page, $final_lines ) ;
+		    }
+
+		// All done, return
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	     SetPageCount -
+		Extracts text contents from the document fragments.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SetPageCount ( $count )
+	   {
+		parent::SetPageCount ( $count ) ;
+
+		foreach  ( $this -> ApplicablePages  as $page => $applicable )
+		   {
+			if  ( ! $applicable )
+				continue ;
+
+			foreach  ( $this -> Columns  as  $column )
+			   {
+				if  ( ! isset ( $this -> Tops [ $page ] ) )
+				   {
+					$this -> Tops    [ $page ]		=  ( double ) $this -> ApplicablePages -> ExtraPageMapData [ $page ] [ 'column-top' ] ;
+					$this -> Bottoms [ $page ]		=  ( double ) $this -> ApplicablePages -> ExtraPageMapData [ $page ] [ 'column-bottom' ] ;
+				    }
+
+				$area	=  new PdfToTextCaptureArea ( $column, $this -> ApplicablePages -> ExtraPageMapData [ $page ], $column [ 'name' ] ) ;
+
+				$this -> Areas [ $page ] []	=  $area ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Support functions.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextCaptureApplicablePages -
+        Holds a list of applicable pages given by the "number" attribute of <page> tags.
+
+  ==============================================================================================================*/
+class  PdfToTextCaptureApplicablePages		//extends		Object
+						implements	ArrayAccess, Countable, Iterator
+   {
+	// Ranges of pages, as given by the "number" attribute of the <page> tag. Since a page number expression
+	// can refer to the last page ("$"), and the total number of pages in the document is not yet known at the
+	// time of object instantiation, we have to store all the page ranges as is.
+	protected	$PageRanges		=  array ( ) ;
+
+	// Once the SetPageCount() method has been called (ie, once the total number of pages in the document is
+	// known), then a PageMap is built ; each key is the page number, indicating whether the page applies or not.
+	public		$PageMap		=  array ( ) ;
+
+	// Extra data associated, this time, with each page in PageMap
+	public		$ExtraPageMapData	=  array ( ) ;
+
+	// Page count - set by the SetPageCount() method
+	public		$PageCount		=  false ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    CONSTRUCTOR
+	        Initializes the object.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( )
+	   {
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Add - Add a page number(s) definition.
+	
+	    PROTOTYPE
+	        $applicable_pages -> Add ( $page_number ) ;
+	
+	    DESCRIPTION
+	        Add the page number(s) specified by the "number" attribute of the <pages> tag to the list of applicable
+		pages.
+	
+	    PARAMETERS
+	        $page_number (string) -
+	                A string defining which pages are applicable. This can be a single page number :
+
+				<page number="1" .../>
+
+			or a comma-separated list of pages :
+
+				<page number="1, 2, 10" .../>
+
+			or range(s) of pages :
+
+				<page number="1..10, 12..20" .../>
+
+			The special "$" character means "last page" ; thus the following example :
+
+				<page number="1, $-9..$" .../>
+
+			means : "applicable pages are 1, plus the last ten pages f the document".
+		
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  Add ( $page_number, $extra_data = false )
+	   {
+		$this -> __parse_page_numbers ( $page_number, $extra_data ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        SetPageCount - Sets the total number of pages in the document.
+	
+	    PROTOTYPE
+	        $applicable_pages -> SetPageCount ( $count ) ;
+	
+	    DESCRIPTION
+	        Sets the total number of pages in the document and builds a map of which pages are applicable or not.
+	
+	    PARAMETERS
+	        $count (integer) -
+	                Total number of pages in the document.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  SetPageCount ( $count )
+	   {
+		$this -> PageCount		=  $count ;
+		$this -> PageMap		=  array ( ) ;
+
+		// Loop through the page ranges - every single value in the ranges has been converted to an integer ;
+		// the other ones, built as expressions (using "$" for example) are processed here to give the actual
+		// page number
+		foreach  ( $this -> PageRanges  as  $range )
+		   {
+			$low		=  $range [0] ;
+			$high		=  $range [1] ;
+
+			// Translate expression to an actual value for the low and high parts of the range, if not already integers
+			if  ( ! is_integer ( $low ) )
+				$low	=  $this -> __check_expression ( $low, $count ) ;
+
+			if  ( ! is_integer ( $high ) )
+				$high	=  $this -> __check_expression ( $high, $count ) ;
+
+			// Expressions using "$" may lead to negative values - adjust them
+			if  ( $low  <  1 )
+			   {
+				if  ( $high  <  1 )
+					$high	=  1 ;
+
+				$low	=  1 ;
+			    }
+
+			// Check that the range is consistent
+			if  ( $low  >  $high )
+				error ( new PdfToTextCaptureException ( "Low value ($low) must be less or equal to high value ($high) " .
+						"in page range specification \"{$range [0]}..{$range [1]}\"." ) ) ;
+
+			// Ignore ranges where the 'low' value is higher than the number of pages in the document
+			if  ( $low  >  $count )
+			    {
+				warning ( new PdfToTextCaptureException ( "Low value ($low) is greater than page count ($count) " .
+						"in page range specification \"{$range [0]}..{$range [1]}\"." ) ) ;
+				continue ;
+			     }
+
+			// Normalize the 'high' value, so that it's not bigger than the number of pages in the document
+			if  ( $high  >  $count )
+				$high	=  $count ;
+				
+			// Complement the page map using this range
+			for  ( $i = $low ; $i  <=  $high ; $i ++ )
+			   {
+				$this -> PageMap [$i]		=  true ;
+				$this -> ExtraPageMapData [$i]	=  $range [2] ;
+			    }
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Interfaces implementations.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+
+	// Countable interface
+	public function  count ( )
+	   { return ( count ( $this -> PageMap ) ) ; }
+
+
+	// Array access interface
+	public function  offsetExists ( $offset )
+	   { return ( isset ( $this -> PageMap [ $offset ] ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   { return ( ( isset ( $this -> PageMap [ $offset ] ) ) ?  true : false ) ; }
+
+
+	public function  offsetSet ( $offset, $value )
+	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+
+
+	public function  offsetunset ( $offset )
+	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+
+
+	// Iterator interface
+	private		$__iterator_value	=  1 ;
+
+	public function   rewind ( ) 
+	   { $this -> __iterator_value = 1 ; }
+
+	
+	public function  valid ( )
+	   { return ( $this -> __iterator_value  >=  1  &&  $this -> __iterator_value  <=  $this -> PageCount ) ; }
+
+	
+	public function  key ( )
+	   { return ( $this -> __iterator_value ) ; }
+
+
+	public function  next ( )
+	   { $this -> __iterator_value ++ ; }
+
+
+	public function  current ( )
+	   { return ( ( isset ( $this -> PageMap [ $this -> __iterator_value ] ) ) ?  true : false ) ; }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Helper functions.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+
+	// __parse_page_numbers -
+	//	Performs a first pass on the value of the "number" attribute of the <page> tag. Transforms range expressions
+	//	when possible to integers ; keep the expression string intact when either the low or high value of a range
+	//	is itself an expression, probably using the "$" (page count) character.
+	private function  __parse_page_numbers ( $text, $extra_data )
+	   {
+		$ranges		=  explode ( ',', $text ) ;
+
+		// Loop through comma-separated ranges
+		foreach  ( $ranges  as  $range )
+		   {
+			$items		=  explode ( '..', $range ) ;
+
+			// Check if current item is a range
+			switch  ( count ( $items ) )
+			   {
+				// If not a range (ie, a single value) then make a range using that value
+				// (low and high range values will be the same)
+				case	1 :
+					if  ( is_numeric ( $items [0] ) )
+						$low	=  $high	=  ( integer ) $items [0] ;
+					else
+						$low	=  $high	=  trim ( $items [0] ) ;
+					
+					break ;
+
+				// If range, store the low and high values
+				case	2 :
+					$low	=  ( is_numeric ( $items [0] ) ) ?  ( integer ) $items [0] : trim ( $items [0] ) ;
+					$high	=  ( is_numeric ( $items [1] ) ) ?  ( integer ) $items [1] : trim ( $items [1] ) ;
+					break ;
+
+				// Other cases : throw an exception
+				default :
+					error ( new PdfToTextCaptureException ( "Invalid page range specification \"$range\"." ) ) ;
+			    }
+
+			// If the low or high range value is an expression, check at this stage that it is correct
+			if  ( is_string ( $low )  &&  $this -> __check_expression ( $low )  ===  false )
+				error ( new PdfToTextCaptureException ( "Invalid expression \"$low\" in page range specification \"$range\"." ) ) ;
+
+			if  ( is_string ( $high )  &&  $this -> __check_expression ( $high )  ===  false )
+				error ( new PdfToTextCaptureException ( "Invalid expression \"$high\" in page range specification \"$range\"." ) ) ;
+
+			// Add the page range and the extra data
+			$this -> PageRanges []	=  array ( $low, $high, $extra_data ) ;
+		    }
+	    }
+
+
+	// __check_expression -
+	//	Checks that a syntactically correct 
+	private function  __check_expression ( $str, $count = 1 )
+	    {
+		$new_str	=  str_replace ( '$', $count, $str ) ;
+		$value		=  @eval ( "return ( $new_str ) ;" ) ;
+
+		return ( $value ) ;
+	     }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextCaptureArea -
+        A capture area describes a rectangle, either by its top, left, right and bottom coordinates, or by 
+	its top/left coordinates, and its width and height.
+
+  ==============================================================================================================*/
+class  PdfToTextCaptureArea	//extends  Object 
+   {
+	// List of authorzed keyword for defining the rectangle dimensions
+	static private		$Keys		=  array ( 'left', 'top', 'right', 'bottom', 'width', 'height' ) ;
+
+	// Rectangle dimensions
+	private			$Left		=  false,
+				$Top		=  false,
+				$Right		=  false,
+				$Bottom		=  false ;
+
+	// Area name (for internal purposes)
+	public			$Name ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Constructor
+	
+	    PROTOTYPE
+	        $area	=  new PdfToTextCaptureArea ( $area, $default_area = null, $name = '' ) ;
+	
+	    DESCRIPTION
+	        Initialize an area (a rectangle) using the supplied coordinates
+	
+	    PARAMETERS
+	        $area (array) -
+	                An associative array that may contain the following entries :
+
+			- 'left' (double) :
+				Left x-coordinate (mandatory).
+
+			- 'top' (double) :
+				Top y-coordinate (mandatory).
+
+			- 'right (double) :
+				Right x-coordinate.
+
+			- 'bottom' (double) :
+				Bottom y-coordinate.
+
+			- 'width' (double) :
+				Width of the rectangle, starting from 'left'.
+
+			- 'height' (double) :
+				Height of the rectangle, starting from 'top'.
+
+			Either the 'right' or 'width' entries must be specified. This is the same for the 'bottom' and
+			'height' entries.
+
+		$default_area (array) -
+			An array that can be used to supply default values when absent from $area.
+
+		$name (string) -
+			An optional name for this area. This information is not used by the class.
+	
+	    NOTES
+	        Coordinate (0,0) is located at the left bottom of the page.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $area, $default_area = null, $name = '' )
+	   {
+		$left		=  
+		$top		=
+		$right		= 
+		$bottom		=
+		$width		=
+		$height		=  false ;
+
+		// Retrieve each entry that allows to specify a coordinate component, using $default_area if needed
+		foreach  ( self::$Keys  as  $key )
+		   {
+			if  ( isset ( $area [ $key ] ) )
+			   {
+				if  ( $area [ $key ]  ===  false )
+				   {
+					if  ( isset ( $default_area [ $key ] ) )
+						$$key	=  $default_area [ $key ] ;
+					else
+						$$key	=  false ;
+				    }
+				else
+					$$key	=  $area [ $key ] ;
+			    }
+			else if  ( isset ( $default_area [ $key ] ) )
+				$$key	=  $default_area [ $key ] ;
+		    }
+
+		// Check for mandatory coordinates
+		if  ( $left  ===  false ) 
+			error ( new PdfToTextCaptureException ( "Attribute \"left\" is mandatory." ) );
+		else 
+			$left	=  ( double ) $left ;
+
+		if  ( $top  ===  false ) 
+			error ( new PdfToTextCaptureException ( "Attribute \"top\" is mandatory." ) ) ;
+		else 
+			$top	=  ( double ) $top ;
+
+		// Either the 'right' or 'width' entries are required
+		if  ( $right  ===  false )
+		   {
+			if  ( $width  ===  false )
+				error ( new PdfToTextCaptureException ( "Either the \"right\" or the \"width\" attribute must be specified." ) ) ;
+			else 
+				$right		=  $left + ( double ) $width - 1 ;
+		    }
+		else 
+			$right	=  ( double ) $right ;
+
+		// Same for 'bottom' and 'height'
+		if  ( $bottom  ===  false )
+		   {
+			if  ( $height  ===  false )
+				error ( new PdfToTextCaptureException ( "Either the \"bottom\" or the \"height\" attribute must be specified." ) ) ;
+			else 
+				$bottom		=  $top - ( double ) $height + 1 ;
+		    }
+		else 
+			$bottom	=  ( double ) $bottom ;
+
+		// All done, we have the coordinates we wanted
+		$this -> Left		=  $left ;
+		$this -> Right		=  $right ;
+		$this -> Top		=  $top ;
+		$this -> Bottom		=  $bottom ;
+		
+		$this -> Name		=  $name ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        __get, __set - Implement the Width and Height properties.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __get ( $member )
+	   {
+		switch  ( $member ) 
+		   {
+			case	'Left'		:
+			case	'Top'		:
+			case	'Right'		:
+			case	'Bottom'	:
+				return ( $this -> $member ) ;
+
+			case	'Width'		:
+				return ( $this -> Right - $this -> Left + 1 ) ;
+
+			case	'Height'	:
+				return ( $this -> Top - $this -> Bottom + 1 ) ;
+
+			default :
+				trigger_error ( "Undefined property \"$member\"." ) ;
+		    }
+	    }
+
+
+	public function  __set ( $member, $value )
+	   {
+		$value		=  ( double ) $value ;
+
+		switch  ( $member ) 
+		   {
+			case	'Top'		:
+			case	'Left'		:  
+			case	'Right'		:
+			case	'Bottom'	:
+				$this -> $member	=  $value ;
+				break ;
+
+			case	'Width'		:
+				$this -> Right		=  $this -> Left + $value - 1 ;
+				break ;
+
+			case	'Height'	:
+				$this -> Bottom		=  $this -> Top - $value + 1 ;
+				break ;
+
+			default :
+				trigger_error ( "Undefined property \"$member\"." ) ;
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        Contains - Check if this area contains the specified rectangle.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  Contains ( $left, $top, $right, $bottom )
+	   {
+		if  ( $left  >=  $this -> Left  &&  $right  <=  $this -> Right  &&
+				$top  <=  $this -> Top  &&  $bottom  >=  $this -> Bottom )
+			return ( true ) ;
+		else
+			return ( false ) ;
+	    }
+    }
+
+
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                                     CAPTURED TEXT MANAGEMENT                                     ******
+ ******         (none of the classes listed here are meant to be instantiated outside this file)         ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
+
+ /*==============================================================================================================
+ 
+     class PdfToTextCapturedText -
+         Base class for captured text enclosed by shapes.
+ 
+   ==============================================================================================================*/
+ abstract class  PdfToTextCapturedText		//extends  Object 
+    {
+	// Shape name (as specified by the "name" attribute of the <rectangle> or <lines> tags, for example)
+	public		$Name ;
+	// Number of the page where the text was found (starts from 1)
+	public		$Page ;				
+	// Shape type (one of the PfToTextCaptureShape::SHAPE_* constants)
+	public		$Type ;
+	// Shape definition object (not really used, but in case of...)
+	private		$ShapeDefinition ;
+	// Captured text
+	public		$Text ;
+	// Surrounding rectangle in the PDF file
+	public		$Left,
+			$Top,
+			$Right,
+			$Bottom ;
+
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Initializes a captured text object, whatever the original shape.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct  ( $page, $name, $text, $left, $top, $right, $bottom, $definition )
+	   {
+		$this -> Name			=  $name ;
+		$this -> Page			=  $page ;
+		$this -> ShapeDefinition	=  $definition ;
+		$this -> Text			=  $text ;
+		$this -> Left			=  $left ;
+		$this -> Top			=  $top ;
+		$this -> Right			=  $right ;
+		$this -> Bottom			=  $bottom ;
+		$this -> Type			=  $definition -> Type ;
+	    }
+     }
+
+
+ /*==============================================================================================================
+ 
+     class PdfToTextCapturedRectangle -
+         Implements a text captured by a rectangle shape.
+ 
+   ==============================================================================================================*/
+class  PdfToTextCapturedRectangle		extends  PdfToTextCapturedText
+   {
+	public function  __construct ( $page, $name, $text, $left, $top, $right, $bottom, $definition )
+	   {
+		parent::__construct ( $page, $name, $text, $left, $top, $right, $bottom, $definition ) ;
+	    }
+
+
+	public function  __tostring ( )
+	   { return ( $this -> Text ) ; }
+    }
+
+
+ /*==============================================================================================================
+ 
+     class PdfToTextCapturedColumn -
+         Implements a text captured by a lines/column shape.
+	 Actually behaves like the PdfToTextCapturedRectangle class
+ 
+   ==============================================================================================================*/
+class  PdfToTextCapturedColumn			extends  PdfToTextCapturedText 
+   {
+	public function  __construct ( $page, $name, $text, $left, $top, $right, $bottom, $definition )
+	   {
+		parent::__construct ( $page, $name, $text, $left, $top, $right, $bottom, $definition ) ;
+	    }
+
+
+	public function  __tostring ( )
+	   { return ( $this -> Text ) ; }
+    }
+
+
+ /*==============================================================================================================
+ 
+     class PdfToTextCapturedLine -
+         Implements a text captured by a lines shape.
+ 
+   ==============================================================================================================*/
+class  PdfToTextCapturedLine			extends		PdfToTextCapturedText 
+ 						implements	\ArrayAccess, \Countable, \IteratorAggregate
+  {
+	// Column objects
+	public		$Columns ;
+	// Array of column names, to allow access by either index or column name
+	private		$ColumnsByNames		=  array ( ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Builds a Line object based on the supplied columns.
+		Also builds the Text property, which contains the columns text separated by the separator string 
+		specified in the XML definition.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $page, $name, $columns, $left, $top, $right, $bottom, $definition )
+	   {
+		// Although the Columns property is most likely to be used, build a text representation of the whole ine
+		$text			=  array ( ) ;
+		$count			=  0 ;
+
+		foreach  ( $columns  as  $column )
+		   {
+			$text []					=  $column -> Text ;
+			$this -> ColumnsByNames [ $column -> Name ]	=  $count ++ ;
+		    }
+
+		// Provide this information to the parent constructor
+		parent::__construct ( $page, $name, implode ( $definition -> Separator, $text ), $left, $top, $right, $bottom, $definition ) ;
+
+		// Store the column definitions
+		$this -> Columns	=  $columns ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    __get -
+		Returns access to a column by its name.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __get ( $member )
+	   {
+		if  ( isset ( $this -> ColumnsByNames [ $member ] ) )
+			return ( $this -> Columns [ $this -> ColumnsByNames [ $offset ] ] ) ;
+		else
+			trigger_error ( "Undefined property \"$member\"." ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Interfaces implementations.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( $this -> Columns ) ; }
+
+
+	public function  getIterator ( )
+	   { return ( new \ArrayIterator ( $this -> Columns ) ) ; }
+
+
+	public function  offsetExists ( $offset )
+	   { 
+		if  ( is_numeric ( $offset ) )
+			return ( $offset  >=  0  &&  $offset  <  count ( $this -> Columns ) ) ; 
+		else
+			return ( isset ( $this -> ColumnsByNames [ $offset ] ) ) ;
+	    }
+
+
+	public function  offsetGet ( $offset )
+	   {
+		if  ( is_numeric ( $offset ) )
+			return ( $this -> Columns [ $offset ] ) ; 
+		else
+			return ( $this -> Columns [ $this -> ColumnsByNames [ $offset ] ] ) ;
+	    }
+
+
+	public function  offsetSet ( $offset, $value )
+	   { error ( new PdfToTextCaptureException ( "Unsupported operation." ) ) ; }
+
+
+	public function  offsetUnset ( $offset )
+	   { error ( new PdfToTextCaptureException ( "Unsupported operation." ) ) ; }
+    }
+
+
+ /*==============================================================================================================
+ 
+     class PdfToTextCapturedLines -
+         Implements a set of lines.
+ 
+   ==============================================================================================================*/
+class  PdfToTextCapturedLines			//extends		Object 
+						implements	\ArrayAccess, \Countable, \IteratorAggregate
+   {
+	// Capture name, as specified by the "name" attribute of the <lines> tag
+	public		$Name ;
+	// Page number of the capture
+	public		$Page ;
+	// Captured lines
+	public		$Lines ;
+	// Content type (mimics a little bit the PdfToTextCapturedText class)
+	public		$Type			=  PdfToTextCaptureShapeDefinition::SHAPE_LINE ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Instantiates a PdfToTextCapturedLines object.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $name, $page, $lines )
+	   {
+		$this -> Name		=  $name ;
+		$this -> Page		=  $page ;
+		$this -> Lines		=  $lines ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Interfaces implementations.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( $this -> Lines ) ; }
+
+
+	public function  getIterator ( )
+	   { return ( new \ArrayIterator ( $this -> Lines ) ) ; }
+
+
+	public function  offsetExists ( $offset )
+	   { return ( $offset  >=  0  &&  $offset  <  count ( $this -> Lines ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   { return ( $this -> Captures [ $offset ] ) ; }
+
+
+	public function  offsetSet ( $offset, $value )
+	   { error ( new PdfToTextCaptureException ( "Unsupported operation." ) ) ; }
+
+
+	public function  offsetUnset ( $offset )
+	   { error ( new PdfToTextCaptureException ( "Unsupported operation." ) ) ; }
+    }
+
+
+/**************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ ******                               CAPTURE INTERFACE FOR THE DEVELOPER                                ******
+ ******         (none of the classes listed here are meant to be instantiated outside this file)         ******
+ ******                                                                                                  ******
+ ******                                                                                                  ******
+ **************************************************************************************************************
+ **************************************************************************************************************
+ **************************************************************************************************************/
+
+/*==============================================================================================================
+
+    class PdfToTextCaptures -
+        Represents all the areas in a PDF file captured by the supplied XML definitions.
+
+  ==============================================================================================================*/
+class  PdfToTextCaptures			//extends  Object
+   {
+	// Total number of pages in the PDF file
+	public		$PageCount ;
+
+	// Captured objects - May not exactly reflect the PdfToTextCapture*Shape classes
+	private		$CapturedObjects ;
+	// Allows faster access by capture name
+	private		$ObjectsByName			=  array ( ) ;
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Instantiates a PdfToTextCaptures object.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $captures, $page_count )
+	   {
+		$this -> PageCount		=  $page_count ;
+		$this -> CapturedObjects	=  $captures ;
+
+		// Build an array of objects indexed by their names
+		foreach  ( $captures  as  $page => $shapes )
+		   {
+			foreach  ( $shapes  as  $shape )
+				$this -> ObjectsByName [ $shape -> Name ] []	=  $shape ;
+		    }
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    __get -
+		Retrieves the captured objects by their name, as specified in the XML definition.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __get ( $member ) 
+	   {
+		$fieldname	=  "__capture_{$member}__" ;
+
+		if  ( ! isset ( $this -> $fieldname ) )
+		   {
+			if  ( ! isset ( $this -> ObjectsByName [ $member ] ) )
+				error ( new PdfToTextException ( "Undefined property \"$member\"." ) ) ;
+
+			$this -> $fieldname	=  $this -> GetCaptureInstance ( $member ) ;
+		    }
+
+		return ( $this -> $fieldname ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    GetCapturedObjectsByName -
+		Returns an associative array of the captured shapes, indexed by their name.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  GetCapturedObjectsByName ( )
+	   { return ( $this -> ObjectsByName ) ; }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    GetCaptureInstance -
+		Returns an object inheriting from the PdfToTextCapture class, that wraps the capture results.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	protected function  GetCaptureInstance ( $fieldname )
+	   {
+		switch ( $this -> ObjectsByName [ $fieldname ] [0] -> Type )
+		   {
+			case	PdfToTextCaptureShapeDefinition::SHAPE_RECTANGLE :
+				return ( new PdfToTextRectangleCapture ( $this -> ObjectsByName [ $fieldname ] ) ) ;
+
+			case	PdfToTextCaptureShapeDefinition::SHAPE_LINE :
+				return ( new PdfToTextLinesCapture ( $this -> ObjectsByName [ $fieldname ] ) ) ;
+
+			default :
+				error ( new PdfToTextCaptureException ( "Unhandled shape type " . $this -> ObjectsByName [ $fieldname ] [0] -> Type . "." ) ) ;
+		    }
+	    }
+
+
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextCapture -
+        Base class for all capture classes accessible to the caller.
+
+  ==============================================================================================================*/
+class  PdfToTextCapture				//extends		Object
+						implements	\ArrayAccess, \Countable, \IteratorAggregate
+   {
+	protected	$Captures ;
+
+	
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Instantiates a PdfToTextCapture object.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $objects )
+	   {
+		//parent::__construct ( ) ;
+
+		$this -> Captures		=  $objects ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+		Interfaces implementations.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  count ( )
+	   { return ( $this -> Captures ) ; }
+
+
+	public function  getIterator ( )
+	   { return ( new \ArrayIterator ( $this -> Captures ) ) ; }
+
+
+	public function  offsetExists ( $offset )
+	   { return ( $offset  >=  0  &&  $offset  <  count ( $this -> Captures ) ) ; }
+
+
+	public function  offsetGet ( $offset )
+	   { return ( $this -> Captures [ $offset ] ) ; }
+
+
+	public function  offsetSet ( $offset, $value )
+	   { error ( new PdfToTextCaptureException ( "Unsupported operation." ) ) ; }
+
+
+	public function  offsetUnset ( $offset )
+	   { error ( new PdfToTextCaptureException ( "Unsupported operation." ) ) ; }
+
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextLinesCapture -
+        Represents a lines capture, without indexation to their page number.
+
+  ==============================================================================================================*/
+class  PdfToTextLinesCapture			extends  PdfToTextCapture
+   {
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		"flattens" the supplied object list, by removing the PdfToTextCapturedLines class level, so that lines
+		can be iterated whatever their page number is.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $objects )
+	   {
+		$new_objects	=  array ( ) ;
+
+		foreach  ( $objects  as  $object )
+		   {
+			foreach  ( $object  as  $line )
+				$new_objects []		=  $line ;
+		    }
+
+		parent::__construct ( $new_objects ) ;
+	    }
+    }
+
+
+/*==============================================================================================================
+
+    class PdfToTextRectangleCapture -
+        Implements a rectangle capture, from the caller point of view.
+
+  ==============================================================================================================*/
+class  PdfToTextRectangleCapture		extends  PdfToTextCapture
+   {
+	public function  __construct ( $objects )
+	   {
+		parent::__construct ( $objects ) ;
+	    }
+    }
+
