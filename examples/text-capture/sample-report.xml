@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+
+<captures>
+	<rectangle name="Title">
+		<page number="1" left="0" right="596" top="820" bottom="720"/>
+	</rectangle>
+	<lines name="ReportLines" default="*UNDEFINED*" separator="\n">
+		<page number="1"	top="690.32" height="14.28" bottom="0"/>
+		<page number="2..$"	top="731.72" height="14.28" bottom="0"/>
+
+		<column name="Column1"		left="70"	width="330"/>
+	</lines>
+</captures>
