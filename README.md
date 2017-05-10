@@ -63,7 +63,7 @@ The class is able to :
 
 - Render basic page layout (ie, the text is drawn in the same order that Acrobat Reader renders it) using the *PDFOPT\_BASIC\_LAYOUT* option.
 - Retrieve form data as a standalone object, using the *GetFormData()* method.
-- *(coming soon)* Capture areas of text within a page
+- Capture areas of text within a page
 
 # KNOWN ISSUES #
 
@@ -147,12 +147,13 @@ In the current version, decryption of password-protected files is not yet suppor
 
 The method returns the decoded text contents, which are also available through the *Text* property.
 
+### GetCaptures ###
 
-### GetPageFromOffset ( $offset ) ###
+	$captures 	=  $pdf -> GetCaptures ( ) ;
 
-Given a byte offset in the Text property, returns its page number in the pdf document.
+Retrieves the areas of text captured by the **PdfToText** class. This assumes that you specified first the *PDFOPT\_CAPTURE* flag to the class constructor, then called either the *SetCaptures()* or *SetCapturesFromString()* method.
 
-Page numbers start from 1.
+See the **Capturing Text* section for more information on capturing text from PDF files.
 
 ### GetFormCount ###
 
@@ -170,11 +171,37 @@ Data retrieval can be based on a template XML file, or, when the *$template\_xml
 
 See the *Form templates* later in this file to get more information on how templates are used and how form data objects are built. 
 
+### GetPageFromOffset ( $offset ) ###
+
+Given a byte offset in the Text property, returns its page number in the pdf document.
+
+Page numbers start from 1.
+
 ### HasFormData ###
 
-	$status 	=  $df -> HasFormData ( ) ;
+	$status 	=  $pdf -> HasFormData ( ) ;
 
 Returns true if the PDF file contains form data.
+
+### SetCaptures ###
+
+	$pdf -> SetCaptures ( $xml_file ) ;
+
+Loads the capture definitions from the specified XML file.
+
+Note that you must instantiate the **PdfToText** class with the *PDFOPT\_CAPTURE* flag for this function to work.
+
+See the **Capturing Text* section for more information on capturing text from PDF files.
+
+### SetCapturesFromString ###
+
+	$pdf -> SetCaptures ( $xml_data ) ;
+
+Same as the *SetCaptures() method, but loads the capture definitions from a string instead of a file.
+
+Note that you must instantiate the **PdfToText** class with the *PDFOPT\_CAPTURE* flag for this function to work.
+
+See the **Capturing Text* section for more information on capturing text from PDF files.
 
 ### text\_strpos, text\_stripos ###
 
@@ -341,7 +368,7 @@ The string to be used for line breaks. The default is PHP\_EOL.
 This property is expressed in percents ; it gives the extra percentage to add to the values computed by
 the **PdfTexterFont::GetStringWidth()** method.
 
-This value is basically used when computing text positions and string lengths with the PDFOPT_BASIC_LAYOUT option : the computed string length is shorter than its actual length (because of extra spacing determined by character kerning in the font data, among other details). 
+This value is basically used when computing text positions and string lengths with the *PDFOPT\_BASIC\_LAYOUT option : the computed string length is shorter than its actual length (because of extra spacing determined by character kerning in the font data, among other details). 
 
 To determine whether two consecutive blocks of text on the same should be separated by a space, the class will empirically add this extra percentage to the computed string length. The default value is -5 (percent).
 
@@ -497,7 +524,7 @@ A combination of the following flags :
 - *PDFOPT\_IGNORE\_TEXT_LEADING* : This option must be used when you notice that an unnecessary amount of empty lines are inserted between two text elements. This is the symptom that the pdf file contains only relative positioning instructions combined with big values of text leading instructions. 
 - *PDFOPT\_RAW\_LAYOUT* : Renders the text as it comes from the PDF file. This may sometimes lead to out-of-order text or strings concatenated in an inappropriate way, but this option is to be preferred if you only need to index contents or focus on performance. This is the default option.
 - *PDFOPT\_BASIC\_LAYOUT* : Tries to render the text in the order you can see it with Acrobat Reader. Note that the elements will not be mapped in the output exactly as they appear with Acrobat Reader : elements physically disjoint on the x-axis will be separated by a space by default. The **BlockSeparator** property can be used to modify this separator. The following text for example :
--
+
 		Company1							Company2
 		address1							address2
 		city1 								city2
@@ -532,6 +559,7 @@ will be rendered as :
 - *PDFOPT\_ENFORCE\_EXECUTION\_TIME* : when specified, the **MaxExecutionTime** property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process a single file may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_ENFORCE\_GLOBAL\_EXECUTION\_TIME* : when specified, the **MaxGlobalExecutionTime** static property will be checked against the PHP setting *max\_execution\_time*. If the time taken to process all PDF files since the start of the script may risk to take more time than the value in seconds defined for this property, a **PdfToTextTimeout** exception will be thrown before PHP tries to terminate the script execution.
 - *PDFOPT\_DEBUG\_SHOW\_COORDINATES* : Shows the graphics coordinates before each part of text in the output. This option is useful if you want to define capture areas.
+- *PDFOPT\_CAPTURE* : Enables capturing areas of text based on an XML definition file or string. Note that specifying this option will automatically set the *PDFOPT\_BASIC\_LAYOUT* flag.
 - *PDFOPT\_NONE* : Default value. No special processing flags apply.
 
 ### Pages ###
@@ -899,3 +927,329 @@ The required attributes are the following :
 - *separator* : Separator string used to separate each component of the grouped field.
 
 Note that modifying the value of a property referenced by a grouped field will modify the corresponding grouped field value. Similarly, modifying the grouped field value will modify its associated properties.
+
+
+# Capturing text #
+
+Sometimes, it's easier to tell the **PdfToText** class which area(s) of text you want to retrieve from which page(s), rather than having to struggle with regular expressions to isolate the information you want. This is especially true when you want to retrieve data from tabular reports.
+
+Captures are a solution for such needs ; they allow you to define shapes of the following types :
+
+- *Rectangles* : rectangles are used to surround areas of text whose contents you want to extract after processing.
+- *Lines* : allow you to capture lines (and columns within lines) when you have to process a report presented in tabular format.
+
+Areas to be captured are specified using a capture definition file or string, in XML format.
+
+## A step-by-step overview ##
+
+Capturing areas of your PDF document will require you a few preliminary steps that involve some extra work. This is why you will have to choose between using captures or using regular expressions on the extracted text :
+
+- If you have several documents of the same type (reports, for example), then it makes sense to spend some time designing a capture definition file than will allow to easily retrieve line/column values 
+- If you have many documents with many different presentations, then regular expressions will be of better help for you
+
+The step-by-step overview below references the files located in the examples/text-captures directory.
+
+### Determining what to capture ###
+
+A PDF file uses a coordinate system whose values are more or less expressed in "relative units". The point at coordinates (0,0) is located at the bottom-left corner of the page ; the point at coordinates (x,y), where "x" is the page width and "y" the page height, is located at the top-right corner of the page.
+
+That's nice, but how to find the coordinates (x, y, width and height) of the rectangle that contains the text you want to capture ? of course, if you have an Adobe product that allows you to modify PDF files, it may give you such information. But if you don't have such a tool, you're stuck.
+
+The **PdfToText** class has a flag, *PDFOPT\_DEBUG\_SHOW\_COORDINATES*, that includes in the text output the (x,y) coordinates, width and height of each block of text found in the PDF stream. This may be the only occasion you will have to use this option. The following example script explains how the file *sample-report.txt* in the *examples/text-capture* directory of this package was generated :
+
+	<?php
+			include ( 'path/to/PdfToText.phpclass' ) ;
+
+			$pdf	=  new PdfToText ( 'sample-report.pdf', PDFOPT_DEBUG_SHOW_COORDINATES ) ;
+			file_put_contents ( 'sample-report.txt', $pdf -> Text ) ;
+
+The first few lines of file *sample-report.txt* now contain things like this :
+
+	[Page : 1, width = 596, height = 843]
+	
+	[x:248.76, y:760.4, w: 79.895, h:12]REPORT HEADER 
+	
+	[x:70.695, y:746.6, w: 2.381, h:12] 
+	
+	[x:84.495, y:722.6, w: 2.381, h:12] 
+	[x:84.495, y:734.6, w: 2.381, h:12] 
+	
+	[x:0, y:708.08, w: 124.619, h:12]Column1  Column2  Column3 
+	
+	[x:70.8, y:690.32, w: 76.99, h:12]L1C1  L1C2  L1C3 
+	
+	[x:70.8, y:676.04, w: 76.99, h:12]L2C1  L2C2  L2C3 
+	
+	[x:70.8, y:661.76, w: 76.99, h:12]L3C1  L3C2  L3C3 
+	
+	[x:70.8, y:647.48, w: 76.99, h:12]L4C1  L4C2  L4C3 
+	
+	[x:70.8, y:633.2, w: 2.381, h:12] 
+	[Page : 2, width = 596, height = 843]
+	
+	[x:70.8, y:760.4, w: 2.381, h:12] 
+	
+	[x:0, y:745.88, w: 124.619, h:12]Column1  Column2  Column3 
+	
+	[x:70.8, y:731.72, w: 178.533, h:12]L1C1 (page 2)  L1C2 (page 2)  L1C3 (page 2) 
+	
+	[x:70.8, y:717.44, w: 178.533, h:12]L2C1 (page 2)  L2C2 (page 2)  L2C3 (page 2) 
+	
+	[x:70.8, y:703.16, w: 178.533, h:12]L3C1 (page 2)  L3C2 (page 2)  L3C3 (page 2) 
+	
+	[x:70.8, y:688.88, w: 178.533, h:12]L4C1 (page 2)  L4C2 (page 2)  L4C3 (page 2) 
+	
+	[x:70.8, y:674.6, w: 2.381, h:12]
+
+instead of the default output with no specific options (see file *sample-report.pdf* for its graphic counterpart) :
+
+	REPORT HEADER 
+	 
+	Column1  Column2  Column3 
+	L1C1  L1C2  L1C3 
+	L2C1  L2C2  L2C3 
+	L3C1  L3C2  L3C3 
+	L4C1  L4C2  L4C3 
+	 
+	Column1  Column2  Column3 
+	L1C1 (page 2)  L1C2 (page 2)  L1C3 (page 2) 
+	L2C1 (page 2)  L2C2 (page 2)  L2C3 (page 2) 
+	L3C1 (page 2)  L3C2 (page 2)  L3C3 (page 2) 
+	L4C1 (page 2)  L4C2 (page 2)  L4C3 (page 2) 
+  
+In the output generated with the *PDFOPT\_DEBUG\_SHOW\_COORDINATES* option, you will notice some additional information between square brackets :
+
+- The first one appears at the start of each page :
+
+		[Page : 1, width = 596, height = 843]
+		...
+		[Page : 2, width = 596, height = 843]
+		...
+
+It gives the page number, its width and its height in graphics coordinates.
+
+- The second kind of information that appears between square brackets gives size information regarding the block of text immediately following it :
+
+		[x:248.76, y:760.4, w: 79.895, h:12]REPORT HEADER 
+
+### Designing the capture definitions file (or string) ###
+
+The various information added to the output using the *PDFOPT\_DEBUG\_SHOW\_COORDINATES* option should give you enough data to design the capture definitions file.
+
+An example is given below, which will capture some contents of the PDF file *sample-report.pdf* ; a more detailed explanation of this XML format is given in the **XML Capture Definitions** section :
+
+	<captures>
+		<rectangle name="Title">
+			<page number="1" left="245" right="360" top="760" bottom="740"/>
+		</rectangle>
+
+		<lines name="ReportLines" default="*UNDEFINED*" separator="\n">
+			<page number="1"	top="690" height="16" bottom="0"/>
+			<page number="2..$"	top="731" height="16" bottom="0"/>
+	
+			<column name="Column1"		left="70"	width="600"/>
+		</lines>
+	</captures>
+
+Basically, the above data says that it wants to capture two things :
+
+- A *&lt;rectangle&gt;*, located on page 1, and named "Title". The specified coordinates (left, top, right, bottom - but you can also specify width or height instead of right and bottom) define the rectangle that contains the string "REPORT HEADER" in the PDF file
+- A *&lt;lines&gt;* tag named "ReportLines" that defines which columns are to be captured from the input PDF stream. This is done by using the *&lt;column&gt;* tags, which give the x-position and individual width of every column you want to capture.
+
+You may have noticed that both of the *&lt;rectangle&gt;* and *&lt;lines&gt;* contain subtags named *&lt;page&gt;* ; they define which pages of the input PDF file are applicable to the parent tag. For example :
+
+- The rectangle we want to capture is only defined on page 1 of the PDF file
+- The group of lines we want to capture start at y-position 690, and 731 for page 2 until the last page ($). Line heights are 16 in both cases. Inside this group of lines, you can specify as many columns you want to capture (in our example, only one column is defined ; its name is "Column1").
+
+All the coordinates, widths and heights listed in this definition have been taken from the information contained in file  *sample-report.txt*, generated at the previous step (the above section).
+ 
+### Setting up PdfToText to process captures ###
+
+Captures are processed independently of text extraction ; the only two things you have to do is :
+
+- Specify the *PDFOPT\_CAPTURE* in the Options flags
+- Call either the *SetCaptures()* or the *SetCapturesFromString()* method to load the capture definitions, as in the following example :
+
+
+	$pdf 		=  new PdfToText ( 'sample-report.pdf', PdfToText::PDFOPT_CAPTURE ) ;
+	$pdf -> SetCaptures ( 'sample-report.xml' ) ;
+
+### Retrieving capture data ###
+
+Retrieving capture data is fairly simple :
+
+	$captures 	=  $pdf -> GetCaptures ( ) ;
+
+This will return an object of type **PdfToTextCaptureLines**.
+
+Each tag that has been defined in the XML definition file (*sample-report.txt* in our example) has a name ; for example, our rectangle shape has the name "Title", and the group of lines is named "ReportLines" (each report line having one column named "Column1").
+
+Every capture name specified in the Capture definitions file can be accessed as a property name in the object returned by the *GetCaptures()* method :
+
+	$capture -> Title
+	$capture -> ReportLines
+
+However, the way these various informations are processed depend on the capture type :
+
+- For Rectangle captures, the property will be an array, since the same capture can be defined on different pages at different locations. To retrieve the Title located on the first page of our PDF file, we will have to write :
+
+		$capture -> Title [0] -> Text 
+
+or :
+
+		( string ) $capture -> Title [0] 
+
+- For lines captures, the situation is a little bit different : the interest of capturing report lines (together with their column data) is to be able to process them all at once. This is why they are grouped together in a single collection, that you can display or process with such kind of loops :
+
+		foreach ( $captures -> ReportLines  as  $line )
+		   {
+				foreach  ( $line  as  $column )
+					// do something with $column -> Text
+		    }
+
+Inside a line, you can also reference a column by its name :
+
+		$line -> Column1 -> Text
+
+## XML Capture definitions ##
+
+This section describes the format of an XML Capture definition.
+
+### &lt;captures&gt; tag ###
+
+The &lt;captures&gt; tag is the top-level node for the XML Capture definitions. It has no specific attributes and can contain one or more of the following subtags :
+
+- &lt;rectangle&gt;
+- &lt;lines&gt;
+
+### &lt;rectangle&gt; tag ###
+
+The &lt;rectangle&gt; tag defines a rectangular area used to capture text enclosed by it. It has the following attributes :
+
+- *name* : Name of the shape. Must be a valid PHP identifier that will be used to access this property information from the object returned by the *GetCaptures()* method. This name must be unique.
+
+The  &lt;rectangle&gt; tag must specify at least one &lt;page&gt; subtag, to indicate the **PdfToText** class on which pages of the document the captured text should be searched.
+
+#### &lt;page&gt; subtag ####
+
+The &lt;page&gt; subtag of the &lt;rectangle&gt; tag has the following attributes :
+
+- *number* : Page number(s). This can be a comma-separated list of pages or ranges of pages separated by an ellipsis, as in the following example :
+
+
+		"1,2"
+		"1,2..10"
+
+The special character "**$**" means "the last page".
+
+Expressions are allowed ; the following for example :
+
+		"1, $-9..$"
+
+indicates that the rectangle area applies to page 1 and to the last 10 pages of the document. 
+
+The other attributes for the &lt;page&gt; tag are the following :
+ 
+- *left* : left x-coordinate of the rectangle.
+- *right* : right x-coordinate.
+- *top* : top y-coordinate.
+- *bottom* : bottom y-coordinate.
+- *height* : Specifies the rectangle height. One of the following combinations of attributes must be specified : ($top, $height), ($bottom, $height) or ($top, $bottom)
+- *width* : Specifies the rectangle width. One of the following combinations of attributes must be specified : ($left, $width), ($right, $width) or ($left, $right).
+ 
+### &lt;lines&gt; tag ###
+
+The &lt;lines&gt; tag allows to define a group of lines to be captured. It defines applicable pages, and provides definitions about each column to be captured. It is mainly used for capturing report lines and has the following attributes :
+
+- *name* : Element name. Must be a valid PHP identifier that will be used to access this property information from the object returned by the *GetCaptures()* method. This name must be unique.
+- *default* : Provides a default value for columns that have no captured text inside the PDF document. 
+- *separator* : Each line contains a *Text* property that represents all the columns of the lines, separated by this attribute value.
+
+The *&lt;lines&gt;* tag can contain as many *&lt;page&gt;* and *&lt;column&gt;* subtags as needed.
+
+#### &lt;page&gt; subtag ####
+
+The *&lt;page&gt;* subtag of the *&lt;lines&gt;* tag has more or less the same objective as the *&lt;page&gt;* subtag of the *&lt;rectangle&gt;* tag, with a few differences although. It is not used to define the shape of a rectangle, but rather the top and bottom coordinates of the first and last line of a page, along with the line height. 
+
+The following attributes are available :
+
+- *number* : Page number(s). It has the same syntax as for the *&lt;page&gt;* subtag of the *&lt;rectangle&gt;* tag
+- *top* : the y-coordinate of the first line to be captured on the page
+- *bottom* : the y-coordinate of the last line to be captured on the page. The default is 0.
+- *height* : line height.
+
+#### &lt;column&gt; subtag ####
+
+The &lt;column&gt; subtag identifies a column position within a line. It has the following attributes :
+
+- *name* : Column name. This name must be a valid PHP  identifier that will be used to access this property information from the object returned by the *GetCaptures()* method. Column names must be unique within a &lt;lines&gt; tag.
+- *default* : default value to be put in the capture if no information has been found in this line/column combination. If not specified, the value of the "*default*" attribute of the &lt;lines;&gt; will be used. If not specified, the default value will be the empty string.
+- *left* : first x-position of the column
+- *width* : column width
+- *right* : last x-position of the column.
+
+Either the *width* or *right* attribute must be specified.
+
+
+## Capture classes reference ##
+
+The object returned by the *GetCaptures()* method needs some explanation ; a distinction has been made between *what* is captured and *how* to access it.
+
+The *GetCaptures()* method returns an object hierarchy that answers the *how* ; every object in this hierarchy contains objects that answer the *what*. The method returns an object of class **PdfToTextCaptures**, described below. 
+
+### PdftoTextCaptures class ###
+
+This class dynamically creates properties coming directly from the names specified with the &lt;*rectangle*&gt; and &lt;*lines*&gt; tags of the Capture XML definitions.
+
+Thus, if we take our example definition file and call the *GetCaptures()* method :
+
+	 $captures 	=  $pdf -> GetCaptures ( ) ;
+
+Then we will be able to access the properties defined in our capture file in the following way :
+
+	$captures -> Title
+
+or : 
+
+	$captures -> ReportLines
+
+Here is the correspondance between Capture XML definitions and the properties found in this object :
+
+- A &lt;*rectangle*&gt; tag will give a property with the same name as the one specified in the *name* attribute of the tag. This property is of type **PdfToTextRectangleCapture**.
+- The same principle applies for &lt;*lines*&lt;, which gives a property of type **PdfToTextLinesCapture**.  
+
+
+### PdfToTextRectangleCapture class ###
+
+This class allows to retrieve information about the text captured based on a &lt;*rectangle*&gt; definition. It behaves like an array containing elements of type **PdfToTextCapturedRectangle**.
+
+The reason why this class is an array is because the *rectangle* shape can be used to capture text at different locations on different pages. 
+
+### PdfToTextLinesCapture class ###
+
+This class also behaves as an array that gives elements of type **PdfToTextCaptureLine**. It contains the lines that have been captured on the whole document.
+
+### PdfToTextCapturedText class ### 
+
+This is the base abstract class for the various shapes captured in the document (PdfToTextCapturedRectangle, etc.). It has the following properties :
+
+- *Name* : capture name
+- *Page* : page number where the captured text 
+- *Text*	 : captured text
+- *Left*, *Right*, *Top*, *Bottom* : coordinates of the captured text
+
+### PdfToTextCapturedRectangle class ###
+
+Inherits from the **PfToTextCapturedText** class. It currently does not add any new properties or methods.
+
+### PdfToTextCapturedLine class ###
+
+Inherits from the **PfToTextCapturedText** class. Adds the following properties :
+
+- *Columns* : An array of **PdfToTextCapturedColumn** objects.
+
+An object of this class can be iterated like an array. It also provides direct access to a **PdfToTextCapturedColumn** object by specifying its name as a property ; for example :
+
+	$captured_line -> Column1 
+
+Of course, the column name has been specified in the Capture XML definition, in the *name* attribute of the &lt;*column&gt;* tag.

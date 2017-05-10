@@ -1,3 +1,14 @@
+    [Version : 1.6.0]	[Date : 2017/05/08]     [Author : CV]
+	. Added the possibility to capture areas of text :
+	  - The SetCaptures() and SetCapturesFromString() methods define the pages and areas of text within the
+	    pages to be captured (see file README.md for more information). It can be used to define rectangle
+	    shapes or line/columns information
+	  - The GetCaptures() method returns an object containing the captured text areas
+	  - Added the PDFOPT_LOOSE_X_CAPTURE and PDFOPT_LOOSE_Y_CAPTURE to include text that might exceed the
+	    captured area, but whose top/left coordinates are included in the captured area.
+	. Complemented the Adobe 4 standard character set encodings, to include Polish characters.
+	. Exported the Adobe standard character sets to external file 'adobe-charsets.map'.
+	
     [Version : 1.5.8]	[Date : 2017/05/01]     [Author : CV]
 	. Added undocumented aliases for stream encoding (for example, /Fl stands for /FlateDecode).
 	
