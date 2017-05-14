@@ -8,4 +8,4 @@ The directory includes the following files :
 - *example.php* : the PHP script that takes as input *sample-report.pdf* and *sample-report.xml* to extract only the information you want
 - *sample-report.txt* : the output of a previous run of the PdfToText class against file *sample-report.pdf*, with the *PDFOPT\_DEBUG\_SHOW\_COORDINATES* option. It gives every block of text found in the input document, with its (x,y) coordinates and width/height. This information is really useful when you have to design a Capture definitions file because it requires such information.
 
-This example may not be the best, because in the current version (1.6.0), all the columns in file *sample-report.pdf* are interpreted as a single column. This issue will be fixed in a future release, probably 1.6.1
+This example may not be the best for you, because in the current version (1.6.0), all the columns in file *sample-report.pdf* are interpreted as a single column. This issue will be fixed in a future release, probably 1.6.1
