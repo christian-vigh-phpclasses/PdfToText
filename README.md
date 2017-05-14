@@ -1252,4 +1252,4 @@ An object of this class can be iterated like an array. It also provides direct a
 
 	$captured_line -> Column1 
 
-Of course, the column name has been specified in the Capture XML definition, in the *name* attribute of the &lt;*column&gt;* tag.
+Of course, the column name has been specified in the Capture XML definition, with the *name* attribute of the &lt;*column&gt;* tag.

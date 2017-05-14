@@ -49,6 +49,7 @@ This is why I clearly asked users to send me sample Pdf files whenever they enco
 - Darren Jett for his support in helping me to start implementing page layout rendering
 - Manuel Osuna, who gave me the idea of defining text capture areas inside a PDF file
 - Luis Manuel Reyes, who submitted me samples that helped me improve text layout rendering
+- Piotr Markowski, who gave me links to thousands of documents written in Polish, which helped me to considerably enhance my character maps
 - And much more... 
 
 Although I did not solved all the issues yet, I would like to thank you all for your contributions and your help !
