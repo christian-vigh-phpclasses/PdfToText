@@ -24,16 +24,17 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.0]	[Date : 2017/05/08]     [Author : CV]
-	. Added the possibility to capture areas of text :
-	  - The SetCaptures() and SetCapturesFromString() methods define the pages and areas of text within the
-	    pages to be captured (see file README.md for more information). It can be used to define rectangle
-	    shapes or line/columns information
-	  - The GetCaptures() method returns an object containing the captured text areas
-	  - Added the PDFOPT_LOOSE_X_CAPTURE and PDFOPT_LOOSE_Y_CAPTURE to include text that might exceed the
-	    captured area, but whose top/left coordinates are included in the captured area.
-	. Complemented the Adobe 4 standard character set encodings, to include Polish characters.
-	. Exported the Adobe standard character sets to external file 'adobe-charsets.map'.
+    [Version : 1.6.1]	[Date : 2017/05/12]     [Author : CV]
+	. Text captures :
+	  - Fixed a mistake where columns having empty values were not present in the object returned by the
+	    GetCaptures() method.
+	. Complemented the table that maps Unicode special characters such as spaces, quotes, hyphens, etc. to
+	  their Ascii counterpart (mainly for quotes)
+	. Enforced the ability of the class to work in 'degraded mode' whem some external tables are missing.
+	. Complemented the four Adobe standard character sets with more entity names, such as Polish characters,
+	  Greek characters and special symbols (hundreds of symbols added).
+	. Moved the adobe-charsets.map file to the new Maps directory
+	. Created a Maps/unicode-to-ascii.map mapping file.
 	
     (...)
 
@@ -235,118 +236,24 @@ abstract class  PdfObjectBase		// extends  Object
 
 
 	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
-	protected static	$UnicodeToSimpleAscii	=  array
-	   (
-		0x00A0			=>  ' ',				// Non-breakable space
-		0x00AD			=>  '',					// Break Opportunity After: generally provide a line break opportunity after the character 
- 		0x00C6			=>  'AE',				// AE with ligature (&AElig;)
-		0x00E6			=>  'ae',				// ae with ligature (&aelig;)
-		0x1680			=>  ' ',				// OGHAM space mark
-		0x0152			=>  'OE',				// OE with ligature (&OElig;)
-		0x0153			=>  'oe',				// oe with ligature (&oelig;)
-		0x1D6B			=>  'ue',				// ue with ligature
-		0x2000			=>  ' ',				// EN quad
-		0x2001			=>  ' ',				// EM quad
-		0x2002			=>  ' ',				// EN space
-		0x2003			=>  ' ',				// EM space
-		0x2004			=>  ' ',				// 3-per-EM space
-		0x2005			=>  ' ',				// 4-per-EM space
-		0x2006			=>  ' ',				// 6-per-EM space
-		0x2007			=>  ' ',				// Figure space 
-		0x2008			=>  ' ' ,				// Punctuation space
-		0x2009			=>  ' ',				// Thin s1pace
-		0x200A			=>  ' ',				// Hair space
-		0x200B			=>  ' ',				// Zero-width space
-		0x200C			=>  ' ',				// Zero-width non-joiner
-		0x200D			=>  '',					// Zero-width joiner
-		0x2010			=>  '-',				// Narrow hyphen
-		0x2011			=>  '-',				// Non-breaking hyphen
-		0x2012			=>  '-',				// Figure dash (has the same width as digits)
-		0x2013			=>  '-',				// EN dash (used to indicate range of values)
-		0x2014			=>  ' - ',				// EM dash (used to make a break in a flow of sentences)
-		0x2015			=>  '- ',				// Horizontal bar, used to introduce quoted text
-		0x2028			=>  "\n",				// Line separator
-		0x2029			=>  "\n",				// Paragraph separator
-		0x202F			=>  ' ',				// Narrow non-break space
-		0x2053			=>  '~',				// Large tilde
-		0x205F			=>  ' ',				// Medium mathematical space
-		0x2060			=>  '',					// Word joiner
-		0x207B			=>  '-',				// Superscript minus
-		0x208B			=>  '-',				// Subscript minus
-		0x2160			=>  'I',				// Roman numeral : I
-		0x2161			=>  'II',				// Roman numeral : II
-		0x2162			=>  'III',				// Roman numeral : III
-		0x2163			=>  'IV',				// Roman numeral : IV
-		0x2164			=>  'V',				// Roman numeral : V
-		0x2165			=>  'VI',				// Roman numeral : VI
-		0x2166			=>  'VII',				// Roman numeral : VII
-		0x2167			=>  'VIII',				// Roman numeral : VIII
-		0x2168			=>  'IX',				// Roman numeral : IX
-		0x2169			=>  'X',				// Roman numeral : X
-		0x216A			=>  'XI',				// Roman numeral : XI
-		0x216B			=>  'XII',				// Roman numeral : XII
-		0x216C			=>  'L',				// Roman numeral : L
-		0x216D			=>  'C',				// Roman numeral : C
-		0x216E			=>  'D',				// Roman numeral : D
-		0x216F			=>  'M',				// Roman numeral : M
-		0x2170			=>  'i',				// Roman numeral : i
-		0x2171			=>  'ii',				// Roman numeral : ii
-		0x2172			=>  'iii',				// Roman numeral : iii
-		0x2173			=>  'iv',				// Roman numeral : iv
-		0x2174			=>  'v',				// Roman numeral : v
-		0x2175			=>  'vi',				// Roman numeral : vi
-		0x2176			=>  'vii',				// Roman numeral : vii
-		0x2177			=>  'viii',				// Roman numeral : viii
-		0x2178			=>  'ix',				// Roman numeral : ix
-		0x2179			=>  'x',				// Roman numeral : x
-		0x217A			=>  'xi',				// Roman numeral : xi
-		0x217B			=>  'xii',				// Roman numeral : xii
-		0x217C			=>  'l',				// Roman numeral : l
-		0x217D			=>  'c',				// Roman numeral : c
-		0x217E			=>  'd',				// Roman numeral : d
-		0x217F			=>  'm',				// Roman numeral : m
-		0x2122			=>  '-',				// Minus sign (arithmetic operator)
-		0x2758			=>  '|',				// Light vertical bar
-		0x2759			=>  '|',				// Medium vertical bar
-		0x2E3A			=>  '-',				// Two-EM dash
-		0x2E3B			=>  '-',				// Three-EM dash
-		0x3000			=>  ' ',				// Ideographic space
-		0xA728			=>  'TZ',				// TZ with ligature
-		0xA729			=>  'tz',				// tz with ligature
-		0xA732			=>  'AA',				// AA with ligature
-		0xA733			=>  'aa',				// aa with ligature
-		0xA734			=>  'AO',				// AO with ligature
-		0xA735			=>  'ao',				// ao with ligature
-		0xA736			=>  'AU',				// AU with ligature
-		0xA737			=>  'au',				// au with ligature
-		0xA738			=>  'AV',				// AV with ligature
-		0xA739			=>  'av',				// av with ligature
-		0xA73A			=>  'AV',				// AV with ligature and bar
-		0xA73B			=>  'av',				// av with ligature and bar
-		0xA73C			=>  'AY',				// AY with ligature
-		0xA73D			=>  'ay',				// ay with ligature
-		0xA74E			=>  'OO',				// OO with ligature
-		0xA74F			=>  'oo',				// oo with ligature
-		0xA760			=>  'VY',				// VY with ligature
-		0xA761			=>  'vy',				// vy with ligature
-		0xFB00			=>  'ff',				// ff with ligature
-		0xFB01			=>  'fi',				// fi with ligature
-		0xFB02			=>  'fl',				// fl with ligature
-		0xFB03			=>  'ffi',				// ffi with ligature
-		0xFB04			=>  'ffl',				// ffl with ligature
-		0xFB05			=>  'ft',				// ft with ligature
-		0xFB06			=>  'st',				// st with ligature
-		0xFE31			=>  '|',				// Vertical em dash
-		0xFE32			=>  '|',				// Vertical en dash
-		0xFE58			=>  '-',				// Small em dash
-		0xFE63			=>  '-',				// Small ASCII hyphen
-		0xFF0D			=>  '-',				// Full-width hyphen variant of ascii hyphen
-		0xFEFF			=>  ' ',				// Zero-width non-breaking space
-	    ) ;
+	protected static	$UnicodeToSimpleAscii	=  false ;
 
 
+ 	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Performs static initializations such as the Unicode to Ascii table.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  __construct ( )
 	   { 
+		if  ( self::$UnicodeToSimpleAscii  ===  false )
+		   {
+			$charset_file			=  dirname ( __FILE__ ) . "/Maps/unicode-to-ansi.map" ;
+			include ( $charset_file ) ;
+			self::$UnicodeToSimpleAscii	=  ( isset ( $unicode_to_ansi ) ) ?  $unicode_to_ansi : array ( ) ;
+		    }
+
 		// parent::__construct ( ) ; 
 	    }
 
@@ -477,7 +384,7 @@ abstract class  PdfObjectBase		// extends  Object
 	protected function  GetEncodingType ( $object_id, $object_data )
 	   {
 		$status 	=  preg_match ( '# / (?P<encoding> (ASCIIHexDecode) | (AHx) | (ASCII85Decode) | (A85) | (FlateDecode) | (Fl) | (DCTDecode) | (DCT) | ' .
-						                   '(LZWDecode) | (LZW) | (RunLengthDecode) | (RL) | (CCITTFaxDecode) | (CCF) | (JBIG2Decode) | (JPXDecode) ) #imsx', 
+						                   '(LZWDecode) | (LZW) | (RunLengthDecode) | (RL) | (CCITTFaxDecode) | (CCF) | (JBIG2Decode) | (JPXDecode) ) \b #imsx', 
 						$object_data, $match ) ;
 
 		if  ( ! $status )
@@ -1095,7 +1002,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.6.0" ;
+	const		VERSION					=  "1.6.1" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1125,7 +1032,7 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_CAPTURE				=  0x00004000 ;		// Indicates that the caller wants to capture some text and use the SetCaptures() method
 											// It currently enables the PDFOPT_BASIC_LAYOUT option
 	const		PDFOPT_LOOSE_X_CAPTURE			=  0x00008000 ;		// Includes in captures text fragments whose dimensions may exceed the captured area dimensions
-	const		PDFOPT_LOOSE_Y_CAPTURE			=  0x00010000 ;
+	const		PDFOPT_LOOSE_Y_CAPTURE			=  0x00010000 ;		// Currently not used
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -4851,6 +4758,8 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
+	// __decode_text -
+	//	Text decoding function when the PDFOPT_BASIC_LAYOUT flag is specified.
 	private function  __decode_text ( $data, $current_font, $current_font_mapped, $current_font_map_width )
 	   {
 		list ( $text_values, $offsets ) 	=  $this -> __extract_chars_from_array ( $data ) ;
@@ -6608,13 +6517,16 @@ class  PdfTexterFont		extends PdfObjectBase
 
 				if  ( file_exists ( $metrics_file ) )
 				   {
-					require ( $metrics_file ) ;
+					include ( $metrics_file ) ;
 
-					// Build the CharacterWidths table
-					foreach  ( $charwidths  as  $char => $width )
-						$this -> CharacterWidths [ chr ( $char ) ]	=  ( double ) $width ;
+					if  ( isset ( $charwidths ) )
+					   {
+						// Build the CharacterWidths table
+						foreach  ( $charwidths  as  $char => $width )
+							$this -> CharacterWidths [ chr ( $char ) ]	=  ( double ) $width ;
 
-					$this -> GotWidthInformation	=  true ;
+						$this -> GotWidthInformation	=  true ;
+					    }
 				    }
 			    }
 	 	    }
@@ -7220,17 +7132,9 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 		$data 		=  trim ( preg_replace ( '/\s+(\d+)/', '/$1', $match [ 'contents' ] ) ) ;
 		$items 		=  explode ( '/', $data ) ;
+		$index		=  0 ;
 
-		// Some /Differences[] arrays start with a slash, some other not. If the first item is empty, then it started with a slash
-		// so skip the item (it could also come from the fact that the starting number was preceded by spaces)
-		if  ( ! $items [0] )
-			$start	=  1 ;
-		else
-			$start	=  0 ;
-
-		$index 		=  0 ;
-
-		for  ( $i = $start, $item_count = count ( $items ) ; $i  <  $item_count ; $i ++ )
+		for  ( $i = 0, $item_count = count ( $items ) ; $i  <  $item_count ; $i ++ )
 		   {
 		   	$item 		=  trim ( $items [$i] ) ;
 
@@ -7271,7 +7175,15 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 				    }
 				// Otherwise, put a quotation mark instead
 				else
-					$this -> Map [ $index ] 	=  ord ( '?' ) ;
+				   {
+					if  ( PdfToText::$DEBUG )
+						 warning ( "Unknown character name found in a /Differences[] array : $item" ) ;
+
+					echo "Unknown /Differences[] : $item\n" ;
+
+					$this -> Map [ $index ] 		=  
+					$this -> SecondaryMap [ $index ]	=  ord ( '?' ) ;
+				    }
 
 				$index ++ ;
 			    }
@@ -7808,9 +7720,10 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
 			    }
 			else
 			   {
-				require ( $file ) ;
+				include ( $file ) ;
 
-				self::$CachedMaps [ $map_name ]		=  array ( 'file' => $file, 'map' => $map ) ;
+				if  ( isset ( $map ) )
+					self::$CachedMaps [ $map_name ]		=  array ( 'file' => $file, 'map' => $map ) ;
 			    }
 		    }
 
@@ -10786,7 +10699,7 @@ class  PdfToTextCaptureDefinitions	// extends		Object
 			    }
 		    }
 
-		 $captured_object	=  new PdfToTextCaptures ( $captures, $this -> PageCount ) ;
+		 $captured_object	=  new PdfToTextCaptures ( $captures ) ;
 
 		 return ( $captured_object ) ;
 	    }
@@ -11429,7 +11342,7 @@ class	PdfToTextCaptureLinesDefinition		extends  PdfToTextCaptureShapeDefinition
 				   {
 					if  ( ! isset ( $columns_line [ $column_name ] ) ) 
 					   {
-						$found_lines [ $line ] [ $column_name ]	=
+						$columns_line [ $column_name ]	=
 							new PdfToTextCapturedColumn ( $page, $column_name, $this -> Columns [ $column_name ] [ 'default' ], 0, 0, 0, 0, $this ) ; 
 					    }
 				    }
@@ -11444,13 +11357,13 @@ class	PdfToTextCaptureLinesDefinition		extends  PdfToTextCaptureShapeDefinition
 				$line_right	=  0 ;
 				$line_bottom	=  0 ;
 
-				while  ( $last  >=  0  &&  ! $found_lines [ $line ] [ $this -> ColumnNames [ $last ] ] -> Right )
+				while  ( $last  >=  0  &&  ! $columns_line [ $this -> ColumnNames [ $last ] ] -> Right )
 					$last -- ;
 
 				if  ( $last  >  0 )
 				   {
-					$line_right	=  $found_lines [ $line ] [ $this -> ColumnNames [ $last ] ] -> Right ;
-					$line_bottom	=  $found_lines [ $line ] [ $this -> ColumnNames [ $last ] ] -> Bottom ;
+					$line_right	=  $columns_line [ $this -> ColumnNames [ $last ] ] -> Right ;
+					$line_bottom	=  $columns_line [ $this -> ColumnNames [ $last ] ] -> Bottom ;
 				    }
 
 				// Create a CaptureLine entry 
@@ -12262,7 +12175,7 @@ class  PdfToTextCapturedLines			//extends		Object
         Represents all the areas in a PDF file captured by the supplied XML definitions.
 
   ==============================================================================================================*/
-class  PdfToTextCaptures			//extends  Object
+class  PdfToTextCaptures			// extends  Object
    {
 	// Total number of pages in the PDF file
 	public		$PageCount ;
@@ -12279,9 +12192,8 @@ class  PdfToTextCaptures			//extends  Object
 		Instantiates a PdfToTextCaptures object.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  __construct ( $captures, $page_count )
+	public function  __construct ( $captures )
 	   {
-		$this -> PageCount		=  $page_count ;
 		$this -> CapturedObjects	=  $captures ;
 
 		// Build an array of objects indexed by their names
