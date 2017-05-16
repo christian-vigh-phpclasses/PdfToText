@@ -24,18 +24,9 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.1]	[Date : 2017/05/12]     [Author : CV]
-	. Text captures :
-	  - Fixed a mistake where columns having empty values were not present in the object returned by the
-	    GetCaptures() method.
-	. Complemented the table that maps Unicode special characters such as spaces, quotes, hyphens, etc. to
-	  their Ascii counterpart (mainly for quotes)
-	. Enforced the ability of the class to work in 'degraded mode' whem some external tables are missing.
-	. Complemented the four Adobe standard character sets with more entity names, such as Polish characters,
-	  Greek characters and special symbols (hundreds of symbols added).
-	. Moved the adobe-charsets.map file to the new Maps directory
-	. Created a Maps/unicode-to-ascii.map mapping file.
-	
+    [Version : 1.6.2]	[Date : 2017/05/17]     [Author : CV]
+	. The adobe-charsets.map file was searched in the wrong directory.	
+
     (...)
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
@@ -7087,7 +7078,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		// Load the default Adobe character sets, if not already done
 		if  ( self::$Encodings  ===  false )
 		   {
-			$charset_file		=  dirname ( __FILE__ ) . DIRECTORY_SEPARATOR . "adobe-charsets.map" ;
+			$charset_file		=  dirname ( __FILE__ ) . "/Maps/adobe-charsets.map" ;
 			require ( $charset_file ) ;
 			self::$Encodings	=  $adobe_charsets ;
 		    }
