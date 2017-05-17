@@ -24,9 +24,18 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.2]	[Date : 2017/05/17]     [Author : CV]
-	. The adobe-charsets.map file was searched in the wrong directory.	
-
+    [Version : 1.6.3]	[Date : 2017/05/17]     [Author : CV]
+	. Changed the $CharacterClasses table, which was causing some constructs, such as T*, not to be 
+	  recognized as a single instruction.
+	. Fixed a decoding bug when a series of hex digits enclosed in '<>' also contained spaces and newlines
+	  (which should have been ignored).
+	. Allow names in the /Differences array to use the '#xy' notation, where 'xy' are hex digits.
+	. Significantly complemented character maps for the four Adobe predefined character sets.
+	. Text captures : changed the behavior of the <rectangle> definitions ; now, captured areas are
+	  accessible by their page number, instead of a sequential index starting from zero. A capture is
+	  defined for each page of the document, even if not in the list of applicable pages. Of course, empty
+	  captures will be contained in the list if nothing was captured on the corresponding page.
+	
     (...)
 
     [Version : 1.0]	[Date : 2016/04/16]     [Author : CV]
@@ -223,8 +232,18 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static	$FontSpecifiers		=  '(/F \d+ (\.\d+)? ) | (/R \d+) | (/f-\d+-\d+) | (/[CT]\d+_\d+) | (/TT \d+) | (/OPBaseFont \d+) | (/OPSUFont \d+) | (/[0-9a-zA-Z]) | (/F\w+) ' ;
-
+	protected static	$FontSpecifiers		=<<<END
+		(/F \d+ (\.\d+)? )						| 
+		(/R \d+)							| 
+		(/f-\d+-\d+)							| 
+		(/[CT]\d+_\d+)							| 
+		(/TT \d+)							| 
+		(/OPBaseFont \d+)						| 
+		(/OPSUFont \d+)							| 
+		(/[0-9a-zA-Z])							| 
+		(/F\w+)								|
+		(/[A-Za-z][A-Za-z0-9]* ( [\-+] [A-Za-z][A-Za-z0-9]* ))
+END;
 
 	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
 	protected static	$UnicodeToSimpleAscii	=  false ;
@@ -304,7 +323,19 @@ abstract class  PdfObjectBase		// extends  Object
 	    }
 
 
- 	/*--------------------------------------------------------------------------------------------------------------
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    DecodeRawName -
+		Decodes a string that may contain constructs such as '#xy', where 'xy' are hex digits.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  DecodeRawName ( $str )
+	   {
+		return ( rawurldecode ( str_replace ( '#', '%', $str ) ) ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
 
 	    NAME
 	        GetEncodingType - Gets an object encoding type.
@@ -993,7 +1024,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.6.1" ;
+	const		VERSION					=  "1.6.3" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1340,26 +1371,12 @@ class  PdfToText 	extends PdfObjectBase
 	// This array is used only for highly sollicited parts of code
 	const	CTYPE_ALPHA		=  0x01 ;		// Letter
 	const	CTYPE_DIGIT		=  0x02 ;		// Digit
-	const	CTYPE_ALNUM		=  0x03 ;		// Letter or digit
 	const	CTYPE_XDIGIT		=  0x04 ;		// Hex digit
-	const	CTYPE_XALNUM		=  0x07 ;		// A synonym for CTYPE_ALPHA | CTYPE_DIGIT | CTYPE_XDIGIT
-	const	CTYPE_XNUM		=  0x06 ;		// A synonym for CTYPE_DIGIT | CTYPE_XDIGIT
+	const	CTYPE_ALNUM		=  0x08 ;		// Letter or digit
+	const	CTYPE_LOWER		=  0x10 ;		// Lower- or upper-case letters
+	const	CTYPE_UPPER		=  0x20 ;
 
-	private static		$CharacterClass		=  array
-	   (
-		'a' => self::CTYPE_XALNUM, 'b' => self::CTYPE_XALNUM, 'c' => self::CTYPE_XALNUM, 'd' => self::CTYPE_XALNUM, 'e' => self::CTYPE_XALNUM, 'f' => self::CTYPE_XALNUM, 
-		'g' => self::CTYPE_ALNUM , 'h' => self::CTYPE_ALNUM , 'i' => self::CTYPE_ALNUM , 'j' => self::CTYPE_ALNUM , 'k' => self::CTYPE_ALNUM , 'l' => self::CTYPE_ALNUM , 
-		'm' => self::CTYPE_ALNUM , 'n' => self::CTYPE_ALNUM , 'o' => self::CTYPE_ALNUM , 'p' => self::CTYPE_ALNUM , 'q' => self::CTYPE_ALNUM , 'r' => self::CTYPE_ALNUM , 
-		's' => self::CTYPE_ALNUM , 't' => self::CTYPE_ALNUM , 'u' => self::CTYPE_ALNUM , 'v' => self::CTYPE_ALNUM , 'w' => self::CTYPE_ALNUM , 'x' => self::CTYPE_ALNUM , 
-		'y' => self::CTYPE_ALNUM , 'z' => self::CTYPE_ALNUM , 
-		'A' => self::CTYPE_XALNUM, 'B' => self::CTYPE_XALNUM, 'C' => self::CTYPE_XALNUM, 'D' => self::CTYPE_XALNUM, 'E' => self::CTYPE_XALNUM, 'F' => self::CTYPE_XALNUM, 
-		'G' => self::CTYPE_ALNUM , 'H' => self::CTYPE_ALNUM , 'I' => self::CTYPE_ALNUM , 'J' => self::CTYPE_ALNUM , 'K' => self::CTYPE_ALNUM , 'L' => self::CTYPE_ALNUM , 
-		'M' => self::CTYPE_ALNUM , 'N' => self::CTYPE_ALNUM , 'O' => self::CTYPE_ALNUM , 'P' => self::CTYPE_ALNUM , 'Q' => self::CTYPE_ALNUM , 'R' => self::CTYPE_ALNUM , 
-		'S' => self::CTYPE_ALNUM , 'T' => self::CTYPE_ALNUM , 'U' => self::CTYPE_ALNUM , 'V' => self::CTYPE_ALNUM , 'W' => self::CTYPE_ALNUM , 'X' => self::CTYPE_ALNUM , 
-		'Y' => self::CTYPE_ALNUM , 'Z' => self::CTYPE_ALNUM , 
-		'0' => self::CTYPE_XNUM  , '1' => self::CTYPE_XNUM  , '2' => self::CTYPE_XNUM  , '3' => self::CTYPE_XNUM  , '4' => self::CTYPE_XNUM  , '5' => self::CTYPE_XNUM  , 
-		'6' => self::CTYPE_XNUM  , '7' => self::CTYPE_XNUM  , '8' => self::CTYPE_XNUM  , '9' => self::CTYPE_XNUM
-	    ) ;
+	private static		$CharacterClasses		=  false ;
 
 	// Stuff specific to the current PHP version
 	private static		$HasMemoryGetUsage ;
@@ -1424,6 +1441,34 @@ class  PdfToText 	extends PdfObjectBase
 
 			// The string that contains all the Rtl character prefixes in UTF-8 - An optimization used by the __rtl_process() method
 			self::$RtlCharacterPrefixes	=  implode ( '', array_keys ( self::$RtlCharacterPrefixLengths ) ) ;
+
+			// Build the character classes (used only for testing letters and digits)
+			if  ( self::$CharacterClasses  ===  false )
+			   {
+				for  ( $ord = 0 ; $ord  <  256 ; $ord ++ )
+				   {
+					$ch	=  chr ( $ord ) ;
+
+					if  ( $ch  >=  '0'  &&  $ch  <=  '9' )
+						self::$CharacterClasses [ $ch ]		=  self::CTYPE_DIGIT | self::CTYPE_XDIGIT | self::CTYPE_ALNUM ;
+					else if  ( $ch  >=  'A'  &&  $ch  <=  'Z' )
+					   {
+						self::$CharacterClasses [ $ch ]		=  self::CTYPE_ALPHA | self::CTYPE_UPPER | self::CTYPE_ALNUM ;
+
+						if  ( $ch  <=  'F' )
+							self::$CharacterClasses [ $ch ]		|=  self::CTYPE_XDIGIT ;
+					    }
+					else if  ( $ch  >=  'a'  &&  $ch  <=  'z' )
+					   {
+						self::$CharacterClasses [ $ch ]		=  self::CTYPE_ALPHA | self::CTYPE_LOWER | self::CTYPE_ALNUM ;
+
+						if  ( $ch  <=  'f' )
+							self::$CharacterClasses [ $ch ]		|=  self::CTYPE_XDIGIT ;
+					    }
+					else
+						self::$CharacterClasses [ $ch ]		=  0 ;
+				    }
+			    }
 
 			// Global execution time limit
 			self::$PhpMaxExecutionTime	=  ( integer ) ini_get ( 'max_execution_time' ) ;
@@ -1833,7 +1878,7 @@ class  PdfToText 	extends PdfObjectBase
 			    }
 
 			// Decode the encoded stream
-			$decoded_stream_data 	=  $this -> DecodeData ( $object_number, $stream_data, $type ) ;
+			$decoded_stream_data 	=  $this -> DecodeData ( $object_number, $stream_data, $type, $object_data ) ;
 
 			// Second chance to peek author information, this time on a decoded stream data
 			if  ( ! $this -> GotAuthorInformation )
@@ -2566,7 +2611,7 @@ class  PdfToText 	extends PdfObjectBase
 	        Returns the decoded stream data.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	protected function  DecodeData ( $object_id, $stream_data, $type )
+	protected function  DecodeData ( $object_id, $stream_data, $type, $object_data )
 	   {
 		$decoded_stream_data 	=  '' ;
 
@@ -2977,7 +3022,7 @@ class  PdfToText 	extends PdfObjectBase
 		    {
 			$stream_data	=  $stream_match [ 'stream' ] ;
 			$type 		=  $this -> GetEncodingType ( $object_id, $object_data ) ;
-			$decoded_data	=  $this -> DecodeData ( $object_id, $stream_data, $type ) ;
+			$decoded_data	=  $this -> DecodeData ( $object_id, $stream_data, $type, $object_data ) ;
 
 			if  ( self::$DEBUG  >  1 )
 				echo "\n----------------------------------- OBJSTREAM #$object_id\n$decoded_data" ;
@@ -3413,7 +3458,7 @@ class  PdfToText 	extends PdfObjectBase
 									// We have here the escape sequences "\(" and "\)", but the backslash is encoded on two bytes
 									// (although the MSB is nul), while the escaped character is encoded on 1 byte. waiting
 									// for the next quirk to happen...
-									if  ( $newchar  ==  '\\' )
+									if  ( $newchar  ==  '\\'  &&  isset ( $text [ $i + 2 ] ) )
 									   {
 										$newchar		=  $this -> ProcessEscapedCharacter ( $text [ $i + 2 ] ) ;
 										$i ++ ;		// this time we processed 3 bytes, not 2
@@ -3776,7 +3821,7 @@ class  PdfToText 	extends PdfObjectBase
 			    {
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'T*' ] ++ ;
 				
-				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => false, 'leading' => true ) ) ;
+				return ( array ( 'instruction' => 'nl', 'next' => $next_index, 'conditional' => true, 'leading' => true ) ) ;
 			     }
 			// Draw object ("Do"). To prevent different text shapes to appear on the same line, we return a "newline" instruction
 			// here. Note that the shape position is not taken into account here, and shapes will be processed in the order they
@@ -3802,12 +3847,14 @@ class  PdfToText 	extends PdfObjectBase
 			   	else
 					return ( $instruction ) ;
 			    }
+			// Hex digits within angle brackets
 		   	else if  ( $token [0]  ==  '<'  )
 			   {
-				$ch	=  $token [1] ;
+				$ch		=  $token [1] ;
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
+			   	$instruction	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( $token ), 'token' => $token ) ;
 
-				if  ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass & self::CTYPE_ALNUM ) )
+				if  ( self::$CharacterClasses [ $ch ] & self::CTYPE_ALNUM )
 				   {
 			   		$next_part 	=  $this -> __next_token ( $page_number, $data, $data_length, $next_index ) ;
 			   		$instruction	=  array ( 'instruction' => 'text', 'next' => $next_index, 'values' => array ( $token ), 'token' => $token ) ;
@@ -4033,7 +4080,10 @@ class  PdfToText 	extends PdfObjectBase
 		   			if  ( $pos  ===  false )
 		   				return ( false ) ;
 
-		   			return ( array ( substr ( $data, $index, $pos - $index + 1 ), $pos + 1 ) ) ;
+					// There can be spaces and newlines inside a series of hex digits, so remove them...
+					$result			=  preg_replace ( '/\s+/', '', substr ( $data, $index, $pos - $index + 1 ) ) ;
+
+		   			return ( array ( $result, $pos + 1 ) ) ;
 		   		   }
 
 			// Tick character : consider it as a keyword, in the same way as the "TJ" or "Tj" keywords
@@ -4047,22 +4097,22 @@ class  PdfToText 	extends PdfObjectBase
 
 				if  ( isset ( $data [ $index ] ) )
 				   {
-		   			if ( ( isset ( self::$CharacterClass [ $ch ]  ) &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_DIGIT ) )  ||  
+		   			if ( ( self::$CharacterClasses [ $ch ] & self::CTYPE_DIGIT )  ||  
 							$ch  ==  '-'  ||  $ch  ==  '+'  ||  $ch  ==  '.' )
 		   			   {
 		   				while  ( $index  <  $data_length  &&
-		   						( ( isset ( self::$CharacterClass [ $data [ $index ] ]  ) &&  ( self::$CharacterClass [ $data [ $index ] ] & self::CTYPE_DIGIT )  ||  
-									$data [ $index ]  ==  '.' ) ) )
+		   						( ( self::$CharacterClasses [ $data [ $index ] ] & self::CTYPE_DIGIT )  ||  
+									$data [ $index ]  ==  '.' ) )
 		   					$value 	.=  $data [ $index ++ ] ;
 		   			    }
-		   			else if  ( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALPHA ) )  ||  
+		   			else if  ( ( self::$CharacterClasses [ $ch ] & self::CTYPE_ALPHA )  ||  
 							$ch  ==  '/'  ||  $ch  ==  '!' )
 		   			   {
 						$ch	=  $data [ $index ] ;
 
 						while  ( $index  <  $data_length  &&  
-							( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALNUM ) )  ||  
-								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_'  ||  $ch  ==  '.' ) )
+							( ( self::$CharacterClasses [ $ch ] & self::CTYPE_ALNUM )  ||  
+								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_'  ||  $ch  ==  '.'  ||  $ch  ==  '+' ) )
 						   {
 							$value 	.=  $ch ;
 							$index ++ ;
@@ -4695,7 +4745,10 @@ class  PdfToText 	extends PdfObjectBase
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '<' ] ++ ;
 
-						$token		=  '[' . substr ( $data, $index, $next_index - $index + 1 ) . ']' ;
+						// There can be spaces and newlines inside a series of hex digits, so remove them...
+						$result			=  preg_replace ( '/\s+/', '', substr ( $data, $index, $next_index - $index + 1 ) ) ;
+
+						$token		=  "[$result]" ;
 						$next_index ++ ;
 
 		   				return ( true ) ;
@@ -4726,14 +4779,14 @@ class  PdfToText 	extends PdfObjectBase
 									$data [ $next_index ]  ===  '-'  ||  $data [ $next_index ]  ===  '+'  ||  $data [ $next_index ]  ===  '.' ) )
 		   					$token 	.=  $data [ $next_index ++ ] ;
 		   			    }
-		   			else if  ( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALPHA ) )  ||  
+		   			else if  ( ( self::$CharacterClasses [ $ch ] & self::CTYPE_ALPHA )  ||  
 							$ch  ==  '/'  ||  $ch  ==  '!' )
 		   			   {
 						$ch	=  $data [ $next_index ] ;
 
 						while  ( $next_index  <  $data_length  &&  
-							( ( isset ( self::$CharacterClass [ $ch ] )  &&  ( self::$CharacterClass [ $ch ] & self::CTYPE_ALNUM ) )  ||  
-								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_'  ||  $ch  ==  '.' ) )
+							( ( self::$CharacterClasses [ $ch ] & self::CTYPE_ALNUM )  ||  
+								$ch  ==  '*'  ||  $ch  ==  '-'  ||  $ch  ==  '_'  ||  $ch  ==  '.'  ||  $ch  ==  '+' ) )
 						   {
 							$token 	.=  $ch ;
 							$next_index ++ ;
@@ -7073,14 +7126,26 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	//	beginbfrange/endbfrange constructs.
 	public function  __construct ( $object_id, $definitions )
 	   {
+		// Ignore character variants whose names end with these suffixes
+		static	$IgnoredVariants	=  array
+		   (
+			'/\.scalt$/', 
+			'/\.sc$/', 
+			'/\.fitted$/', 
+			'/\.oldstyle$/', 
+			'/\.taboldstyle$/', 
+			'/\.alt$/',
+			'/alt$/',
+		    ) ;
+
 		parent::__construct ( $object_id ) ;
 
 		// Load the default Adobe character sets, if not already done
 		if  ( self::$Encodings  ===  false )
 		   {
-			$charset_file		=  dirname ( __FILE__ ) . "/Maps/adobe-charsets.map" ;
-			require ( $charset_file ) ;
-			self::$Encodings	=  $adobe_charsets ;
+			$charset_file		=  Path::RealPath ( "thrak://Data/PdfToText/Maps/adobe-charsets.map" ) ;
+			include ( $charset_file ) ;
+			self::$Encodings	=  ( isset ( $adobe_charsets ) ) ?  $adobe_charsets : array ( ) ;
 		    }
 
 		// Fonts using default Adobe character sets and hexadecimal representations are one-byte long
@@ -7127,7 +7192,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 		for  ( $i = 0, $item_count = count ( $items ) ; $i  <  $item_count ; $i ++ )
 		   {
-		   	$item 		=  trim ( $items [$i] ) ;
+		   	$item 		=  PdfToText::DecodeRawName ( trim ( $items [$i] ) ) ;
 
 		   	// Integer value  : index of next character in map
 			if  ( is_numeric ( $item ) )
@@ -7135,6 +7200,9 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 			// String value : a character name, as defined by Adobe
 			else
 			   {
+				// Remove variant part of the character name
+				$item	=  preg_replace  ( $IgnoredVariants, '', trim ( $item ) ) ;
+
 			   	// Keyword (character name) exists in the encoding table
 				if  ( isset ( self::$Encodings [ $item ] ) )
 				   {
@@ -7168,9 +7236,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 				else
 				   {
 					if  ( PdfToText::$DEBUG )
-						 warning ( "Unknown character name found in a /Differences[] array : $item" ) ;
-
-					echo "Unknown /Differences[] : $item\n" ;
+						 warning ( "Unknown character name found in a /Differences[] array : [$item]" ) ;
 
 					$this -> Map [ $index ] 		=  
 					$this -> SecondaryMap [ $index ]	=  ord ( '?' ) ;
@@ -11082,6 +11148,22 @@ class	PdfToTextCaptureRectangleDefinition		extends  PdfToTextCaptureShapeDefinit
 			    }
 		    }
 
+
+		// Provide empty values for pages which did not capture a rectangle shape
+		$added_missing_pages	=  false ;
+
+		foreach  ( $this -> ApplicablePages  as  $page => $applicable )
+		   {
+			if  ( ! isset ( $result [ $page ] ) )
+			   {
+				$result [ $page ]	=  new PdfToTextCapturedRectangle ( $page, $this -> Name, '', 0, 0, 0, 0, $this ) ;
+				$added_missing_pages	=  true ;
+			    }
+		    }
+
+		if  ( $added_missing_pages )	// Sort by page number if empty values were added
+			ksort ( $result ) ;
+
 		// All done, return
 		return ( $result ) ;
 	    }
@@ -12166,11 +12248,8 @@ class  PdfToTextCapturedLines			//extends		Object
         Represents all the areas in a PDF file captured by the supplied XML definitions.
 
   ==============================================================================================================*/
-class  PdfToTextCaptures			// extends  Object
+class  PdfToTextCaptures			//extends  Object
    {
-	// Total number of pages in the PDF file
-	public		$PageCount ;
-
 	// Captured objects - May not exactly reflect the PdfToTextCapture*Shape classes
 	private		$CapturedObjects ;
 	// Allows faster access by capture name
@@ -12348,9 +12427,20 @@ class  PdfToTextLinesCapture			extends  PdfToTextCapture
   ==============================================================================================================*/
 class  PdfToTextRectangleCapture		extends  PdfToTextCapture
    {
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Builds an object array indexed by page number.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  __construct ( $objects )
 	   {
-		parent::__construct ( $objects ) ;
+		$new_objects	=  array ( ) ;
+
+		foreach  ( $objects  as  $object )
+			$new_objects [ $object -> Page ]	=  $object ;
+
+		parent::__construct ( $new_objects ) ;
 	    }
     }
 
