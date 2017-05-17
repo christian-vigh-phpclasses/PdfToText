@@ -1,3 +1,15 @@
+    [Version : 1.6.3]	[Date : 2017/05/17]     [Author : CV]
+	. Changed the $CharacterClasses table, which was causing some constructs, such as T*, not to be 
+	  recognized as a single instruction.
+	. Fixed a decoding bug when a series of hex digits enclosed in '<>' also contained spaces and newlines
+	  (which should have been ignored).
+	. Allow names in the /Differences array to use the '#xy' notation, where 'xy' are hex digits.
+	. Significantly complemented character maps for the four Adobe predefined character sets.
+	. Text captures : changed the behavior of the <rectangle> definitions ; now, captured areas are
+	  accessible by their page number, instead of a sequential index starting from zero. A capture is
+	  defined for each page of the document, even if not in the list of applicable pages. Of course, empty
+	  captures will be contained in the list if nothing was captured on the corresponding page.
+	
     [Version : 1.6.2]	[Date : 2017/05/17]     [Author : CV]
 	. The adobe-charsets.map file was searched in the wrong directory.	
 

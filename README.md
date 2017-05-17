@@ -1093,11 +1093,13 @@ However, the way these various informations are processed depend on the capture 
 
 - For Rectangle captures, the property will be an array, since the same capture can be defined on different pages at different locations. To retrieve the Title located on the first page of our PDF file, we will have to write :
 
-		$capture -> Title [0] -> Text 
+		$capture -> Title [1] -> Text 
 
 or :
 
-		( string ) $capture -> Title [0] 
+		( string ) $capture -> Title [1] 
+
+Rectangle captures are accessible by their page number. There will be a capture for each page of the document, even if not present in the list of applicable pages.
 
 - For lines captures, the situation is a little bit different : the interest of capturing report lines (together with their column data) is to be able to process them all at once. This is why they are grouped together in a single collection, that you can display or process with such kind of loops :
 
@@ -1215,7 +1217,7 @@ or :
 
 Here is the correspondance between Capture XML definitions and the properties found in this object :
 
-- A &lt;*rectangle*&gt; tag will give a property with the same name as the one specified in the *name* attribute of the tag. This property is of type **PdfToTextRectangleCapture**.
+- A &lt;*rectangle*&gt; tag will give a property with the same name as the one specified in the *name* attribute of the tag. This property is of type **PdfToTextRectangleCapture**. This is an array property whose indexes are the page numbers containing the captures. Note that there will be an entry for each page of the document, even if empty or if not specified in the &lt;*page*&gt; tag of the &lt;*rectangle*&gt; entry. 
 - The same principle applies for &lt;*lines*&lt;, which gives a property of type **PdfToTextLinesCapture**.  
 
 
