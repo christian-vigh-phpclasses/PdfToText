@@ -3,9 +3,8 @@
 	$unicode_to_ansi	=  array
 	   (
 		0x00A0			=>  ' ',				// Non-breakable space
-		0xAB			=>  '"',				// Left pointing double angle quotation mark
+		0x00AB			=>  '"',				// Left pointing double angle quotation mark
 		0x00AD			=>  '',					// Break Opportunity After: generally provide a line break opportunity after the character 
-		0xAB			=>  '"',				// Right pointing double angle quotation mark
  		0x00C6			=>  'AE',				// AE with ligature (&AElig;)
 		0x00E6			=>  'ae',				// ae with ligature (&aelig;)
 		0x1680			=>  ' ',				// OGHAM space mark
@@ -35,6 +34,7 @@
 		0x2018			=>  "'",				// German right single quote
 		0x2019			=>  "'",				// Secondary level quotation
 		0x201A			=>  "'",				// German left single quote
+		0x201B			=>  "'",				// Reversed quote
 		0x201C			=>  '"',				// Left double quotation mark
 		0x201D			=>  '"',				// Double quote-apostrophe
 		0x201E			=>  '"',				// Lower double quote-apostrophe
