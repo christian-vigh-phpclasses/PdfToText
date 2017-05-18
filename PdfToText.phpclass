@@ -24,17 +24,12 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.3]	[Date : 2017/05/17]     [Author : CV]
-	. Changed the $CharacterClasses table, which was causing some constructs, such as T*, not to be 
-	  recognized as a single instruction.
-	. Fixed a decoding bug when a series of hex digits enclosed in '<>' also contained spaces and newlines
-	  (which should have been ignored).
-	. Allow names in the /Differences array to use the '#xy' notation, where 'xy' are hex digits.
-	. Significantly complemented character maps for the four Adobe predefined character sets.
-	. Text captures : changed the behavior of the <rectangle> definitions ; now, captured areas are
-	  accessible by their page number, instead of a sequential index starting from zero. A capture is
-	  defined for each page of the document, even if not in the list of applicable pages. Of course, empty
-	  captures will be contained in the list if nothing was captured on the corresponding page.
+    [Version : 1.6.4]	[Date : 2017/05/18]     [Author : CV]
+	. Template expansion was performed using preg_replace(). When the template data contained strings such
+	  as '\00' or '$something', preg_replace() tried to replace them with the corresponding capture in the
+	  search pattern, which caused the result to be garbled. The PregStrReplace() method has been added to
+	  avoid such issues.
+	. The adobe-charset.map file was searched in the wrong directory.
 	
     (...)
 
@@ -757,6 +752,109 @@ END;
 	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
+	        PregStrReplace - Replace string(s) using regular expression(s)
+	
+	    PROTOTYPE
+	        $result		=  PdfToText::PregStrReplace ( $pattern, $replacement, $subject, $limit = -1, 
+						&$match_count = null )
+	
+	    DESCRIPTION
+	        This function behaves like a mix of str_replace() and preg_replace() ; it allows to search for strings
+		using regular expressions, but the replacements are plain-text strings and no reference to a capture
+		specified in the regular expression will be interpreted.
+		This is useful when processing templates, which can contain constructs such as "\00" or "$", which are
+		interpreted by preg_replace() as references to captures.
+
+		The function has the same parameters as preg_replace().
+	
+	    RETURN VALUE
+	        Returns the substituted text.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public static function  PregStrReplace ( $pattern, $replacement, $subject, $limit = -1, &$match_count = null )
+	   {
+		// Make sure that $pattern and $replacement become arrays of the same size
+		if  ( is_array ( $pattern ) )
+		   {
+			if  ( is_array ( $replacement ) )
+			   {
+				if  ( count ( $pattern )  !==  count ( $replacement ) )
+				   {
+					warning ( "The \$replacement parameter should have the same number of element as \$pattern." ) ;
+					return ( $subject ) ;
+				    }
+			    }
+			else
+				$replacement	=  array_fill ( $replacement, count ( $pattern ), $replacement ) ;
+		    }
+		else 
+		   {
+			if  ( is_array ( $replacement ) )
+			   {
+				warning ( "Expected string for the \$replacement parameter." ) ;
+				return ( $subject ) ;
+			    }
+
+			$pattern	=  array ( $pattern ) ;
+			$replacement	=  array ( $replacement ) ;
+		    }
+
+		// Upper limit
+		if  ( $limit  <  1 )
+			$limit		=  PHP_INT_MAX ;
+
+		// Loop through each supplied pattern
+		$current_subject	=  $subject ;
+		$count			=  0 ;
+		
+		for  ( $i = 0, $pattern_count = count ( $pattern ) ; $i  <  $pattern_count ; $i ++ )
+		   {
+			$regex		=  $pattern [$i] ;
+
+			// Get all matches for this pattern
+			if  ( preg_match_all ( $regex, $current_subject, $matches, PREG_OFFSET_CAPTURE ) )
+			   {
+				$result		=  '' ;		// Current output result
+				$last_offset	=  0 ;
+
+				// Process each match
+				foreach  ( $matches [0]  as  $match )
+				   {
+					$offset		=  ( integer ) $match [1] ;
+
+					// Append data from the last seen offset up to the current one
+					if  ( $last_offset  <  $offset )
+						$result		.=  substr ( $current_subject, $last_offset, $offset - $last_offset ) ;
+
+					// Append the replacement string for this match
+					$result		.=  $replacement [$i] ;
+
+					// Compute next offset in $current_subject
+					$last_offset     =  $offset + strlen ( $match [0] ) ;
+
+					// Limit checking
+					$count ++ ;
+
+					if  ( $count  >  $limit )
+						break 2 ;
+				    }
+
+				// Append the last part of the subject that has not been matched by anything
+				$result			.=  substr ( $current_subject, $last_offset ) ;
+
+				// The current subject becomes the string that has been built in the steps above
+				$current_subject	 =  $result ;
+			    }
+		    }
+
+		/// All done, return
+		return ( $current_subject ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
 	        ProcessEscapedCharacter - Interprets a character after a backslash in a string.
 	
 	    PROTOTYPE
@@ -1024,7 +1122,7 @@ END;
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.6.3" ;
+	const		VERSION					=  "1.6.4" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1054,7 +1152,7 @@ class  PdfToText 	extends PdfObjectBase
 	const		PDFOPT_CAPTURE				=  0x00004000 ;		// Indicates that the caller wants to capture some text and use the SetCaptures() method
 											// It currently enables the PDFOPT_BASIC_LAYOUT option
 	const		PDFOPT_LOOSE_X_CAPTURE			=  0x00008000 ;		// Includes in captures text fragments whose dimensions may exceed the captured area dimensions
-	const		PDFOPT_LOOSE_Y_CAPTURE			=  0x00010000 ;		// Currently not used
+	const		PDFOPT_LOOSE_Y_CAPTURE			=  0x00010000 ;		// (currently not used)
 
 	// When boolean true, outputs debug information about fonts, character maps and drawing contents.
 	// When integer > 1, outputs additional information about other objects.
@@ -7143,7 +7241,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		// Load the default Adobe character sets, if not already done
 		if  ( self::$Encodings  ===  false )
 		   {
-			$charset_file		=  Path::RealPath ( "thrak://Data/PdfToText/Maps/adobe-charsets.map" ) ;
+			$charset_file		=  dirname ( __FILE__ ) .  '/Maps/adobe-charsets.map' ;
 			include ( $charset_file ) ;
 			self::$Encodings	=  ( isset ( $adobe_charsets ) ) ?  $adobe_charsets : array ( ) ;
 		    }
@@ -8303,7 +8401,7 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 					$template_replacements	=  array ( ) ;
 					
 					$this ->  __get_replacements ( $page_contents, $template_searches, $template_replacements ) ;
-					$text_data	=  preg_replace ( $template_searches, $template_replacements, $text_data ) ;
+					$text_data	=  self::PregStrReplace ( $template_searches, $template_replacements, $text_data ) ;
 				    }
 			    }
 		    }
@@ -8320,8 +8418,9 @@ class  PdfTexterPageMap		extends  PdfObjectBase
 		   {
 			if  ( isset ( $this -> TemplateObjects [ $template_object ] )  &&  ! isset ( $objects_seen [ $template_object ] ) )
 			   {
+				$template				=  $this -> TemplateObjects [ $template_object ] ;
 				$searches []				=  '#(' . $template_name . ' \s+ Do\b )#msx' ;
-				$replacements []			=  '!PDFTOTEXT_TEMPLATE_' . substr ( $template_name, 1 ) . ' ' . $this -> TemplateObjects [ $template_object ] ;
+				$replacements []			=  '!PDFTOTEXT_TEMPLATE_' . substr ( $template_name, 1 ) . ' ' . $template ;
 				$objects_seen [ $template_object ]	=  $template_object ;
 			
 				if  ( isset ( $this -> PageContents [ $template_object ] ) )
