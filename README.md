@@ -147,11 +147,64 @@ In the current version, decryption of password-protected files is not yet suppor
 
 The method returns the decoded text contents, which are also available through the *Text* property.
 
+### AddAdobeExtraMappings ( $mappings ) ###
+
+Adobe supports 4 predefined fonts : standard, Mac, WinAnsi and PDF). All the characters in these fonts are identified by a character time, a little bit like HTML entities ; for example, 'one' will be the 
+character '1', 'acircumflex' will be 'â', etc.
+
+There are thousands of character names defined by Adobe (see [https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html](https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html "https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html")).
+
+Some of them are not in this list ; this is the case for example of the 'ax' character names, where 'x' is a decimal number. When such a character is specified in a /Differences array, then there is somewhere 
+a CharProc[] array giving an object id for each of those characters.
+
+The referenced object(s) in turn contain drawing instructions to draw the glyph. At no point you could 
+guess what is the corresponding Unicode character for this glyph, since the information is not contained in the PDF file.
+
+The *AddAdobeExtraMappings()* method allows you to specify such correspondences. Specify an array as the *$mappings* parameter, whose keys are the Adobe character name (for example, "a127") and values the 
+corresponding Unicode values.
+
+The *$mappings* parameter is an associative array whose keys are Adobe character names. The array values can take several forms :
+
+- A character
+- An integer value
+- An array of up to four character or integer values. Internally, every specified value is converted to an array of four integer values, one for each of the standard Adobe character sets (Standard, Mac, WinAnsi and PDF). The following rules apply :
+	- If the input value is a single character, the output array corrsponding the Adobe character   name will be a set of 4 elements corresponding to the ordinal value of the supplied character.
+	- If the input value is an integer, the output array will be a set of 4 identical values
+	- If the input value is an array :
+	- Arrays with less that 4 elements will be padded, using the last array item for padding
+	- Arrays with more than 4 elements will be silently truncated
+	- Each array value can either be a character or a numeric value.
+	
+**Note**
+	
+In this current implementation, the method applies the mappings to ALL Adobe default fonts. That is,
+you cannot have one mapping for one Adobe font referenced in the PDF file, then a second mapping for
+a second Adobe font, etc.
+
+
 ### GetCaptures ###
 
-	$captures 	=  $pdf -> GetCaptures ( ) ;
+	$captures 	=  $pdf -> GetCaptures ( $full = false ) ;
 
 Retrieves the areas of text captured by the **PdfToText** class. This assumes that you specified first the *PDFOPT\_CAPTURE* flag to the class constructor, then called either the *SetCaptures()* or *SetCapturesFromString()* method.
+
+When the *$full* parameter is set to *false* (the default), the returned object is a hierarchy of **stdClass** objects which maps capture names to their values.
+
+When set to *true*, the returned object is of type **PdfToTextCaptures**, which holds much more information. It should be useful only when doing internal debugging of the PdfToText class.
+
+**Note** : 
+
+Accessing a property value when the *$full* parameter is *false* can be performed like this (here, we are accessing the value of the *Title* capture in the first page) :
+
+	$captures -> Title [1] 
+
+When this parameter is *true*, you have to specify the *Text* property to retrieve its contents :
+
+	$captures -> Title [1] -> Text
+
+If you plan to switch between both return types during your development phase, you can use a unified approach that works in both cases :
+
+	( string ) $captures -> Title [1]  
 
 See the **Capturing Text* section for more information on capturing text from PDF files.
 
@@ -182,6 +235,47 @@ Page numbers start from 1.
 	$status 	=  $pdf -> HasFormData ( ) ;
 
 Returns true if the PDF file contains form data.
+
+
+### MarkTextLike ( $regex, $mark_start, $mark_end ) ###
+
+Sometimes it may be convenient, when you want to extract only a portion of text, to say : "I want to
+extract text between this title and this title". The MarkTextLike() method provides some support for
+such a task. Imagine you have documents that have the same structure, all starting with an "Introduction"
+title :
+
+	Introduction
+		...
+		some text
+		...
+	Some other title
+		...
+
+By calling the MarkTextLike() method such as in the example below :
+
+	$pdf -> MarkTextLike ( '/\bIntroduction\b/', '<M>', '</M' ) ;
+
+then you will get as output :
+
+	<M>Introduction</M>
+		...
+		some text
+		...
+	<M>Some other title</M>
+
+Adding such markers in the output will allow you to easily extract the text between the chapters
+"Introduction" and "Some other title", using a regular expression.
+
+The font name used for the first string matched by the specified regular expression will be searched
+later to add markers around all the text portions using this font.
+
+
+The parameters are the following :	
+
+- *$regex* (string) : A regular expression to match the text to be matched. Subsequent portions of text using the same font will be surrounded by the marker start/end strings.
+
+- *$marker_start*, *$marker_end* (string) : Markers to surround the string when a match is found.
+
 
 ### SetCaptures ###
 

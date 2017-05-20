@@ -1,3 +1,12 @@
+    [Version : 1.6.5]	[Date : 2017/05/20]     [Author : CV]
+	. Complemented the Unicode to Ansi mapping table.
+	. Added the AddAdobeExtraMappings() method, to complement the standard Adobe character maps when given
+	  character names refer to a glyph that has no Unicode equivalent.
+	. Added the MarkTextLike() method to mark certain portions of text based on their font name and size.
+	. Changed the GetCaptures() method to return by default a collection of stdClass objects instead of
+	  PdfToText objects whose contents takes time to be displayed when using the print_r() function.
+	  The new boolean parameter $full allows to return PdfToText objects instead when set to true.
+	
     [Version : 1.6.3]	[Date : 2017/05/17]     [Author : CV]
 	. Changed the $CharacterClasses table, which was causing some constructs, such as T*, not to be 
 	  recognized as a single instruction.
