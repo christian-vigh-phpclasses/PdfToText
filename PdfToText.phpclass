@@ -24,12 +24,14 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.4]	[Date : 2017/05/18]     [Author : CV]
-	. Template expansion was performed using preg_replace(). When the template data contained strings such
-	  as '\00' or '$something', preg_replace() tried to replace them with the corresponding capture in the
-	  search pattern, which caused the result to be garbled. The PregStrReplace() method has been added to
-	  avoid such issues.
-	. The adobe-charset.map file was searched in the wrong directory.
+    [Version : 1.6.5]	[Date : 2017/05/20]     [Author : CV]
+	. Complemented the Unicode to Ansi mapping table.
+	. Added the AddAdobeExtraMappings() method, to complement the standard Adobe character maps when given
+	  character names refer to a glyph that has no Unicode equivalent.
+	. Added the MarkTextLike() method to mark certain portions of text based on their font name and size.
+	. Changed the GetCaptures() method to return by default a collection of stdClass objects instead of
+	  PdfToText objects whose contents takes time to be displayed when using the print_r() function.
+	  The new boolean parameter $full allows to return PdfToText objects instead when set to true.
 	
     (...)
 
@@ -227,7 +229,7 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static	$FontSpecifiers		=<<<END
+	protected static	$FontSpecifiers		= '
 		(/F \d+ (\.\d+)? )						| 
 		(/R \d+)							| 
 		(/f-\d+-\d+)							| 
@@ -238,7 +240,7 @@ abstract class  PdfObjectBase		// extends  Object
 		(/[0-9a-zA-Z])							| 
 		(/F\w+)								|
 		(/[A-Za-z][A-Za-z0-9]* ( [\-+] [A-Za-z][A-Za-z0-9]* ))
-END;
+		' ;
 
 	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
 	protected static	$UnicodeToSimpleAscii	=  false ;
@@ -1122,7 +1124,7 @@ END;
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.6.4" ;
+	const		VERSION					=  "1.6.5" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1263,6 +1265,11 @@ class  PdfToText 	extends PdfObjectBase
 	// kerning in the font data). To determine whether two consecutive blocks of text should be separated by a space,
 	// we empirically add this extra percentage to the computed string length. The default is -5%.
 	public			$ExtraTextWidth			=  -5 ;
+
+	// Marker stuff. The unprocessed marker list is a sequential array of markers, which will later be dispatched into
+	// indexed arrays during their first reference
+	protected		$UnprocessedMarkerList		=  array ( 'font' => array ( ) ) ;
+	protected		$TextWithFontMarkers		=  array ( ) ;
 	
 	// Internal variables used when the PDFOPT_ENFORCE_* options are specified
 	protected static	$PhpMaxExecutionTime ;
@@ -1273,6 +1280,8 @@ class  PdfToText 	extends PdfObjectBase
 
 	// Font mappings
 	protected 		$FontTable			=  false ;
+	// Extra Adobe standard font mappings (for character names of the form "/axxx" for example)
+	protected		$AdobeExtraMappings		=  array ( ) ;
 	// Page map object
 	protected		$PageMap ;
 	// Page locations (start and end offsets)
@@ -1908,13 +1917,13 @@ class  PdfToText 	extends PdfObjectBase
 				// We process here the unencoded ones
 				if  ( $this -> IsFont ( $object_data ) )
 				   {
-					$this -> FontTable -> Add ( $object_number, $object_data, $pdf_objects ) ;
+					$this -> FontTable -> Add ( $object_number, $object_data, $pdf_objects, $this -> AdobeExtraMappings ) ;
 					continue ;
 				    }
 				// Some character maps may also be in clear text
 				else if  ( $this -> IsCharacterMap ( $object_data ) )
 				    {
-					$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data ) ;
+					$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $object_data, $this -> AdobeExtraMappings ) ;
 
 					if  ( $cmap )
 						$cmaps [] 	=  $cmap ;
@@ -1985,7 +1994,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Check for character maps
 			if  ( $this -> IsCharacterMap ( $decoded_stream_data ) )
 			   {
-				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $decoded_stream_data ) ;
+				$cmap	=  PdfTexterCharacterMap::CreateInstance ( $object_number, $decoded_stream_data, $this -> AdobeExtraMappings ) ;
 
 				if  ( $cmap )
 					$cmaps [] 	=  $cmap ;
@@ -1993,7 +2002,7 @@ class  PdfToText 	extends PdfObjectBase
 			// Font definitions
 			else if  ( $this -> IsFont ( $decoded_stream_data ) )
 			   {
-				$this -> FontTable -> Add ( $object_number, $decoded_stream_data, $pdf_objects ) ;
+				$this -> FontTable -> Add ( $object_number, $decoded_stream_data, $pdf_objects, $this -> AdobeExtraMappings ) ;
 			    }
 			// Retrieve form data if present
 			else if  ( $this -> IsFormData ( $object_data ) )
@@ -2206,6 +2215,107 @@ class  PdfToText 	extends PdfObjectBase
 
 	public function  __sort_distributions ( $a, $b )
 	   { return ( $this -> Statistics [ 'Distributions' ] [$b] [ 'count' ] - $this -> Statistics [ 'Distributions' ] [$a] [ 'count' ] ) ; }
+
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
+	        AddAdobeExtraMappings - Adds extra mappings for standard Adobe fonts.
+	
+	    PROTOTYPE
+	        $pdf -> AddAdobeExtraMappings ( $mappings ) ;
+	
+	    DESCRIPTION
+	        Adobe supports 4 predefined fonts : standard, Mac, WinAnsi and PDF). All the characters in these fonts
+		are identified by a character time, a little bit like HTML entities ; for example, 'one' will be the
+		character '1', 'acircumflex' will be 'â', etc.
+		There are thousands of character names defined by Adobe (see https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html).
+		Some of them are not in this list ; this is the case for example of the 'ax' character names, where 'x'
+		is a decimal number. When such a character is specified in a /Differences array, then there is somewhere
+		a CharProc[] array giving an object id for each of those characters.
+		The referenced object(s) in turn contain drawing instructions to draw the glyph. At no point you could 
+		guess what is the corresponding Unicode character for this glyph, since the information is not contained
+		in the PDF file.
+		The AddAdobeExtraMappings() method allows you to specify such correspondences. Specify an array as the
+		$mappings parameter, whose keys are the Adobe character name (for example, "a127") and values the 
+		corresponding Unicode values (see the description of the $mappings parameter for more information).
+	
+	    PARAMETERS
+	        $mappings (associative array) -
+	                Associative array whose keys are Adobe character names. The array values can take several forms :
+			- A character
+			- An integer value
+			- An array of up to four character or integer values.
+			Internally, every specified value is converted to an array of four integer values, one for
+			each of the standard Adobe character sets (Standard, Mac, WinAnsi and PDF). The following
+			rules apply :
+			- If the input value is a single character, the output array corrsponding the Adobe character
+			  name will be a set of 4 elements corresponding to the ordinal value of the supplied
+			  character.
+			- If the input value is an integer, the output array will be a set of 4 identical values
+			- If the input value is an array :
+			  . Arrays with less that 4 elements will be padded, using the last array item for padding
+			  . Arrays with more than 4 elements will be silently truncated
+			  . Each array value can either be a character or a numeric value.
+	
+	    NOTES
+	        In this current implementation, the method applies the mappings to ALL Adobe default fonts. That is,
+		you cannot have one mapping for one Adobe font referenced in the PDF file, then a second mapping for
+		a second Adobe font, etc.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  AddAdobeExtraMappings ( $mappings )
+	   {
+		// Loop through each mapping
+		foreach  ( $mappings  as  $key => $value )
+		   {
+			// Character value : we retain its ordinal value as the 4 values of the output array
+			if  ( is_string ( $value ) )
+			   {
+				$ord		=  ord ( $value ) ;
+				$items		=  array ( $ord, $ord, $ord, $ord ) ;
+			    }
+			// Numeric value : the output array will contain 4 times the supplied value
+			else if  ( is_numeric ( $value ) )
+			   {
+				$value		=  ( integer ) $value ;
+				$items		=  array ( $value, $value, $value, $value ) ;
+			    }
+			// Array value : make sure we will have an output array of 4 values
+			else if  ( is_array ( $value ) )
+			   {
+				$items		=  array ( ) ;
+
+				// Collect the supplied values, converting characters to their ordinal values if necessary
+				for  ( $i = 0, $count = count ( $value ) ;  $i  <  $count  &&  $i  <  4 ; $i ++ )
+				   {
+					$code	=  $value [$i] ;
+
+					if  ( is_string ( $code ) )
+						$items []	=  ord ( $code ) ;
+					else
+						$items []	=  ( integer ) $code ;
+				    }
+
+				// Ensure that we have 4 values ; fill the missing ones with the last seen value if necessary
+				$count		=  count ( $items ) ;
+
+				if  ( ! $count ) 
+					error ( new PdfToTextException ( "Adobe extra mapping \"$key\" has no values." ) ) ;
+
+				$last_value		=  $items [ $count - 1 ] ;
+
+				for  ( $i = $count ; $i  <  4 ; $i ++ )
+					$items []	=  $last_value ;
+			    }
+			else
+				error ( new PdfToTextException ( "Invalid value \"$value\" for Adobe extra mapping \"$key\"." ) ) ;
+
+			// Add this current mapping to the Adobe extra mappings array
+			$this -> AdobeExtraMappings [ $key ]	=  $items ;
+		    }
+	    }
 
 
 	/*--------------------------------------------------------------------------------------------------------------
@@ -2539,6 +2649,66 @@ class  PdfToText 	extends PdfObjectBase
 	/*--------------------------------------------------------------------------------------------------------------
 	
 	    NAME
+	        MarkTextLike - Marks output text.
+	
+	    PROTOTYPE
+	        $pdf -> MarkTextLike ( $regex, $marker_start, $marker_end ) ;
+	
+	    DESCRIPTION
+	        Sometimes it may be convenient, when you want to extract only a portion of text, to say : "I want to
+		extract text between this title and this title". The MarkTextLike() method provides some support for
+		such a task. Imagine you have documents that have the same structure, all starting with an "Introduction"
+		title :
+
+			Introduction
+				...
+				some text
+				...
+			Some other title
+				...
+
+		By calling the MarkTextLike() method such as in the example below :
+
+			$pdf -> MarkTextLike ( '/\bIntroduction\b/', '<M>', '</M' ) ;
+
+		then you will get as output :
+
+			<M>Introduction</M>
+				...
+				some text
+				...
+			<M>Some other title</M>
+
+		Adding such markers in the output will allow you to easily extract the text between the chapters
+		"Introduction" and "Some other title", using a regular expression.
+
+		The font name used for the first string matched by the specified regular expression will be searched
+		later to add markers around all the text portions using this font.
+
+	
+	    PARAMETERS
+	        $regex (string) -
+	                A regular expression to match the text to be matched. Subsequent portions of text using the
+			same font will be surrounded by the marker start/end strings.
+
+		$marker_start, $marker_end (string) -
+			Markers to surround the string when a match is found.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  MarkTextLike ( $regex, $marker_start, $marker_end )
+	   {
+		$this -> UnprocessedMarkerList [ 'font' ] []	=  array
+		   (
+			'regex'		=>  $regex,
+			'start'		=>  $marker_start,
+			'end'		=>  $marker_end
+		    ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    NAME
 	        SetCaptures, SetCapturesFromString - Defines document parts to be captured.
 	
 	    PROTOTYPE
@@ -2582,8 +2752,13 @@ class  PdfToText 	extends PdfObjectBase
 	        GetCaptures - Returns captured data.
 	
 	    PROTOTYPE
-	        $object		=  $pdf -> GetCaptures ( ) ;
+	        $object		=  $pdf -> GetCaptures ( $full = false ) ;
 	
+	    PARAMETERS 
+		$full (boolean) -
+			When true, the whole captures, togethers with their definitions, are returned. When false,
+			only a basic object containing the capture names and their values is returned.
+
 	    DESCRIPTION
 	        Returns the object that contains captured data.
 	
@@ -2591,7 +2766,7 @@ class  PdfToText 	extends PdfObjectBase
 	        An object of type PdfToTextCaptures, or false if an error occurred.
 	
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public function  GetCaptures ( )
+	public function  GetCaptures ( $full = false )
 	   {
 		if  ( ! $this -> CaptureObject )
 		   {
@@ -2599,7 +2774,10 @@ class  PdfToText 	extends PdfObjectBase
 			$this -> CaptureObject	=  $this -> CaptureDefinitions -> GetCapturedObject ( $this -> DocumentFragments ) ;
 		    }
 
-		return ( $this -> CaptureObject ) ;
+		if  ( $full ) 
+			return ( $this -> CaptureObject ) ;
+		else 
+			return ( $this -> CaptureObject -> ToCaptures ( ) ) ;
 	    }
 
 
@@ -3368,9 +3546,14 @@ class  PdfToText 	extends PdfObjectBase
 		// Instruction count (used for handling execution timeouts)
 		$instruction_count		=  0 ;
 
+		// Unprocessed markers
+		$unprocessed_marker_count	=  count ( $this -> UnprocessedMarkerList [ 'font' ] ) ;
+
 		// Loop through instructions
 		while  ( ( $instruction =  $this -> __next_instruction ( $page_number, $data, $data_length, $data_index, $current_template ) )  !==  false )
 		   {
+			$fragment	=  '' ;
+
 			$instruction_count ++ ;
 
 			// Timeout handling - don't test for every instruction processed
@@ -3411,13 +3594,13 @@ class  PdfToText 	extends PdfObjectBase
 					// Check if we have to insert a newline
 			   		if ( ! $use_same_line )
 					   {
-			   			$result 		.=  $this -> EOL ;
+			   			$fragment 		.=  $this -> EOL ;
 						$needs_separator	 =  false ;
 					    }
 			   		// Roughly simulate spacing between lines by inserting newline characters
 			   		else if  ( $extra_newlines  > 0 )
 			   		   {
-			   			$result 		.=  str_repeat ( $this -> EOL, $extra_newlines ) ;
+			   			$fragment 		.=  str_repeat ( $this -> EOL, $extra_newlines ) ;
 			   			$extra_newlines		 =  0 ;
 						$needs_separator	 =  false ;
 			   		    }
@@ -3431,11 +3614,11 @@ class  PdfToText 	extends PdfObjectBase
 						// the current result does not end with it
 						if  ( $same_separators )
 						   {
-							if  ( $this -> Separator  !=  ''  &&  substr ( $result, - $separator_length )  !=  $this -> BlockSeparator )
-								$result		.=  $this -> BlockSeparator ;
+							if  ( $this -> Separator  !=  ''  &&  substr ( $fragment, - $separator_length )  !=  $this -> BlockSeparator )
+								$fragment		.=  $this -> BlockSeparator ;
 						    }
 						else
-							$result		.=  $this -> BlockSeparator ;
+							$fragment		.=  $this -> BlockSeparator ;
 					    }
 
 					$needs_separator	=  true ;
@@ -3469,7 +3652,7 @@ class  PdfToText 	extends PdfObjectBase
 										$this -> CharacterMapBuffer [ $current_font ] [ $ch ]		=  $newchar ;
 									    }
 
-			   			   			$result		.=  $newchar ;
+			   			   			$fragment		.=  $newchar ;
 			   			   	   	    }
 
 								$handled	 =  true ;
@@ -3566,7 +3749,7 @@ class  PdfToText 	extends PdfObjectBase
 								    }
 
 								// Happens only if we were unable to translate a character using the current character map
-								$result		.=  $temp_result ;
+								$fragment		.=  $temp_result ;
 								$handled	 =  true ;
 							    }
 
@@ -3636,14 +3819,14 @@ class  PdfToText 	extends PdfObjectBase
 										    }
 									    }
 
-									$result		.=  $newchar ;
+									$fragment		.=  $newchar ;
 				   		   		    }
 							    }
 
 							// Handle offsets between blocks of characters
 							if  ( isset ( $instruction [ 'offsets' ] [ $value_index ] )  &&
 									- ( $instruction [ 'offsets' ] [ $value_index ] )  >  $this -> MinSpaceWidth )
-								$result		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
+								$fragment		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
 
 							$value_index ++ ;
 			   		   	    }
@@ -3672,7 +3855,7 @@ class  PdfToText 	extends PdfObjectBase
 			   			   	   	   {
 			   			   	   	   	$ch 	=  hexdec ( substr ( $text, $i, 2 ) ) ;
 
-			   			   			$result .=  $this -> CodePointToUtf8 ( $ch ) ;
+			   			   			$fragment .=  $this -> CodePointToUtf8 ( $ch ) ;
 			   			   	   	    }
 			   			   	    }
 							// Characters are plain text
@@ -3698,18 +3881,54 @@ class  PdfToText 	extends PdfObjectBase
 										    }
 									    }
 
-									$result		.=  $newchar ;
+									$fragment		.=  $newchar ;
 								    }
 							    }
 
 							// Handle offsets between blocks of characters
 							if  ( isset ( $instruction [ 'offsets' ] [ $value_index ] )  &&
 									abs ( $instruction [ 'offsets' ] [ $value_index ] )  >  $this -> MinSpaceWidth )
-								$result		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
+								$fragment		.=  $this -> __get_character_padding ( $instruction [ 'offsets' ] [ $value_index ] ) ;
 
 							$value_index ++ ;
 			   			   }
 			   		    }
+
+					// Process the markers which do not have an associated font yet - this will be done by matching
+					// the current text fragment against one of the regular expressions defined.
+					// If a match occurs, then all the subsequent text fragment using the same font will be put markers
+					for  ( $j = 0 ; $j  <  $unprocessed_marker_count ; $j ++ )
+					   {
+						$marker			=  $this -> UnprocessedMarkerList [ 'font' ] [$j] ;
+
+						if  ( preg_match ( $marker [ 'regex' ], trim ( $fragment ) ) )
+						   {
+							$this -> TextWithFontMarkers [ $current_font ]	=  array
+							   (
+								'font'		=>  $current_font,
+								'height'	=>  $current_font_size,
+								'regex'		=>  $marker   [ 'regex' ],
+								'start'		=>  $marker   [ 'start' ],
+								'end'		=>  $marker   [ 'end'   ] 
+							    ) ;
+
+							$unprocessed_marker_count -- ;
+							unset ( $this -> UnprocessedMarkerList [ 'font' ] [$j] ) ;
+
+							break ;
+						    }
+					    }
+
+					// Check if we need to add markers around this text fragment
+					if  ( isset ( $this -> TextWithFontMarkers [ $current_font ] )  &&  
+							$this -> TextWithFontMarkers [ $current_font ] [ 'height' ]  ==  $current_font_size )
+					    {
+						$fragment	=  $this -> TextWithFontMarkers [ $current_font ] [ 'start' ] .
+								   $fragment .
+								   $this -> TextWithFontMarkers [ $current_font ] [ 'end' ] ;
+					     }
+
+					$result		.=  $fragment ;
 
 					break ;
 
@@ -5231,13 +5450,40 @@ class  PdfToText 	extends PdfObjectBase
 		$result			.=  $previous_fragment [ 'text' ] ;
 
 		// Block separator
-		$separator		=  ( $this -> BlockSeparator ) ?  $this -> BlockSeparator : ' ' ;
+		$separator			=  ( $this -> BlockSeparator ) ?  $this -> BlockSeparator : ' ' ;
 
+		// Unprocessed marker count
+		$unprocessed_marker_count	=  count ( $this -> UnprocessedMarkerList [ 'font' ] ) ;
 
 		// Loop through consecutive ones
 		for  ( $i = 1 ; $i  <  $fragment_count ; $i ++ )
 		   {
 			$fragment		=  &$fragments [$i] ;
+
+			// Process the markers which do not have an associated font yet - this will be done by matching
+			// the current text fragment against one of the regular expressions defined.
+			// If a match occurs, then all the subsequent text fragment using the same font will be put markers
+			for  ( $j = 0 ; $j  <  $unprocessed_marker_count ; $j ++ )
+			   {
+				$marker			=  $this -> UnprocessedMarkerList [ 'font' ] [$j] ;
+
+				if  ( preg_match ( $marker [ 'regex' ], $fragment [ 'text' ] ) )
+				   {
+					$this -> TextWithFontMarkers [ $fragment [ 'font' ] ]	=  array
+					   (
+						'font'		=>  $fragment [ 'font'  ],
+						'height'	=>  $fragment [ 'font-height' ],
+						'regex'		=>  $marker   [ 'regex' ],
+						'start'		=>  $marker   [ 'start' ],
+						'end'		=>  $marker   [ 'end'   ] 
+					    ) ;
+
+					$unprocessed_marker_count -- ;
+					unset ( $this -> UnprocessedMarkerList [ 'font' ] [$j] ) ;
+
+					break ;
+				    }
+			    }
 
 			// The width of the previous text fragment will be computed only if its associated font contains character widths information
 			$previous_width		=  $previous_fragment [ 'width' ] ;
@@ -5292,7 +5538,18 @@ class  PdfToText 	extends PdfObjectBase
 			if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
 				$result		.=  $this -> __debug_get_coordinates ( $fragment ) ;
 
-			$result		.=  $fragment [ 'text' ] ;
+			// Check if we need to add markers around this text fragment
+			if  ( isset ( $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] )  &&
+					$this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'height' ]  ==  $fragment [ 'font-height' ] )
+			    {
+				$fragment_text	=  $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'start' ] .
+						   $fragment [ 'text' ] .
+						   $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'end' ] ;
+			     }
+			else 
+				$fragment_text  =  $fragment [ 'text' ] ;
+
+			$result		.=  $fragment_text ;
 		    }
 
 		// Don't forget the compute the width of the very last fragment
@@ -5354,7 +5611,7 @@ class  PdfToText 	extends PdfObjectBase
 	private function  __debug_get_coordinates ( $fragment )
 	   {
 		return ( "\n[x:" . round ( $fragment [ 'x' ], 3 ) . ', y:' . round ( $fragment [ 'y' ], 3 ) . 
-			 ", w: " . round ( $fragment [ 'width' ], 3 ) . ", h:" . round ( $fragment [ 'font-height' ], 3 ) . "]" ) ;
+			 ", w: " . round ( $fragment [ 'width' ], 3 ) . ", h:" . round ( $fragment [ 'font-height' ], 3 ) . ", font:" . $fragment [ 'font' ] . "]" ) ;
 	    }
  
 
@@ -6280,7 +6537,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 	// Add -
 	//	Adds the current font declaration to the font table. Handles special cases where font id is not
 	//	given by the object id, but rather by <</Rx...>> constructs
-	public function  Add ( $object_id, $font_definition, $pdf_objects )
+	public function  Add ( $object_id, $font_definition, $pdf_objects, $extra_mappings )
 	   {
 		if  ( PdfToText::$DEBUG )
 		   {
@@ -6307,7 +6564,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$font_id	=  $id_matches   [ 'font_id' ] [$i] ;
 				$cmap_id	=  $cmap_matches [ 'cmap_id' ] [$i] ;
 
-				$this -> Fonts [ $font_id ]	=  new  PdfTexterFont ( $font_id, $cmap_id, PdfTexterFont::FONT_ENCODING_UNICODE_MAP ) ;
+				$this -> Fonts [ $font_id ]	=  new  PdfTexterFont ( $font_id, $cmap_id, PdfTexterFont::FONT_ENCODING_UNICODE_MAP, $extra_mappings ) ;
 			    }
 
 			return ;
@@ -6348,7 +6605,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$font_type	=  PdfTexterFont::FONT_ENCODING_CID_IDENTITY_H ;
 		    }
 	
-		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id, $pdf_objects ) ;
+		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id, $pdf_objects, $extra_mappings ) ;
 
 		// Arbitrarily set the default font to the first font encountered in the pdf file
 		if  ( $this -> DefaultFont  ===  false )
@@ -6587,7 +6844,7 @@ class  PdfTexterFont		extends PdfObjectBase
 
 	// Constructor -
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
-	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null, $pdf_objects = null )
+	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null, $pdf_objects = null, $extra_mappings = null )
 	   {
 		parent::__construct ( ) ;
 
@@ -6617,7 +6874,7 @@ class  PdfTexterFont		extends PdfObjectBase
 				break ;
 
 			case	self::FONT_ENCODING_PDF_MAP :
-				$this -> CharacterMap	=  new  PdfTexterEncodingMap ( $cmap_id, $this -> FontVariant ) ;
+				$this -> CharacterMap	=  new  PdfTexterEncodingMap ( $cmap_id, $this -> FontVariant, $extra_mappings ) ;
 				break ;
 
 			case	self::FONT_ENCODING_UNICODE_MAP :
@@ -6864,12 +7121,12 @@ abstract class	PdfTexterCharacterMap	extends		PdfObjectBase
 	        Creates a PdfTexterCharacterMap instance of the correct type.
 
 	 *-------------------------------------------------------------------------------------------------------------*/
-	public static function  CreateInstance ( $object_id, $definitions )
+	public static function  CreateInstance ( $object_id, $definitions, $extra_mappings )
 	   {
 		if  ( preg_match ( '# (begincmap) | (beginbfchar) | (beginbfrange) #ix', $definitions ) )
 			return ( new PdfTexterUnicodeMap ( $object_id, $definitions ) ) ;
 		else if  ( stripos ( $definitions, '/Differences' )  !==  false )
-			return ( new PdfTexterEncodingMap ( $object_id, $definitions ) ) ;
+			return ( new PdfTexterEncodingMap ( $object_id, $definitions, $extra_mappings ) ) ;
 		else
 			return ( false ) ;
 	    }
@@ -7204,7 +7461,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 
 	// Correspondance between an encoding name and its corresponding character in the
 	// following format : Standard, Mac, Windows, Pdf
-	private static 		$Encodings 	=  false ;
+	private static 		$GlobalEncodings 	=  false ;
+	private			$Encodings ;
 	// Encoding type (one of the PDF_*_ENCODING constants)
 	public 		$Encoding ;
 	// Indicates whether this character map is a secondary one used for Unicode maps ; this must be set at
@@ -7222,7 +7480,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
    	// Constructor -
 	//	Analyzes the text contents of a CMAP and extracts mappings from the beginbfchar/endbfchar and
 	//	beginbfrange/endbfrange constructs.
-	public function  __construct ( $object_id, $definitions )
+	public function  __construct ( $object_id, $definitions, $extra_mappings )
 	   {
 		// Ignore character variants whose names end with these suffixes
 		static	$IgnoredVariants	=  array
@@ -7239,12 +7497,14 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		parent::__construct ( $object_id ) ;
 
 		// Load the default Adobe character sets, if not already done
-		if  ( self::$Encodings  ===  false )
+		if  ( self::$GlobalEncodings  ===  false )
 		   {
 			$charset_file		=  dirname ( __FILE__ ) .  '/Maps/adobe-charsets.map' ;
 			include ( $charset_file ) ;
-			self::$Encodings	=  ( isset ( $adobe_charsets ) ) ?  $adobe_charsets : array ( ) ;
+			self::$GlobalEncodings	=  ( isset ( $adobe_charsets ) ) ?  $adobe_charsets : array ( ) ;
 		    }
+
+		$this -> Encodings		=  array_merge ( self::$GlobalEncodings, $extra_mappings ) ;
 
 		// Fonts using default Adobe character sets and hexadecimal representations are one-byte long
 		$this -> HexCharWidth	=  2 ;
@@ -7272,7 +7532,7 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 		    }
 
 		// Build a virgin character map using the detected encoding
-		foreach  ( self::$Encodings  as  $code_array )
+		foreach  ( $this -> Encodings  as  $code_array )
 		   {
 			$char 			=  $code_array [ $this -> Encoding ] ;
 			$this -> Map [ $char ] 	=  $char ;
@@ -7302,10 +7562,10 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 				$item	=  preg_replace  ( $IgnoredVariants, '', trim ( $item ) ) ;
 
 			   	// Keyword (character name) exists in the encoding table
-				if  ( isset ( self::$Encodings [ $item ] ) )
+				if  ( isset ( $this -> Encodings [ $item ] ) )
 				   {
 					$this -> Map [ $index ] 		=  
-					$this -> SecondaryMap [ $index ]	=  self::$Encodings [ $item ] [ $this -> Encoding ] ;
+					$this -> SecondaryMap [ $index ]	=  $this -> Encodings [ $item ] [ $this -> Encoding ] ;
 				    }
 				// Not defined ; check if this is the "/gxx" notation, where "xx" is a number
 				else if  ( preg_match ( '/g (?P<value> \d+)/x', $item, $match ) )
@@ -7380,8 +7640,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 			// As far as I have been able to see, the values expressed by the /Differences tag were the only ones used within the
 			// Pdf document ; however, handle the case where some characters do not belong to the characters listed by /Differences,
 			// and use the official Adobe encoding maps when necessary
-			else if  ( isset ( self::$Encodings [ $ord ] [ $this -> Encoding ] ) )
-				$ord	=  self::$Encodings [ $ord ] [ $this -> Encoding ] ;
+			else if  ( isset ( $this -> Encodings [ $ord ] [ $this -> Encoding ] ) )
+				$ord	=  $this -> Encodings [ $ord ] [ $this -> Encoding ] ;
 		
 			$result		=  $this -> CodePointToUtf8 ( $ord ) ;
 		    }
@@ -11014,11 +11274,11 @@ class  PdfToTextCaptureDefinitions	// extends		Object
 
 
 	public function  offsetSet ( $offset, $value )
-	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation" ) ) ; }
 
 
 	public function  offsetunset ( $offset )
-	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation" ) ) ; }
 
 
 	// Iterator interface -
@@ -11758,11 +12018,11 @@ class  PdfToTextCaptureApplicablePages		//extends		Object
 
 
 	public function  offsetSet ( $offset, $value )
-	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation" ) ) ; }
 
 
 	public function  offsetunset ( $offset )
-	   { error ( new \Thrak\System\UnsupportedOperationException ( ) ) ; }
+	   { error ( new PdfToTextException ( "Unsupported operation" ) ) ; }
 
 
 	// Iterator interface
@@ -12174,7 +12434,7 @@ class  PdfToTextCapturedColumn			extends  PdfToTextCapturedText
  
    ==============================================================================================================*/
 class  PdfToTextCapturedLine			extends		PdfToTextCapturedText 
- 						implements	\ArrayAccess, \Countable, \IteratorAggregate
+ 						implements	ArrayAccess, Countable, IteratorAggregate
   {
 	// Column objects
 	public		$Columns ;
@@ -12235,7 +12495,7 @@ class  PdfToTextCapturedLine			extends		PdfToTextCapturedText
 
 
 	public function  getIterator ( )
-	   { return ( new \ArrayIterator ( $this -> Columns ) ) ; }
+	   { return ( new ArrayIterator ( $this -> Columns ) ) ; }
 
 
 	public function  offsetExists ( $offset )
@@ -12272,7 +12532,7 @@ class  PdfToTextCapturedLine			extends		PdfToTextCapturedText
  
    ==============================================================================================================*/
 class  PdfToTextCapturedLines			//extends		Object 
-						implements	\ArrayAccess, \Countable, \IteratorAggregate
+						implements	ArrayAccess, Countable, IteratorAggregate
    {
 	// Capture name, as specified by the "name" attribute of the <lines> tag
 	public		$Name ;
@@ -12308,7 +12568,7 @@ class  PdfToTextCapturedLines			//extends		Object
 
 
 	public function  getIterator ( )
-	   { return ( new \ArrayIterator ( $this -> Lines ) ) ; }
+	   { return ( new ArrayIterator ( $this -> Lines ) ) ; }
 
 
 	public function  offsetExists ( $offset )
@@ -12376,6 +12636,55 @@ class  PdfToTextCaptures			//extends  Object
 
 	/*--------------------------------------------------------------------------------------------------------------
 	
+	    ToCaptures -
+		Returns a simplified view of captured objects, with only name/value pairs.
+	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  ToCaptures ( )
+	   {
+		$result		=  new stdClass ( ) ;
+
+		foreach  ( $this -> CapturedObjects  as  $page => $captures )
+		   {
+			foreach  ( $captures  as  $capture )
+			    {
+				switch  ( $capture -> Type )
+				   {
+					case	PdfToTextCaptureShapeDefinition::SHAPE_RECTANGLE :
+						$name				=  $capture -> Name ;
+						$value				=  $capture -> Text ;
+						$result -> {$name} [ $page ]	=  $value ;
+						break ;
+
+					case	PdfToTextCaptureShapeDefinition::SHAPE_LINE :
+						$name				=  $capture -> Name ;
+
+						if  ( ! isset ( $result -> {$name} ) )
+							$result -> {$name}		=  array ( ) ;
+
+						foreach  ( $capture  as  $line )
+						   {
+							$columns	=  new  stdClass ;
+
+							foreach  ( $line  as  $column )
+							   {
+								$column_name			=  $column -> Name ;
+								$column_value			=  $column -> Text ;
+								$columns -> {$column_name}	=  $column_value ;
+							    }
+
+							$result -> {$name} []	=  $columns ;
+						    }
+				    }
+			    }
+		    }
+
+		return ( $result ) ;
+	    }
+
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
 	    __get -
 		Retrieves the captured objects by their name, as specified in the XML definition.
 	
@@ -12438,7 +12747,7 @@ class  PdfToTextCaptures			//extends  Object
 
   ==============================================================================================================*/
 class  PdfToTextCapture				//extends		Object
-						implements	\ArrayAccess, \Countable, \IteratorAggregate
+						implements	ArrayAccess, Countable, IteratorAggregate
    {
 	protected	$Captures ;
 
@@ -12467,7 +12776,7 @@ class  PdfToTextCapture				//extends		Object
 
 
 	public function  getIterator ( )
-	   { return ( new \ArrayIterator ( $this -> Captures ) ) ; }
+	   { return ( new ArrayIterator ( $this -> Captures ) ) ; }
 
 
 	public function  offsetExists ( $offset )
