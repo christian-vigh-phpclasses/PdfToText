@@ -656,7 +656,7 @@
 		'sun'			=>  array ( 0x263C, 0x263C, 0x263C, 0x263C ),
 		'threeeighths'		=>  array ( 0x215C, 0x215C, 0x215C, 0x215C ),
 		'threesuperior'		=>  array ( 0x00B3, 0x00B3, 0x00B3, 0x00B3 ),
-		'three.superior'		=>  array ( 0x00B3, 0x00B3, 0x00B3, 0x00B3 ),
+		'three.superior'	=>  array ( 0x00B3, 0x00B3, 0x00B3, 0x00B3 ),
 		'triagdn'		=>  array ( 0x25BC, 0x25BC, 0x25BC, 0x25BC ),
 		'triaglf'		=>  array ( 0x25C4, 0x25C4, 0x25C4, 0x25C4 ),
 		'triagrt'		=>  array ( 0x25BA, 0x25BA, 0x25BA, 0x25BA ),
@@ -680,6 +680,7 @@
 		'Gamma'			=>  array ( 0x0393, 0x0393, 0x0393, 0x0393 ),
 		'gamma'			=>  array ( 0x03B3, 0x03B3, 0x03B3, 0x03B3 ),
 		'Delta'			=>  array ( 0x0394, 0x0394, 0x0394, 0x0394 ),
+		'Deltagreek'		=>  array ( 0x0394, 0x0394, 0x0394, 0x0394 ),
 		'delta'			=>  array ( 0x03B4, 0x03B4, 0x03B4, 0x03B4 ),
 		'dieresistonos'		=>  array ( 0x0385, 0x0385, 0x0385, 0x0385 ),
 		'Epsilon'		=>  array ( 0x0395, 0x0395, 0x0395, 0x0395 ),
@@ -746,12 +747,6 @@
 		'Omegatonos'		=>  array ( 0x038F, 0x038F, 0x038F, 0x038F ),
 		'omegatonos'		=>  array ( 0x03CE, 0x03CE, 0x03CE, 0x03CE ),
 
-		// Don't know if these ones are official...
-		'a0'			=>  array ( 0x002D, 0x002D, 0x002D, 0x002D ),		// A long hyphen
-		'a1'			=>  array ( 0x2192, 0x2192, 0x2192, 0x2192 ),		// Right arrow
-		'a2'			=>  array ( 0x002D, 0x002D, 0x002D, 0x002D ),		// Another hyphen, not so long
-
-		// Special very old characters. See :
 		//	http://www.tipometar.org/pojmovnik/Hint/img/Using%20Fontographer.pdf
 		//	ftp://ftp.software.ibm.com/software/globalization/gcoc/attachments/CP00437.pdf
 		//	http://jrgraphix.net/r/Unicode/2500-257F

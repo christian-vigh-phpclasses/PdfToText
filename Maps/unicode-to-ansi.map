@@ -2,6 +2,14 @@
 	// Maps alien Unicode characters such as special spaces, letters with ligatures to their ascii string equivalent
 	$unicode_to_ansi	=  array
 	   (
+		// Found in some Polish documents - not sure of the translation
+		0x0084			=>  '"',		
+		0x0085			=>  '...',
+		0x0092			=>  '"',
+		0x0094			=>  '"',
+		0x0096			=>  '-',
+		// End Polish
+
 		0x00A0			=>  ' ',				// Non-breakable space
 		0x00AB			=>  '"',				// Left pointing double angle quotation mark
 		0x00AD			=>  '',					// Break Opportunity After: generally provide a line break opportunity after the character 
