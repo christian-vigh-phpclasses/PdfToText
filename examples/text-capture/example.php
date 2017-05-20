@@ -11,7 +11,7 @@
 	$pdf -> SetCaptures ( $xml_file ) ;
 	$captures	=  $pdf -> GetCaptures ( ) ;
 
-	echo ( "Document header title : " . $captures -> Title [0] -> Text . "\n" ) ;
+	echo ( "Document header title : " . ( ( string ) $captures -> Title [0] ) . "\n" ) ;
 
 	$index		=  0 ;
 	foreach ( $captures -> ReportLines  as  $line )
@@ -19,8 +19,11 @@
 		$columns	=  array ( ) ;
 
 		foreach  ( $line  as  $column )
-			$columns []	=  $column -> Text ;
+			$columns []	=  ( string ) $column ;
 
 		$index ++ ;
 		echo ( "Page #" . $line -> Page .  ", Line #$index : " . trim ( implode ( ' *** ', $columns ) ) . "\n" ) ;
 	    }
+
+	echo "Capture contents :\n" ;
+	print_r ( $captures ) ;
