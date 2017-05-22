@@ -291,7 +291,7 @@ See the **Capturing Text* section for more information on capturing text from PD
 
 	$pdf -> SetCaptures ( $xml_data ) ;
 
-Same as the *SetCaptures() method, but loads the capture definitions from a string instead of a file.
+Same as the *SetCaptures()* method, but loads the capture definitions from a string instead of a file.
 
 Note that you must instantiate the **PdfToText** class with the *PDFOPT\_CAPTURE* flag for this function to work.
 

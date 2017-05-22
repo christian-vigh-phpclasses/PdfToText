@@ -1,3 +1,13 @@
+    [Version : 1.6.6]	[Date : 2017/05/22]     [Author : CV]
+	. Completely rebuilt the page layout rendering algorithm
+	. Some character widths were not correctly extracted because of line breaks in the widths list.
+	. Fixed an issue where a character map was sometimes instantiated with the wrong parameter.
+	. Correctly handle character widths for characters defined by CharProcs (ie, for which the only
+	  information we have is how to draw the glyph, but no Unicode equivalent) and the corresponding
+	  character names that may have been passed to the AddAdobeExtraMappings() method.
+	. Properly decode sequences of hex digits when there is no current font applicable.
+	. Completed the Unicode to Ansi character map
+
     [Version : 1.6.5]	[Date : 2017/05/20]     [Author : CV]
 	. Complemented the Unicode to Ansi mapping table.
 	. Added the AddAdobeExtraMappings() method, to complement the standard Adobe character maps when given
