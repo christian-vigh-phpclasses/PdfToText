@@ -24,14 +24,15 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.5]	[Date : 2017/05/20]     [Author : CV]
-	. Complemented the Unicode to Ansi mapping table.
-	. Added the AddAdobeExtraMappings() method, to complement the standard Adobe character maps when given
-	  character names refer to a glyph that has no Unicode equivalent.
-	. Added the MarkTextLike() method to mark certain portions of text based on their font name and size.
-	. Changed the GetCaptures() method to return by default a collection of stdClass objects instead of
-	  PdfToText objects whose contents takes time to be displayed when using the print_r() function.
-	  The new boolean parameter $full allows to return PdfToText objects instead when set to true.
+    [Version : 1.6.6]	[Date : 2017/05/22]     [Author : CV]
+	. Completely rebuilt the page layout rendering algorithm
+	. Some character widths were not correctly extracted because of line breaks in the widths list.
+	. Fixed an issue where a character map was sometimes instantiated with the wrong parameter.
+	. Correctly handle character widths for characters defined by CharProcs (ie, for which the only
+	  information we have is how to draw the glyph, but no Unicode equivalent) and the corresponding
+	  character names that may have been passed to the AddAdobeExtraMappings() method.
+	. Properly decode sequences of hex digits when there is no current font applicable.
+	. Completed the Unicode to Ansi character map
 	
     (...)
 
@@ -229,7 +230,7 @@ abstract class  PdfObjectBase		// extends  Object
 	// Regular expression used for recognizing references to a font (this list is far from being exhaustive, as it seems
 	// that you can specify almost everything - however, trying to recognize everything would require to develop a complete
 	// parser)
-	protected static	$FontSpecifiers		= '
+	protected static	$FontSpecifiers		=  '
 		(/F \d+ (\.\d+)? )						| 
 		(/R \d+)							| 
 		(/f-\d+-\d+)							| 
@@ -1124,7 +1125,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.6.5" ;
+	const		VERSION					=  "1.6.6" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -1343,7 +1344,7 @@ class  PdfToText 	extends PdfObjectBase
 	private static		$IgnoredInstructionTemplatesNoLayout	=  array 
 	   (
 		'%n{6} ( (cm) ) \s+',
-		'\b ( (BT) | (ET) ) \s+',
+//		'\b ( (BT) | (ET) ) \s+',
 		 '^ \s* [Qq] \r? \n',
 		 '^ \s* (\b [a-zA-Z] \s+)+',
 		 '\s* (\b [a-zA-Z] \s+)+$',
@@ -3646,6 +3647,10 @@ class  PdfToText 	extends PdfObjectBase
 
 									if  ( isset ( $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ) )
 										$newchar	=  $this -> CharacterMapBuffer [ $current_font ] [ $ch ] ;
+									else if  ( $current_font  ==  -1 )
+									   {
+										$newchar	=  chr ( $ch ) ;
+									    }
 									else
 									   {
 										$newchar	 =  $this -> FontTable -> MapCharacter ( $current_font, $ch ) ;
@@ -4035,6 +4040,13 @@ class  PdfToText 	extends PdfObjectBase
 			   			$text_leading 		=  $instruction [ 'size' ] ;
 
 			   		break ;
+
+
+				// 'ET' : we have to reset a few things here
+				case	'ET' :
+					$current_font			=  -1 ;
+					$current_font_map_width		=  2 ;
+					break ;
 			    }
 
 			// Remember last instruction - this will help us into determining whether we should put the next text
@@ -4229,9 +4241,12 @@ class  PdfToText 	extends PdfObjectBase
 			else if  ( $token  ===  'BT' )
 			   {
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'BT' ] ++ ;
+
+				return ( array ( 'instruction' => 'BT', 'next' => $next_index, 'token' => $token ) ) ;
 			    }
 			else if  ( $token  ==  'ET' )	// Nothing special to count here
 			   {
+				return ( array ( 'instruction' => 'ET', 'next' => $next_index, 'token' => $token ) ) ;
 			    }
 			// Other instructions : we're not that much interested in them, so clear the number stack and consider
 			// that the current parameters, floating-point values, have been processed
@@ -4649,8 +4664,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					// Td instruction
 					case	'd' :
-						$Tm [4]		+=  ( double ) $operand_stack [0]  ;
-						$Tm [5]		+=  ( double ) $operand_stack [1] ;
+						$Tm [4]		+=  ( double ) $operand_stack [0] * abs ( $Tm [0] ) ;
+						$Tm [5]		+=  ( double ) $operand_stack [1] * abs ( $Tm [3] ) ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
 						break ;
@@ -4837,8 +4852,6 @@ class  PdfToText 	extends PdfObjectBase
 			// Update current index in instruction stream
 			$data_index	=  $next_index ;
 		    }
-
-		usort ( $page_fragments, array ( $this, '__sort_page_fragments' ) ) ;
 	    }
 
 
@@ -4881,27 +4894,6 @@ class  PdfToText 	extends PdfObjectBase
 			$r [5]	=  abs ( $r [5] ) ; //$page_height - $r [5] ;
 
 		return ( $r ) ;
-	    }
-
-
-	// __sort_page_fragments -
-	//	Sorts page fragments by their (y,x) coordinates, taking into account that a small variation in the y-position
-	//	which is less than the current font height means that both texts should reside on the same line.
-	public function  __sort_page_fragments ( $a, $b )
-	   {
-		$height			=  max ( $a [ 'font-height' ], $b [ 'font-height' ] ) ;
-		$xa			=  $a [ 'x' ] ;
-		$ya			=  $a [ 'y' ] ;
-		$xb			=  $b [ 'x' ] ;
-		$yb			=  $b [ 'y' ] ;
-
-		if  ( $ya  !==  $yb  &&  abs ( $ya - $yb )  <=  $height )
-			$yb	=  $ya ;
-
-		if  ( $ya  !==  $yb )
-			return ( $yb - $ya ) ;
-		else
-			return ( $xa - $xb ) ;
 	    }
 
 
@@ -5412,42 +5404,38 @@ class  PdfToText 	extends PdfObjectBase
 		if  ( ! $fragment_count )
 			return ( '' ) ;
 
+		// Compute the width of each fragment
+		foreach  ( $fragments  as  &$fragment )
+			$this -> __compute_fragment_width ( $fragment ) ;
+
+		// Sort the fragments and group them by line
+		usort ( $fragments, array ( $this, '__sort_page_fragments' ) ) ;
+		$line_fragments		=  $this -> __group_line_fragments ( $fragments ) ;
+
 		// Retrieve the page attributes 
 		$page_attributes	=  $this -> PageMap -> PageAttributes [ $page_number ] ;
 
 		// Some buggy PDF do not specify page width or page height so, during the processing of text fragments,
 		// page width & height will be set to the largest x/y coordinate
 		if  ( isset ( $page_attributes [ 'width' ] )  &&  $page_attributes [ 'width' ] )
-		   {
 			$page_width		=  $page_attributes [ 'width' ] ;
-			$got_page_width		=  true ;
-		    }
 		else
 		   {
 			$page_width		=  0 ;
-			$got_page_width		=  false ;
+			
+			foreach  ( $fragments  as  $fragment )
+			   {
+				$end_x	=  $fragment [ 'x' ] + $fragment [ 'width' ] ;
+
+				if  ( $end_x  >  $page_width )
+					$page_width	=  $end_x ;
+			    }
 		    }
 
 		if  ( isset ( $page_attributes [ 'height' ] )  &&  $page_attributes [ 'height' ] )
-		   {
 			$page_height		=  $page_attributes [ 'height' ] ;
-			$got_page_height	=  true ;
-		    }
 		else
-		   {
-			$page_height		=  0 ;
-			$got_page_height	=  false ;
-		    }
-
-		// Take the first text fragment
-		$result			 =  '' ;
-		$previous_fragment	 =  &$fragments [0] ;
-		$font_object		 =  $this -> __compute_fragment_width ( $previous_fragment ) ;
-
-		if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
-			$result		.=  $this -> __debug_get_coordinates ( $fragments [0] ) ;
-
-		$result			.=  $previous_fragment [ 'text' ] ;
+			$page_height		=  $fragments [0] [ 'y' ] ;
 
 		// Block separator
 		$separator			=  ( $this -> BlockSeparator ) ?  $this -> BlockSeparator : ' ' ;
@@ -5455,129 +5443,139 @@ class  PdfToText 	extends PdfObjectBase
 		// Unprocessed marker count
 		$unprocessed_marker_count	=  count ( $this -> UnprocessedMarkerList [ 'font' ] ) ;
 
-		// Loop through consecutive ones
-		for  ( $i = 1 ; $i  <  $fragment_count ; $i ++ )
-		   {
-			$fragment		=  &$fragments [$i] ;
-
-			// Process the markers which do not have an associated font yet - this will be done by matching
-			// the current text fragment against one of the regular expressions defined.
-			// If a match occurs, then all the subsequent text fragment using the same font will be put markers
-			for  ( $j = 0 ; $j  <  $unprocessed_marker_count ; $j ++ )
-			   {
-				$marker			=  $this -> UnprocessedMarkerList [ 'font' ] [$j] ;
-
-				if  ( preg_match ( $marker [ 'regex' ], $fragment [ 'text' ] ) )
-				   {
-					$this -> TextWithFontMarkers [ $fragment [ 'font' ] ]	=  array
-					   (
-						'font'		=>  $fragment [ 'font'  ],
-						'height'	=>  $fragment [ 'font-height' ],
-						'regex'		=>  $marker   [ 'regex' ],
-						'start'		=>  $marker   [ 'start' ],
-						'end'		=>  $marker   [ 'end'   ] 
-					    ) ;
-
-					$unprocessed_marker_count -- ;
-					unset ( $this -> UnprocessedMarkerList [ 'font' ] [$j] ) ;
-
-					break ;
-				    }
-			    }
-
-			// The width of the previous text fragment will be computed only if its associated font contains character widths information
-			$previous_width		=  $previous_fragment [ 'width' ] ;
-
-			// Since we allow slight variations of the y-position (for example, because of super- or sub-scripted text), we retain the highest font 
-			// height between the previous text fragment and the current one
-			$font_height		=  max ( $previous_fragment [ 'font-height' ], $fragment [ 'font-height' ] ) ;
-
-			// If the difference between both y-positions are greater than the current font height, then insert a newline
-			if  ( abs ( $fragment [ 'y' ] - $previous_fragment [ 'y' ] )  >  $font_height )
-				$result		.=  $this -> EOL ;
-			// Otherwise, we may need to insert a space...
-			else
-			   {
-				// If the width of the previous fragment could be computed, insert a space only if its x-position plus
-				// the computed width is less than the x-position of the current text fragment
-				if  ( $previous_width  !==  false )
-				   {
-					if  (  $previous_fragment [ 'x' ] + $previous_width  <  $fragment [ 'x' ] )
-						$result		.=  $separator ;
-					// However, in case of an ending x-position superior to the starting x-position of the current fragment,
-					// we have to consider if they should really appear on the same line
-					else
-					   {
-						$min_height		=  min ( $previous_fragment [ 'font-height' ], $fragment [ 'font-height' ] ) ;
-
-						if  ( round ( $previous_fragment [ 'y' ] - $fragment [ 'y' ] )  >  ceil ( $min_height ) )
-							$result		.=  $this -> EOL ;
-					    }
-				    }
-				// No width information is associated with the current font
-				else
-				   {
-					if  ( $font_object )
-						$ending_x		 =  $previous_fragment [ 'x' ] + $font_object -> GetStringWidth ( $previous_fragment [ 'text' ],
-																$this -> ExtraTextWidth ) ;
-					else
-						$ending_x		 =  0 ;
-
-					if  ( $ending_x  <  $fragment [ 'x' ] )
-						$result		.=  $separator ;
-				    }
-			    }
-
-			// Remember the current fragment
-			$previous_fragment	=  &$fragment ;
-
-			// Compute the width for the new previous fragment
-			$font_object		=  $this -> __compute_fragment_width ( $previous_fragment ) ;
-
-			// Catenate the result
-			if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
-				$result		.=  $this -> __debug_get_coordinates ( $fragment ) ;
-
-			// Check if we need to add markers around this text fragment
-			if  ( isset ( $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] )  &&
-					$this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'height' ]  ==  $fragment [ 'font-height' ] )
-			    {
-				$fragment_text	=  $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'start' ] .
-						   $fragment [ 'text' ] .
-						   $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'end' ] ;
-			     }
-			else 
-				$fragment_text  =  $fragment [ 'text' ] ;
-
-			$result		.=  $fragment_text ;
-		    }
-
-		// Don't forget the compute the width of the very last fragment
-		$fragment	=  &$fragments [ $fragment_count - 1 ] ;
-		$this -> __compute_fragment_width ( $fragment ) ;
-
-		// Update the page dimensions with the coordinates of the last text fragment, if they were not specified in the PDF file
-		if  ( ! $got_page_width )
-		   {
-			$w	=  $previous_fragment [ 'x' ] + $previous_fragment [ 'width' ] ;
-
-			if  ( $w  >  $page_width )
-				$page_width	=  $w ;
-		    }
-
-		if  ( ! $got_page_height )
-		   {
-			$h	=  $previous_fragment [ 'y' ] + $previous_fragment [ 'font-height' ] ;
-
-			if  ( $h  >  $page_height )
-				$page_height	=  $h ;
-		    }
-
 		// Add page information if the PDFOPT_DEBUG_SHOW_COORDINATES option has been specified
 		if  ( $this -> Options  &  self::PDFOPT_DEBUG_SHOW_COORDINATES )
-			$result		=  "[Page : $page_number, width = $page_width, height = $page_height]" . $this -> EOL . $result ;
+			$result		=  "[Page : $page_number, width = $page_width, height = $page_height]" . $this -> EOL ;
+		else 
+			$result			=  '' ;
+
+		// Loop through each line of fragments
+		for  ( $i = 0, $line_count = count ( $line_fragments ) ; $i  <  $line_count ; $i ++ )
+		   {
+			$current_x	=  0 ;
+
+			// Loop through each fragment of the current line
+			for  ( $j = 0, $fragment_count = count ( $line_fragments [$i] ) ; $j  <  $fragment_count ; $j ++ )
+			   {
+				$fragment	=  $line_fragments [$i] [$j] ;
+
+				// Process the markers which do not have an associated font yet - this will be done by matching
+				// the current text fragment against one of the regular expressions defined.
+				// If a match occurs, then all the subsequent text fragment using the same font will be put markers
+				for  ( $k = 0 ; $k  <  $unprocessed_marker_count ; $k ++ )
+					{
+					$marker			=  $this -> UnprocessedMarkerList [ 'font' ] [$k] ;
+
+					if  ( preg_match ( $marker [ 'regex' ], $fragment [ 'text' ] ) )
+					   {
+						$this -> TextWithFontMarkers [ $fragment [ 'font' ] ]	=  array
+							(
+							'font'		=>  $fragment [ 'font'  ],
+							'height'	=>  $fragment [ 'font-height' ],
+							'regex'		=>  $marker   [ 'regex' ],
+							'start'		=>  $marker   [ 'start' ],
+							'end'		=>  $marker   [ 'end'   ] 
+							) ;
+
+						$unprocessed_marker_count -- ;
+						unset ( $this -> UnprocessedMarkerList [ 'font' ] [$k] ) ;
+
+						break ;
+					    }
+					}
+
+				// Add debug info if needed 
+				if  ( $this -> Options & self::PDFOPT_DEBUG_SHOW_COORDINATES )
+					$result		.=  $this -> __debug_get_coordinates ( $fragment ) ;
+
+				// Add a separator between two fragments, if needed
+				if  ( $j )
+				   {
+					if  ( $current_x  <  floor ( $fragment [ 'x' ] ) )	// Accept small rounding errors
+						$result		.=  $separator ;
+				    }
+
+				// Check if we need to add markers around this text fragment
+				if  ( isset ( $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] )  &&
+						$this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'height' ]  ==  $fragment [ 'font-height' ] )
+				    {
+					$fragment_text	=  $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'start' ] .
+							   $fragment [ 'text' ] .
+							   $this -> TextWithFontMarkers [ $fragment [ 'font' ] ] [ 'end' ] ;
+				     }
+				else 
+					$fragment_text  =  $fragment [ 'text' ] ;
+
+				// Add the current fragment to the result
+				$result		.=  $fragment_text ;
+
+				// Update current x-position
+				$current_x	=  $fragment [ 'x' ] + $fragment [ 'width' ] ;
+			    }
+
+			// Add a line break between each line
+			$result		.=  $this -> EOL ;
+		    }
 
 		// All done, return
+		return ( $result ) ;
+	    }
+
+
+	// __sort_page_fragments -
+	//	Sorts page fragments by their (y,x) coordinates.
+	public function  __sort_page_fragments ( $a, $b )
+	   {
+		$xa			=  $a [ 'x' ] ;
+		$ya			=  $a [ 'y' ] ;
+		$xb			=  $b [ 'x' ] ;
+		$yb			=  $b [ 'y' ] ;
+
+		if  ( $ya  !==  $yb )
+			return ( $yb - $ya ) ;
+		else
+			return ( $xa - $xb ) ;
+	    }
+
+
+	// __sort_line_fragments -
+	//	Sorts fragments per line.
+	public function  __sort_line_fragments ( $a, $b )
+	   {
+		return ( $a [ 'x' ] - $b [ 'x' ] ) ;
+	    }
+
+
+	// __group_line_fragments -
+	//	Groups page fragments per line, allowing a certain variation in the y-position.
+	private function  __group_line_fragments ( $fragments )
+	   {
+		$result			=  array ( ) ;
+		$fragment_count		=  count ( $fragments ) ;
+		$last_y_coordinate	=  $fragments [0] [ 'y' ] ;
+		$current_fragments	=  array ( $fragments [0] ) ;
+
+		for  ( $i = 1 ; $i  <  $fragment_count ; $i ++ )
+		   {
+			$fragment	=  $fragments [$i] ;
+
+			if  ( $fragment [ 'y' ] + $fragment [ 'font-height' ]  >=  $last_y_coordinate )
+				$current_fragments []	=  $fragment ;
+			else
+			   {
+				$last_y_coordinate	=  $fragment [ 'y' ] ;
+				usort ( $current_fragments, array ( $this, '__sort_line_fragments' ) ) ;
+				$result	[]		=  $current_fragments ;
+				$current_fragments	=  array ( $fragment ) ;
+			    }
+		    }
+
+		if  ( count ( $current_fragments ) )
+		   {
+			usort ( $current_fragments, array ( $this, '__sort_line_fragments' ) ) ;
+			$result []	=  $current_fragments ;
+		    }
+
 		return ( $result ) ;
 	    }
 
@@ -6846,6 +6844,7 @@ class  PdfTexterFont		extends PdfObjectBase
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
 	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null, $pdf_objects = null, $extra_mappings = null )
 	   {
+
 		parent::__construct ( ) ;
 
 		$this -> Id				=  $resource_id ;
@@ -6874,7 +6873,7 @@ class  PdfTexterFont		extends PdfObjectBase
 				break ;
 
 			case	self::FONT_ENCODING_PDF_MAP :
-				$this -> CharacterMap	=  new  PdfTexterEncodingMap ( $cmap_id, $this -> FontVariant, $extra_mappings ) ;
+				$this -> CharacterMap	=  new  PdfTexterEncodingMap ( $cmap_id, $pdf_objects [ $cmap_id ], $extra_mappings ) ;
 				break ;
 
 			case	self::FONT_ENCODING_UNICODE_MAP :
@@ -6942,29 +6941,76 @@ class  PdfTexterFont		extends PdfObjectBase
 		$widths		=  false ;
 		$missing_width  =  false ;
 
-		if  ( preg_match ( '/FirstChar \s+ (?P<char> \d+)/imsx', $font_data, $match ) )
+		if  ( preg_match ( '#/FirstChar \s+ (?P<char> \d+)#imsx', $font_data, $match ) )
 			$first_char	=  $match [ 'char' ] ;
 
-		if  ( preg_match ( '/Widths \s* \[ (?P<widths> [^\]]+) \]/imsx', $font_data, $match ) )
+		if  ( preg_match ( '#/Widths \s* \[ (?P<widths> [^\]]+) \]#imsx', $font_data, $match ) )
 			$widths		=  $match [ 'widths' ] ;
 
-		if  ( preg_match ( '/MissingWidth \s+ (?P<missing> \d+)/imsx', $font_data, $match ) )
+		if  ( preg_match ( '#/MissingWidth \s+ (?P<missing> \d+)#imsx', $font_data, $match ) )
 			$missing_width	=  $match [ 'missing' ] ;
 
 		// It would not make sense if one of the two entries /FirstChar and /Widths was missing
-		// So ensure they are all there (not that /MissingWidths can be absent)
-		if  ( $first_char  &&  $widths )
+		// So ensure they are all there (note that /MissingWidths can be absent)
+		if  ( $first_char !==  false  &&  $widths )
 		   {
 			if  ( $missing_width  !==  false )
 				$this -> DefaultWidth		=  ( double ) $missing_width ;
 
+			// Here comes a really tricky part :
+			// - The PDF file can contain CharProcs (example names : /a0, /a1, etc.) for which we have no
+			//   Unicode equivalent
+			// - The caller may have called the AddAdobeExtraMappings method, to providing a mapping between
+			//   those char codes (/a0, /a1, etc.) and a Unicode equivalent
+			// - Each "charproc" listed in the /Differences array as a specific code, such as :
+			//	[0/a1/a2/a3...]
+			//   which maps /a1 to code 0, /a2 to code 1, and so on
+			// - However, the GetStringWidth() method provides real Unicode characters
+			// Consequently, we have to map each CharProc character (/a1, /a2, etc.) to the Unicode value
+			// that may have been specified using the AddAdobeExtraMappings() method.
+			// The first step below collects the name list of CharProcs.
+			$charprocs	=  false ;
+
+			if  ( isset ( $this -> CharacterMap -> Encodings )  &&
+				preg_match ( '# /CharProcs \s* << (?P<list> .*?) >>#imsx', $font_data, $match ) )
+			   {
+				preg_match_all ( '#/ (?P<char> \w+) \s+ \d+ \s+ \d+ \s+ R#msx', $match [ 'list' ], $char_matches ) ;
+
+				$charprocs	=  array_flip ( $char_matches [ 'char' ] ) ;
+			    }
+
+			// The /FontMatrix entry defines the scaling to be used for the character widths (among other things)
+			if  ( preg_match ( '#/FontMatrix \s* \[ \s* (?P<multiplier> \d+)#imsx', $font_data, $match ) )
+				$multiplier	=  1000 * ( double ) $match [ 'multiplier' ] ;
+			else
+				$multiplier	=  1 ;
+
+			$widths				=  trim ( preg_replace ( '/\s+/', ' ', $widths ) ) ;
 			$widths				=  explode ( ' ', $widths ) ;
 
 			for  ( $i = 0, $count = count ( $widths ) ; $i  <  $count ; $i ++ )
 			   {
 				$value		=  ( double ) trim ( $widths [$i] ) ;
+				$chr_index	=  $first_char + $i ;
 
-				$this -> CharacterWidths [ chr ( $first_char + $i ) ]	=  ( $value ) ?  $value : $this -> DefaultWidth ;
+				// Tricky thing part 2 :
+				if  ( $charprocs )
+				   {
+					// If one of the CharProc characters is listed in the /Differences array then...
+					if  ( isset ( $this -> CharacterMap -> DifferencesByPosition [ $chr_index ] ) )
+					   {
+						$chname		=  $this -> CharacterMap -> DifferencesByPosition [ $chr_index ] ;
+
+						// ... if this CharProcs character is defined in the encoding table (possibly because
+						// it was complemeted through a call to the AddAdobeExtraMappings() method), then we
+						// will use its Unicode counterpart instead of the character ID coming from the
+						// /Differences array)
+						if  ( isset ( $charprocs [ $chname ] )  &&  isset ( $this -> CharacterMap -> Encodings [ $chname ] ) )
+							$chr_index	=  $this -> CharacterMap -> Encodings [ $chname ] [2] ;
+					    }
+				    }
+
+				$this -> CharacterWidths [ chr ( $chr_index ) ]		=  ( $value ) ?  ( $value * $multiplier ) : $this -> DefaultWidth ;
 			    }
 
 			$this -> GotWidthInformation	=  true ;
@@ -7462,19 +7508,21 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 	// Correspondance between an encoding name and its corresponding character in the
 	// following format : Standard, Mac, Windows, Pdf
 	private static 		$GlobalEncodings 	=  false ;
-	private			$Encodings ;
+	public			$Encodings ;
 	// Encoding type (one of the PDF_*_ENCODING constants)
-	public 		$Encoding ;
+	public 			$Encoding ;
 	// Indicates whether this character map is a secondary one used for Unicode maps ; this must be set at
 	// a higher level by the PdfTexterFont because at the time a character map is instantiated, we do not know
 	// yet whether it will be a primary (normal) map, or a map secondary to an existing Unicode map
-	public		$Secondary ;
+	public			$Secondary ;
 	// Differences array (a character substitution table to the standard encodings)
-	protected 	$Map 		=  array ( ) ;
+	public 			$Map 			=  array ( ) ;
 	// A secondary map for the Differences array, which only contains the differences ; this is used
 	// for Unicode fonts that also have an associated /Differences parameter, which should not include the
 	// whole standard Adobe character map but only the differences of encodings
-	protected	$SecondaryMap	=  array ( ) ;
+	public			$SecondaryMap		=  array ( ) ;
+	// Differences by position number
+	public			$DifferencesByPosition	=  array ( ) ;
 
 
    	// Constructor -
@@ -7599,6 +7647,8 @@ class  PdfTexterEncodingMap 	extends  PdfTexterCharacterMap
 					$this -> Map [ $index ] 		=  
 					$this -> SecondaryMap [ $index ]	=  ord ( '?' ) ;
 				    }
+
+				$this -> DifferencesByPosition [ $index ]	=  $item ;
 
 				$index ++ ;
 			    }
