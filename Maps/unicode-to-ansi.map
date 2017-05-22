@@ -123,6 +123,8 @@
 		0xFB04			=>  'ffl',				// ffl with ligature
 		0xFB05			=>  'ft',				// ft with ligature
 		0xFB06			=>  'st',				// st with ligature
+		0xFF08			=>  '(',
+		0xFF09			=>  ')',
 		0xFE31			=>  '|',				// Vertical em dash
 		0xFE32			=>  '|',				// Vertical en dash
 		0xFE58			=>  '-',				// Small em dash
