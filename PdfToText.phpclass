@@ -24,7 +24,7 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.7]	[Date : 2017/05/22]     [Author : CV]
+    [Version : 1.6.7]	[Date : 2017/05/31]     [Author : CV]
 	. Added CID fonts
 	. Changed the way CID font maps are searched and handled
 	
