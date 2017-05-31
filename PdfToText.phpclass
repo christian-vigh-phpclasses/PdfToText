@@ -24,15 +24,9 @@
         Christian Vigh, 04/2016.
 
     HISTORY
-    [Version : 1.6.6]	[Date : 2017/05/22]     [Author : CV]
-	. Completely rebuilt the page layout rendering algorithm
-	. Some character widths were not correctly extracted because of line breaks in the widths list.
-	. Fixed an issue where a character map was sometimes instantiated with the wrong parameter.
-	. Correctly handle character widths for characters defined by CharProcs (ie, for which the only
-	  information we have is how to draw the glyph, but no Unicode equivalent) and the corresponding
-	  character names that may have been passed to the AddAdobeExtraMappings() method.
-	. Properly decode sequences of hex digits when there is no current font applicable.
-	. Completed the Unicode to Ansi character map
+    [Version : 1.6.7]	[Date : 2017/05/22]     [Author : CV]
+	. Added CID fonts
+	. Changed the way CID font maps are searched and handled
 	
     (...)
 
@@ -1125,7 +1119,7 @@ abstract class  PdfObjectBase		// extends  Object
 class  PdfToText 	extends PdfObjectBase
    {
 	// Current version of the class
-	const		VERSION					=  "1.6.6" ;
+	const		VERSION					=  "1.6.7" ;
 
 	// Pdf processing options
 	const		PDFOPT_NONE				=  0x00000000 ;		// No extra option
@@ -6546,6 +6540,7 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		$font_type		=  PdfTexterFont::FONT_ENCODING_STANDARD ;
 		$cmap_id		=  0 ;
 		$secondary_cmap_id	=  0 ;
+		$font_variant		=  false ;
 
 		// Font resource id specification
 	   	if  ( preg_match ( '#<< \s* (?P<rscdefs> /R\d+ .*) >>#ix', $font_definition, $match ) )
@@ -6566,6 +6561,14 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			    }
 
 			return ;
+		    }
+		// Experimental implementation of CID fonts
+		else if  ( preg_match ( '#/(Base)?Encoding \s* /Identity-H#ix', $font_definition ) )
+		   {
+			if  ( preg_match ( '#/BaseFont \s* /(?P<font> [^\s/]+)#ix', $font_definition, $match ) )
+				$font_variant	=  $match [ 'font' ] ;
+
+			$font_type	=  PdfTexterFont::FONT_ENCODING_CID_IDENTITY_H ;
 		    }
 		// Font has an associated Unicode map (using the /ToUnicode keyword)
 		else if  ( preg_match ( '#/ToUnicode \s* (?P<cmap> \d+)#ix', $font_definition, $match ) )
@@ -6593,17 +6596,8 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 		// Font uses the Mac Roman encoding
 		else if  ( preg_match ( '#/(Base)?Encoding \s* /MacRomanEncoding#ix', $font_definition ) )
 			$font_type	=  PdfTexterFont::FONT_ENCODING_MAC_ROMAN ;
-		// Experimental implementation of CID fonts
-		else if  ( preg_match ( '#/(Base)?Encoding \s* /Identity-H#ix', $font_definition ) )
-		   {
-			// A really experimental way of detecting eastern europe languages...
-			if  ( stripos ( $font_definition, '/ABCDEE+' )  !==  false )
-				$font_type	=  PdfTexterFont::FONT_ENCODING_CID_EASTERN ;
-			else
-				$font_type	=  PdfTexterFont::FONT_ENCODING_CID_IDENTITY_H ;
-		    }
 	
-		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id, $pdf_objects, $extra_mappings ) ;
+		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id, $pdf_objects, $extra_mappings, $font_variant ) ;
 
 		// Arbitrarily set the default font to the first font encountered in the pdf file
 		if  ( $this -> DefaultFont  ===  false )
@@ -6804,13 +6798,12 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 class  PdfTexterFont		extends PdfObjectBase
    {
 	// Font encoding types, for fonts that are neither associated with a Unicode character map nor a PDF character map
-	const	FONT_ENCODING_STANDARD		=  0 ;			// No character map, use the standard character set
-	const	FONT_ENCODING_WINANSI		=  1 ;			// No character map, use the Windows Ansi character set
-	const	FONT_ENCODING_MAC_ROMAN		=  2 ;			// No character map, use the MAC OS Roman character set
-	const	FONT_ENCODING_UNICODE_MAP	=  3 ;			// Font has an associated unicode character map
-	const	FONT_ENCODING_PDF_MAP		=  4 ;			// Font has an associated PDF character map
-	const	FONT_ENCODING_CID_IDENTITY_H	=  5 ;			// CID font : IDENTITY-H
-	const	FONT_ENCODING_CID_EASTERN	=  6 ;			// CID font : languages from eastern Europe (to be confirmed...)
+	const	FONT_ENCODING_STANDARD			=  0 ;			// No character map, use the standard character set
+	const	FONT_ENCODING_WINANSI			=  1 ;			// No character map, use the Windows Ansi character set
+	const	FONT_ENCODING_MAC_ROMAN			=  2 ;			// No character map, use the MAC OS Roman character set
+	const	FONT_ENCODING_UNICODE_MAP		=  3 ;			// Font has an associated unicode character map
+	const	FONT_ENCODING_PDF_MAP			=  4 ;			// Font has an associated PDF character map
+	const	FONT_ENCODING_CID_IDENTITY_H		=  5 ;			// CID font : IDENTITY-H
 
 	// Font variants
 	const   FONT_VARIANT_STANDARD		=  0x0000 ;
@@ -6842,7 +6835,7 @@ class  PdfTexterFont		extends PdfObjectBase
 
 	// Constructor -
 	//	Builds a PdfTexterFont object, using its resource id and optional character map id.
-	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null, $pdf_objects = null, $extra_mappings = null )
+	public function  __construct ( $resource_id, $cmap_id, $font_type, $secondary_cmap_id = null, $pdf_objects = null, $extra_mappings = null, $font_variant = false )
 	   {
 
 		parent::__construct ( ) ;
@@ -6865,11 +6858,7 @@ class  PdfTexterFont		extends PdfObjectBase
 				break ;
 
 			case	self::FONT_ENCODING_CID_IDENTITY_H :
-				$this -> CharacterMap	=  new PdfTexterIdentityHCIDMap (  $resource_id ) ;
-				break ;
-
-			case	self::FONT_ENCODING_CID_EASTERN :
-				$this -> CharacterMap	=  new PdfTexterEasternCIDMap (  $resource_id ) ;
+				$this -> CharacterMap	=  new PdfTexterIdentityHCIDMap (  $resource_id, $font_variant ) ;
 				break ;
 
 			case	self::FONT_ENCODING_PDF_MAP :
@@ -8153,52 +8142,173 @@ class	PdfTexterAdobeUndocumentedUnicodeMap		extends		PdfTexterAdobeMap
   ==============================================================================================================*/
 abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
    {
+	// CID maps are associative arrays whose keys are the font CID (currently expressed as a numeric value) and
+	// whose values are the corresponding UTF8 representation. The following special values can also be used to
+	// initialize certain entries :
+	// UNKNOWN_CID :
+	//	Indicates that the corresponding CID has no known UTF8 counterpart. When the PdfToText::$DEBUG variable
+	//	is true, every character in this case will be replaced with the string : "[UID: abcd]", where "abcd" is
+	//	the hex representation of the CID. This way, new CID tables can be built using this information.
 	const		UNKNOWN_CID		=  -1 ;
+	// ALT_CID :
+	//	Sorry, this will remain undocumented so far and will be highligh subject to change, since it is dating
+	//	from my first interpretation of CID fonts, which is probably wrong.
 	const		ALT_CID			=  -2 ;
 
+
+	// CID font map file ; the file is a PHP script that must contain an array of the form :
+	//	$map	=  array
+	//	   (
+	//		'plain'		=>  array
+	//		   ( 
+	//			$cid1	=>  $utf1,
+	//			...
+	//		    )
+	//	    ) ;
+	protected	$MapFile ;
+	// Map, loaded into memry
+	protected	$Map ;
+	// Map cache - the interest is to avoid unnecessary includes
 	private static	$CachedMaps		=  array ( ) ;
 
-	protected	$Map ;
-	protected	$MapFile ;
-
+	// Related to the first experimentatl implementation of CID fonts
 	private		$LastAltOffset		=  false ;
 
 
-	public function  __construct ( $object_id, $map_name )
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    Constructor -
+		Loads the specified map.
+		If the map files contains a definition such as :
+
+			$map	=  'IDENTITY-H-GQJGLM.cid' ;
+
+		then the specified map will be loaded instead (ony one ndirection is supported).
+	    	
+	 *-------------------------------------------------------------------------------------------------------------*/
+	public function  __construct ( $object_id, $map_name, $font_variant )
 	   {
+		// Initialize parent objects
 		parent::__construct ( $object_id ) ;
-		$this -> HexCharWidth	=  4 ;
+		$this -> HexCharWidth	=  4 ;			// So far, CIDs are 2-bytes long
 		
-		if  ( isset ( self::$CachedMaps [ $map_name ] ) )
+		// Since alternate characters can be apparently prefixed by 0x0000 or 0x0001, two calls to the array access operator 
+		// will be needed to retrieve the exact character in such cases
+		// This is why we have to tell the upper layers not to cache the results
+		$this -> Cache		=  false ;
+
+		$map_index	=  "$map_name:$font_variant" ;
+
+		// If this font has already been loaded somewhere, then reuse its information
+		if  ( isset ( self::$CachedMaps [ $map_index] ) )
 		   {
-			$map	=  self::$CachedMaps [ $map_name ] [ 'map' ] ;
-			$file	=  self::$CachedMaps [ $map_name ] [ 'file' ] ;
+			$map	=  self::$CachedMaps [ $map_index ] [ 'map' ] ;
+			$file	=  self::$CachedMaps [ $map_index ] [ 'file' ] ;
 		    }
+		// Otherwise, 
 		else
 		   {
-			$file	=  PdfToText::$CIDTablesDirectory . DIRECTORY_SEPARATOR . $map_name . '.cid' ;
+			$file		=  $this -> __get_cid_file ( $map_name, $font_variant ) ;
 
+			// No CID map found : CID numbers will be mapped as is
 			if  ( ! file_exists ( $file ) )
 			   {
 				if  ( PdfToText::$DEBUG )
 					warning ( new PdfToTextDecodingException ( "Could not find CID table \"$map_name\" in directory \"" . PdfToText::$CIDTablesDirectory . "\"." ) ) ;
 			    }
+			// Otherwise, load the CID map 
 			else
 			   {
 				include ( $file ) ;
 
 				if  ( isset ( $map ) )
-					self::$CachedMaps [ $map_name ]		=  array ( 'file' => $file, 'map' => $map ) ;
+				   {
+					// We authorize one CID map to contain the name of another CID map file, instead of the map itself
+					if  ( is_string ( $map ) )
+					   {
+						$file	=  PdfToText::$CIDTablesDirectory . "/$map" ;
+						include ( $file ) ;
+					    }
+
+					if  ( isset ( $map ) )
+						self::$CachedMaps [ $map_index ]	=  array ( 'file' => $file, 'map' => $map ) ;
+				    }
+				else if  ( PdfToText::$DEBUG )
+					warning ( new PdfToTextDecodingException ( "CID \"$file\" does not contain any definition." ) ) ;
 			    }
 		    }
 
+		// Save map info for this CID font
 		$this -> MapFile	=  $file ;
 		$this -> Map		=  ( isset ( $map ) ) ?  $map :  array ( ) ;
+	    }
 
-		// Since alternate characters can be apparently prefixed by 0x0000 or 0x0001, two calls to the array access operator 
-		// will be needed to retrieve the exact character in such cases
-		// This is why we have to tell the upper layers not to cache the results
-		$this -> Cache		=  false ;
+
+	/*--------------------------------------------------------------------------------------------------------------
+	
+	    __get_cid_file -
+		Searches in the CIDTables directory for the CID map that best matches the specified map name (usually,
+		IDENTITY-H) and the optional font variant.
+
+		If a font variant has been specified, like "ABCD+Italic-Arial", then the CID tables directory will be 
+		searched for the following files, in the following order :
+		- IDENTITY-H-ABCD+Italic-Arial.cid
+		- IDENTITY-H-ABCD+Italic.cid
+		- IDENTITY-H-ABCD.cid
+		- If none found, then IDENTITY-H-empty.cid will be used and a warning will be issued in debug mode.
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+	private function  __get_cid_file ( $map_name, $font_variant )
+	   {
+		$files		=  array ( ) ;
+
+		// Search for font variants, if any
+		if  ( $font_variant )
+		   {
+			if  ( preg_match ( '/^ (?P<name> [a-z_][a-z_0-9]*) (?P<rest> [\-+] .*) $/imsx' , $font_variant, $match ) ) 
+			   {
+				$basename	=  '-' . $match [ 'name' ] ;
+
+				if  ( preg_match_all ( '/ (?P<sep> [\-+]) (?P<name> [^\-+]+) /ix', $match [ 'rest' ], $other_matches ) ) 
+				   {
+					for  ( $i = count ( $other_matches [ 'name' ] ) - 1 ; $i  >=  0 ; $i -- )
+					   {
+						$new_file	=  $basename ;
+
+						for  ( $j = 0 ; $j  <  $i ; $j ++ )
+							$new_file	.=  $other_matches [ 'sep' ] [$i] . $other_matches [ 'name' ] [$i] ;
+
+						$files []		=  array ( PdfToText::$CIDTablesDirectory . "/$map_name$new_file.cid", 'standard' ) ;
+					    }
+				    }
+			    }
+
+			// Last one will be the empty CID font
+			$files []	=  array ( PdfToText::$CIDTablesDirectory . "/IDENTITY-H-empty.cid", 'empty' ) ;
+		    }
+	
+		// Add the specified map file
+		$files []	=  array ( PdfToText::$CIDTablesDirectory . "/$map_name.cid", 'default' ) ;
+		
+		// The first existing file in the list should be the appropriate one
+		foreach  ( $files  as  $file )
+		   {
+			if  ( file_exists ( $file [0] ) )
+			   {
+				if  ( PdfToText::$DEBUG )
+				   {
+					if  ( $file [1]  ===  'empty' )
+						warning ( new PdfToTextDecodingException ( "Using empty IDENTITY-H definition for map \"$map_name\", variant \"$font_variant\"." ) ) ;
+					else if  ( $file [1]  ===  'default' )
+						warning ( new PdfToTextDecodingException ( "Using default IDENTITY-H definition for map \"$map_name\"." ) ) ;
+				    }
+
+				return ( $file [0] ) ;
+			    }
+		    }
+
+		// No CID font found
+		return ( false ) ;
 	    }
 
 
@@ -8284,27 +8394,9 @@ abstract class	PdfTexterCIDMap		extends  PdfTexterCharacterMap
   ==============================================================================================================*/
 class  PdfTexterIdentityHCIDMap		extends  PdfTexterCIDMap
    {
-	public function  __construct ( $object_id )
+	public function  __construct ( $object_id, $font_variant )
 	   {
-		parent::__construct ( $object_id, 'IDENTITY-H' ) ;
-	    }
-    }
-
-
-
-/*==============================================================================================================
-
-    PdfTexterEasternCIDMap -
-        A class for mapping CID fonts related to languages from eastern Europe (or trying to...).
-
-  ==============================================================================================================*/
-class  PdfTexterEasternCIDMap		extends  PdfTexterCIDMap
-   {
-	// Files to be tested against regressions :
-	// - dominiksz/1097.pdf
-	public function  __construct ( $object_id )
-	   {
-		parent::__construct ( $object_id, 'EASTERN' ) ;
+		parent::__construct ( $object_id, 'IDENTITY-H', $font_variant ) ;
 	    }
     }
 
