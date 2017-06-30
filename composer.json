@@ -1,0 +1,23 @@
+{
+	"name": "christian-vigh-phpclasses/PdfToText",
+	"description": "Read text from PDF files",
+	"keywords": [
+		"pdf"
+	],
+	"type": "library",
+	"license": "LGPL-3.0",
+	"authors": [
+		{
+			"name": "Christian Vigh",
+			"email": "......"
+		}
+	],
+	"require": {
+		"php": "^5.6|^7.0|^7.1"
+	},
+	"autoload": {
+    "files": [
+      "PdfToText.phpclass"
+    ]
+	}
+}
