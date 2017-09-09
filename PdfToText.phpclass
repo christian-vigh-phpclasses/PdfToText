@@ -1220,7 +1220,7 @@ class  PdfToText 	extends PdfObjectBase
 		'times-bolditalic'	=>  'timesbi.fm',
 		'times-italic'		=>  'timesi.fm',
 		'zapfdingbats'		=>  'zapfdingbats.fm'
-	    ) ;
+	    );
 	// Author information 
 	public			$Author				=  '' ;
 	public			$CreatorApplication		=  '' ;
@@ -1763,6 +1763,7 @@ class  PdfToText 	extends PdfObjectBase
 				'Tf'		=>  0,
 				'TL'		=>  0,
 				'T*'		=>  0,
+				'Tz'		=>  0,
 				'('		=>  0,
 				'<'		=>  0,
 				'['		=>  0,
@@ -2073,7 +2074,6 @@ class  PdfToText 	extends PdfObjectBase
 		// Associate character maps with declared fonts
 		foreach  ( $cmaps  as  $cmap )
 			$this -> FontTable -> AddCharacterMap ( $cmap ) ;
-
 		// Current font defaults to -1, which means : take the first available font as the current one.
 		// Sometimes it may happen that text drawing instructions do not set a font at all (PdfPro for example)
 		$current_font		=  -1 ;
@@ -2224,7 +2224,7 @@ class  PdfToText 	extends PdfObjectBase
 	    DESCRIPTION
 	        Adobe supports 4 predefined fonts : standard, Mac, WinAnsi and PDF). All the characters in these fonts
 		are identified by a character time, a little bit like HTML entities ; for example, 'one' will be the
-		character '1', 'acircumflex' will be 'â', etc.
+		character '1', 'acircumflex' will be 'ï¿½', etc.
 		There are thousands of character names defined by Adobe (see https://mupdf.com/docs/browse/source/pdf/pdf-glyphlist.h.html).
 		Some of them are not in this list ; this is the case for example of the 'ax' character names, where 'x'
 		is a decimal number. When such a character is specified in a /Differences array, then there is somewhere
@@ -3433,7 +3433,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	    PARAMETERS
 		$page_number (integer) -
-			¨Page number that contains the text to be extracted.
+			ï¿½Page number that contains the text to be extracted.
 
 	    	$object_id (integer) -
 	    		Object id of this text block.
@@ -4466,7 +4466,7 @@ class  PdfToText 	extends PdfObjectBase
 
 	    PARAMETERS
 		$page_number (integer) -
-			¨Page number that contains the text to be extracted.
+			ï¿½Page number that contains the text to be extracted.
 
 	    	$object_id (integer) -
 	    		Object id of this text block.
@@ -4520,6 +4520,9 @@ class  PdfToText 	extends PdfObjectBase
 		// Text matrices
 		$CTM					=  
 		$Tm					=  $IdentityMatrix ;
+
+		// Text Horizontal scaling
+        $Th              = 1;
 
 		// Nesting level of BT..ET instructions (Begin text/End text) - they are not nestable but be prepared to meet buggy PDFs
 		$BT_nesting_level			=  0 ;
@@ -4658,8 +4661,8 @@ class  PdfToText 	extends PdfObjectBase
 
 					// Td instruction
 					case	'd' :
-						$Tm [4]		+=  ( double ) $operand_stack [0] * abs ( $Tm [0] ) ;
-						$Tm [5]		+=  ( double ) $operand_stack [1] * abs ( $Tm [3] ) ;
+						$Tm [4]		+=  ( double ) $operand_stack [0] * ( $Tm [0] ) ;
+						$Tm [5]		+=  ( double ) $operand_stack [1] * ( $Tm [3] ) ;
 
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Td' ] ++ ;
 						break ;
@@ -4713,6 +4716,14 @@ class  PdfToText 	extends PdfObjectBase
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ '"' ] ++ ;
 						break ;
 
+                    // Tz instruction for text horizontal scaling
+                    case    'z' :
+                        $Th = ($operand_stack[0] == 0 ? 1 : ($operand_stack[0] / 100));
+                        $Tm[0] = $Th; // set the matrix horizontal scaling factor
+                        $enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'Tz' ] ++ ;
+
+                        break;
+
 					// Other : ignore them
 					default :
 						$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'ignored' ] ++ ;
@@ -4730,7 +4741,19 @@ class  PdfToText 	extends PdfObjectBase
 				$e		=  ( double ) $operand_stack [4] ;
 				$f		=  ( double ) $operand_stack [5] ;
 
-				$CTM		=  array ( $a, $b, $c, $d, $e, $f ) ;
+               // If not the first cm, multiply the new CTM by the old CTM as this can be nested
+               // Matt Blacker
+				if($graphic_stack_size > 0) {
+
+                    $Old_CTM =  $graphic_stack[($graphic_stack_size-1)][0];
+                    $New_CTM = array($a, $b, $c, $d, $e, $f);
+
+                    $CTM = $this->__matrix_multiply($New_CTM, $Old_CTM);
+
+                }
+                else {
+                    $CTM = array($a, $b, $c, $d, $e, $f);
+                }
 				$operand_stack	=  array ( ) ;
 
 				$enhanced_statistics  &&  $this -> Statistics [ 'Distributions' ] [ 'cm' ] ++ ;
@@ -4766,9 +4789,12 @@ class  PdfToText 	extends PdfObjectBase
 						'page'		=>  $page_number,
 						'template'	=>  $current_template,
 						'font'		=>  $current_font_name,
-						'font-height'	=>  abs ( $current_font_height * $Tm [3] ),
+						'font-height'	=>  abs ( $current_font_height * $Tm [3] * $CTM[3]),
 						'text'		=>  $text,
 					    ) ;
+					// Matt Blacker - Added $CTM[3] here to calculate the correct font-height when a
+                    // CTM has been provided else this should default to 1
+
 
 					// Add debug information when needed
 					if  ( self::$DEBUG )
@@ -4861,21 +4887,29 @@ class  PdfToText 	extends PdfObjectBase
 	//	matrices here are implemented 6-elements arrays :
 	//
 	//		[ sx, rx, ry, tx, ty ]
-	private function  __matrix_multiply ( $ma, $mb, $page_width, $page_height )
+	private function  __matrix_multiply ( $ma, $mb, $page_width = null, $page_height = null)
 	   {
 		// Scaling text is only appropriate for rendering graphics ; in our case, we just have to render 
 		// basic text without any consideration about its width or height ; so adjust the sx/sy parameters
 		// accordingly
-		$scale_1x	=  ( $ma [0]  >  0 ) ?  1 : -1 ;
-		$scale_1y	=  ( $ma [3]  >  0 ) ?  1 : -1 ;
-		$scale_2x	=  ( $mb [0]  >  0 ) ?  1 : -1 ;
-		$scale_2y	=  ( $mb [3]  >  0 ) ?  1 : -1 ;
 
-		// Perform the matrix multiplication
+           // Matt Blacker - When selecting text by coordinates scale provided by the CTM needs to be considered
+           // if given, text font size and positioning can be based on this CTM baseline
+		//$scale_1x	=  ( $ma [0]  >  0 ) ?  1 : -1 ;
+		//$scale_1y	=  ( $ma [3]  >  0 ) ?  1 : -1 ;
+		//$scale_2x	=  ( $mb [0]  >  0 ) ?  1 : -1 ;
+		//$scale_2y	=  ( $mb [3]  >  0 ) ?  1 : -1 ;
+
+           $scale_1x = $ma[0];
+           $scale_1y = $ma[3];
+           $scale_2x = $mb[0];
+           $scale_2y = $mb[3];
+
+		// Perform the matrix multiplication without rotation, this is a scaling matrix only?
 		$r	=  array ( ) ;
-		$r [0]	=  ( $scale_1x * $scale_2x ) + ( $ma [1] * $mb [2]   ) ;
-		$r [1]	=  ( $scale_1x * $mb [1]   ) + ( $ma [1] * $scale_2y ) ;
-		$r [2]	=  ( $scale_1y * $scale_2x ) + ( $scale_1y * $mb [2]   ) ;
+		$r [0]	=  ( $scale_1x * $scale_2x ) + ( $ma [1] * $mb [2]   );
+		$r [1]	=  0;//( $scale_1x * $mb [1]   ) + ( $ma [1] * $scale_2y ) ;
+		$r [2]	=  0;//( $scale_1y * $scale_2x ) + ( $scale_1y * $mb [2]   ) ;
 		$r [3]	=  ( $scale_1y * $mb [1]   ) + ( $scale_1y* $scale_2y ) ;
 		$r [4]	=  ( $ma [4]   * $scale_2x ) + ( $ma [5] * $mb [2]   ) + $mb [4] ;
 		$r [5]	=  ( $ma [4]   * $mb [1]   ) + ( $ma [5] * $scale_2y ) + $mb [5] ;
@@ -5401,6 +5435,10 @@ class  PdfToText 	extends PdfObjectBase
 		// Compute the width of each fragment
 		foreach  ( $fragments  as  &$fragment )
 			$this -> __compute_fragment_width ( $fragment ) ;
+
+		// Reset reference variable or you will overwrite in the sort below loosing the last fragment and
+        // having another element duplicated
+		unset($fragment);
 
 		// Sort the fragments and group them by line
 		usort ( $fragments, array ( $this, '__sort_page_fragments' ) ) ;
@@ -6478,6 +6516,31 @@ class  PdfToText 	extends PdfObjectBase
 	    }
 
 
+    /*--------------------------------------------------------------------------------------------------------------
+
+	    NAME
+	        RetrievePageData - Retrieves information about the page
+
+	    PROTOTYPE
+	        $this -> RetrievePageData ( $object_id, $object_data ) ;
+
+	    DESCRIPTION
+	        Retrieves information about the page (page height / width).
+
+	    PARAMETERS
+	        $page_number (integer) -
+	                Id of the page for the information required.
+
+	    NOTES
+	        This function allows access to the page attributes
+
+	 *-------------------------------------------------------------------------------------------------------------*/
+    public function RetrievePageData($page_number)
+        {
+            return $this->PageMap->PageAttributes[$page_number];
+        }
+
+
     }
 
 
@@ -6569,7 +6632,14 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 				$font_variant	=  $match [ 'font' ] ;
 
 			$font_type	=  PdfTexterFont::FONT_ENCODING_CID_IDENTITY_H ;
-		    }
+           if  ( preg_match ( '#/ToUnicode \s* (?P<cmap> \d+)#ix', $font_definition, $match ) ) {
+               // even with the CID most PDF's will include a UNICODE MAP, overwrite for now until better implementation
+               $cmap_id = $match ['cmap'];
+               $font_type	=  PdfTexterFont::FONT_ENCODING_UNICODE_MAP ;
+           }
+
+
+            }
 		// Font has an associated Unicode map (using the /ToUnicode keyword)
 		else if  ( preg_match ( '#/ToUnicode \s* (?P<cmap> \d+)#ix', $font_definition, $match ) )
 		   {
@@ -6598,6 +6668,17 @@ class 	PdfTexterFontTable 	extends PdfObjectBase
 			$font_type	=  PdfTexterFont::FONT_ENCODING_MAC_ROMAN ;
 	
 		$this -> Fonts [ $object_id ]	=  new  PdfTexterFont ( $object_id, $cmap_id, $font_type, $secondary_cmap_id, $pdf_objects, $extra_mappings, $font_variant ) ;
+
+		//check for built in font "name" field without the proper fontmap /Fx object - Matt Blacker
+        //eg. <</DescendantFonts[18 0 R]/ToUnicode 21 0 R/BaseFont/SUBSET+CalibriBold/Subtype/Type0/Encoding/Identity-H/Type/Font/Name/F-1>>
+       $font_match = array();
+       if(preg_match('#<<.+/BaseFont.+/Name(?<fontname>/F[0-9\-]+).*>>#ix',$font_definition, $font_match)) {
+           // make sure pregmatch found the font name and that it doesn't exist so it will not
+           // overwrite fontmaps and descendant fonts don't also overwrite it
+           if(isset($font_match['fontname']) && !isset($this->FontMap[$font_match['fontname']])){
+               $this->FontMap[$font_match['fontname']] = $object_id;
+           }
+       }
 
 		// Arbitrarily set the default font to the first font encountered in the pdf file
 		if  ( $this -> DefaultFont  ===  false )
@@ -11611,6 +11692,7 @@ class	PdfToTextCaptureRectangleDefinition		extends  PdfToTextCaptureShapeDefinit
 	 *-------------------------------------------------------------------------------------------------------------*/
 	public function  ExtractAreas ( $document_fragments )
 	   {
+	    $minimum_space_join = 15;
 		$result		=  array ( ) ;
 
 		// Loop through document fragments
@@ -11622,14 +11704,17 @@ class	PdfToTextCaptureRectangleDefinition		extends  PdfToTextCaptureShapeDefinit
 			if  ( ! isset ( $this -> ApplicablePages -> PageMap [ $page ] ) ) 
 				continue ;
 
+			$last_fragmenet = null;
 			// Loop through each text fragment of the page
 			foreach  ( $fragments  as  $fragment )
 			   {
+
 				$this -> GetFragmentData ( $fragment, $text, $left, $top, $right, $bottom ) ;
 
 				// Only handle text fragments that are within the specified area
 				if  ( $this -> Areas [ $page ] -> Contains ( $left, $top, $right, $bottom ) )
 				   {
+
 					// Normally, rectangle shapes are used to capture a single line...
 					if  ( ! isset ( $result [ $page ] ) )
 						$result [ $page ]	=  new PdfToTextCapturedRectangle ( $page, $this -> Name, $text, $left, $top, $right, $bottom, $this ) ;
@@ -11639,12 +11724,20 @@ class	PdfToTextCaptureRectangleDefinition		extends  PdfToTextCaptureShapeDefinit
 					   {
 						$existing_area	=  $result [ $page ] ;
 
+
 						$existing_area -> Top			=  max ( $existing_area -> Top   , $top    ) ;
 						$existing_area -> Bottom		=  min ( $existing_area -> Bottom, $bottom ) ;
 						$existing_area -> Left			=  min ( $existing_area -> Left  , $left   ) ;
 						$existing_area -> Right			=  max ( $existing_area -> Right , $right  ) ;
-						$existing_area -> Text		       .=  $this -> Separator . $text ;
+
+						// if the last text fragment was on the same Y axis and less than the minimum specified, do not use the separator character
+                        // this helps with PDF's that writes only single characters per instruction not multiple
+						if($last_fragmenet && ($last_fragmenet['y'] == $top && abs($left - $last_fragmenet['x']) < $minimum_space_join))
+						    $existing_area -> Text		       .=  $text ;
+						else
+                           $existing_area -> Text		       .=  $this -> Separator . $text ;
 					    }
+					    $last_fragmenet = $fragment;
 				    }
 			    }
 		    }
